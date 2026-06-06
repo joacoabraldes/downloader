@@ -118,9 +118,8 @@ def run_desest(conn) -> None:
             return
         values = _read_d11(d11)
 
-    for date, val in values:
-        db.upsert_desest(conn, date, float(val))
-    print(f"[desest] UPSERT de {len(values)} meses desestacionalizados "
+    n = db.upsert_desest_batch(conn, [(d, float(v)) for d, v in values])
+    print(f"[desest] UPSERT de {n} meses desestacionalizados "
           f"({values[0][0]:%Y-%m}..{values[-1][0]:%Y-%m}).")
 
 

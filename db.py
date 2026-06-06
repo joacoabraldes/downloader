@@ -8,6 +8,7 @@ import datetime as dt
 import os
 
 import psycopg2
+from psycopg2.extras import execute_values
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -88,6 +89,28 @@ def upsert_desest(conn, date: dt.date, valor: float, fuente: str = "census x13")
     with conn.cursor() as cur:
         cur.execute(sql, [date, valor, fuente])
     conn.commit()
+
+
+def upsert_desest_batch(conn, rows: list[tuple[dt.date, float]],
+                        fuente: str = "census x13") -> int:
+    """UPSERT en lote de las filas desestacionalizadas (un solo commit).
+
+    rows = [(date, valor), ...]. Mucho más rápido que llamar upsert_desest por mes
+    sobre el pooler (1 roundtrip en vez de N commits)."""
+    if not rows:
+        return 0
+    sql = (
+        "insert into molienda_granos (date, valor, estado, fuente) values %s "
+        "on conflict (date) where estado = 'desestacionalizado' "
+        "do update set valor = excluded.valor, fuente = excluded.fuente, "
+        "ingested_at = now()"
+    )
+    values = [(d, v, fuente) for d, v in rows]
+    with conn.cursor() as cur:
+        execute_values(cur, sql, values,
+                       template="(%s, %s, 'desestacionalizado', %s)")
+    conn.commit()
+    return len(rows)
 
 
 def fetch_observed_series(conn) -> list[tuple[dt.date, float]]:
