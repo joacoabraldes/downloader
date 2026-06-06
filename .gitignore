@@ -3,6 +3,4 @@ __pycache__/
 *.pyc
 venv/
 .venv/
-# HTML temporal de pruebas (NO ignorar los .py del proyecto)
-page.html
-*.tmp.html
+
