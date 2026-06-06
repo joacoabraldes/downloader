@@ -64,8 +64,8 @@ def _build_spc(series: list[tuple[dt.date, float]]) -> str:
     data = "\n".join(lines)
     return (
         "series{\n"
-        f"  title=\"molienda oleaginosas\"\n"
-        f"  start={start.year}.{start.month}\n"
+        f"  title=\"molienda\"\n"
+        f"  start={start.year}.{start.month:02d}\n"
         "  period=12\n"
         "  data=(\n"
         f"{data}\n"
@@ -100,16 +100,21 @@ def run_desest(conn) -> None:
         return
 
     with tempfile.TemporaryDirectory() as tmp:
-        base = os.path.join(tmp, "molienda")
-        with open(base + ".spc", "w") as f:
+        # x13as quiere el basename del .spc (no la ruta completa) y se corre en cwd=tmp.
+        name = "serie"
+        with open(os.path.join(tmp, name + ".spc"), "w") as f:
             f.write(_build_spc(series))
-        proc = subprocess.run(
-            [binary, base], cwd=tmp, capture_output=True, text=True,
-        )
-        d11 = base + ".d11"
+        try:
+            proc = subprocess.run(
+                [binary, name], cwd=tmp, capture_output=True, text=True, timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            print("[desest] x13as excedió el timeout; salteado.")
+            return
+        d11 = os.path.join(tmp, name + ".d11")
         if not os.path.isfile(d11):
-            print(f"[desest] x13as no generó d11 (rc={proc.returncode}); salteado.\n"
-                  f"{proc.stdout[-500:]}{proc.stderr[-500:]}")
+            tail = (proc.stdout or "")[-400:] + (proc.stderr or "")[-400:]
+            print(f"[desest] x13as no generó d11 (rc={proc.returncode}); salteado.\n{tail}")
             return
         values = _read_d11(d11)
 
