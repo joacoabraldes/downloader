@@ -7,11 +7,6 @@ __pycache__/
 venv/
 .venv/
 
-# Datos crudos / Excel (la carga histórica ya vive en Supabase; no se versionan)
-*.xlsx
-*.xls
-*.xlsb
-*.csv
 
 # Imágenes / capturas / fotos
 *.jpg
