@@ -17,7 +17,7 @@ from pathlib import Path
 
 import openpyxl
 
-from etl.core import db
+from etl.core import db, report
 from . import config
 
 DEFAULT_XLSX = Path(__file__).parent / "data" / "cemento.xlsx"
@@ -52,26 +52,21 @@ def main(argv=None):
         sys.exit(1)
 
     rows = read_rows(args.xlsx)
+    rep = report.Report("cemento", "load-history")
+    rep.info(f"Excel: {len(rows)} filas | excluido(abril-2026, se carga por scraping): 1")
     conn = db.get_conn()
-    inserted = skipped = excluded = 0
     try:
         for fecha, valor in rows:
             if fecha in EXCLUDE:
-                excluded += 1
                 continue
-            if db.insert_if_changed(
+            rep.tally(db.insert_if_changed(
                 conn, table=config.TABLE, key_cols=config.KEY_COLS, key_vals=[fecha],
                 value_cols=config.VALUE_COLS, row={"valor": valor}, estado=None,
                 fuente=FUENTE, force=args.force,
-            ):
-                inserted += 1
-            else:
-                skipped += 1
+            ))
     finally:
         conn.close()
-
-    print(f"insertadas={inserted} sin_cambios={skipped} "
-          f"excluidas(abril2026)={excluded} total_xlsx={len(rows)}")
+    rep.summary()
 
 
 if __name__ == "__main__":

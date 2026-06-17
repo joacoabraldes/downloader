@@ -6,7 +6,6 @@ Uso: `python -m etl init-db [granos cemento automotriz]` (sin args = todos).
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from etl.core import db
@@ -15,16 +14,17 @@ DATASETS_DIR = Path(__file__).parent / "datasets"
 ALL = ["granos", "cemento", "automotriz"]
 
 
-def apply_schema(conn, name: str) -> None:
+def apply_schema(conn, name: str) -> bool:
     path = DATASETS_DIR / name / "schema.sql"
     if not path.is_file():
-        print(f"  {name}: no hay schema.sql en {path}", file=sys.stderr)
-        return
+        print(f"  {name}  -> sin schema.sql en {path}")
+        return False
     sql = path.read_text(encoding="utf-8")
     with conn.cursor() as cur:
         cur.execute(sql)
     conn.commit()
-    print(f"  {name}: schema aplicado ({path.name})")
+    print(f"  {name}  -> schema aplicado")
+    return True
 
 
 def main(argv=None) -> None:
@@ -38,13 +38,15 @@ def main(argv=None) -> None:
     if unknown:
         ap.error(f"dataset(s) desconocido(s): {', '.join(unknown)}")
 
+    print("[init-db]")
     conn = db.get_conn()
+    aplicados = 0
     try:
         for name in names:
-            apply_schema(conn, name)
+            aplicados += apply_schema(conn, name)
     finally:
         conn.close()
-    print("init-db OK")
+    print(f"resumen [init-db]  aplicados={aplicados}")
 
 
 if __name__ == "__main__":

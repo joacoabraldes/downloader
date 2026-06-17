@@ -14,7 +14,7 @@ from pathlib import Path
 
 import openpyxl
 
-from etl.core import db
+from etl.core import db, report
 from . import config
 from .source import GRANOS
 
@@ -61,21 +61,20 @@ def main(argv=None) -> None:
     if not rows:
         print("No se leyeron filas del Excel.", file=sys.stderr)
         sys.exit(1)
-    print(f"Filas leídas: {len(rows)}  rango: {rows[0][0]} .. {rows[-1][0]}")
 
+    rep = report.Report("granos", "load-history")
+    rep.info(f"Excel: {len(rows)} filas | rango: {rows[0][0]:%Y-%m}..{rows[-1][0]:%Y-%m}")
     conn = db.get_conn()
-    inserted = 0
     try:
         for date, row in rows:
-            if db.insert_if_changed(
+            rep.tally(db.insert_if_changed(
                 conn, table=config.TABLE, key_cols=config.KEY_COLS, key_vals=[date],
                 value_cols=config.VALUE_COLS, row=row, estado=None, fuente=FUENTE,
                 force=args.force,
-            ):
-                inserted += 1
+            ))
     finally:
         conn.close()
-    print(f"Insertados (nuevos/cambiados): {inserted}  |  sin cambios: {len(rows) - inserted}")
+    rep.summary()
 
 
 if __name__ == "__main__":

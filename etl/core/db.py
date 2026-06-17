@@ -99,17 +99,22 @@ def _changed(prev: dict | None, row: dict, value_cols: list[str], tol: float) ->
 
 
 def insert_if_changed(conn, *, table, key_cols, key_vals, value_cols, row,
-                      estado, fuente, force: bool = False, tol: float = 1e-6) -> bool:
+                      estado, fuente, force: bool = False, tol: float = 1e-6) -> str:
     """Inserta un snapshot de (clave, estado) sólo si es nuevo o cambió algún valor.
 
-    `row` viene keyeado por los nombres de columna de la tabla. Devuelve True si insertó.
-    Idempotente salvo `force=True`.
+    `row` viene keyeado por los nombres de columna de la tabla. Idempotente salvo `force`.
+    Devuelve un **status** para reportar de forma uniforme:
+      - "saltado"     el valor principal (value_cols[0]) es None → no se inserta.
+      - "sin_cambios" ya existía y no cambió (y sin force).
+      - "nuevo"       no existía snapshot previo de (clave, estado) → se insertó.
+      - "actualizado" existía pero cambió (o force) → se insertó snapshot nuevo.
     """
-    if not force:
-        prev = latest_values(conn, table=table, key_cols=key_cols, key_vals=key_vals,
-                             value_cols=value_cols, estado=estado)
-        if not _changed(prev, row, value_cols, tol):
-            return False
+    if row.get(value_cols[0]) is None:
+        return "saltado"
+    prev = latest_values(conn, table=table, key_cols=key_cols, key_vals=key_vals,
+                         value_cols=value_cols, estado=estado)
+    if not force and not _changed(prev, row, value_cols, tol):
+        return "sin_cambios"
     cols = list(key_cols) + list(value_cols) + ["estado", "fuente"]
     vals = list(key_vals) + [row.get(c) for c in value_cols] + [estado, fuente]
     placeholders = ", ".join(["%s"] * len(cols))
@@ -117,4 +122,19 @@ def insert_if_changed(conn, *, table, key_cols, key_vals, value_cols, row,
     with conn.cursor() as cur:
         cur.execute(sql, vals)
     conn.commit()
-    return True
+    return "actualizado" if prev is not None else "nuevo"
+
+
+def last_date(conn, *, table, where=None, where_params=()):
+    """Último `date` cargado en la tabla (para ponerse al día en el incremental).
+
+    `where` filtra opcionalmente (p.ej. excluir desestacionalizado, o por serie).
+    Devuelve un `datetime.date` o None si la tabla está vacía.
+    """
+    sql = f"select max(date) from {table}"
+    if where:
+        sql += f" where {where}"
+    with conn.cursor() as cur:
+        cur.execute(sql, where_params)
+        r = cur.fetchone()
+    return r[0] if r else None

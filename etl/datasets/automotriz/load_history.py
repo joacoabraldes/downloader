@@ -13,7 +13,7 @@ from pathlib import Path
 
 import openpyxl
 
-from etl.core import db
+from etl.core import db, report
 from . import config
 
 DEFAULT_XLSX = Path(__file__).parent / "data" / "ind_automotriz.xlsx"
@@ -57,25 +57,25 @@ def main(argv=None) -> None:
         print(f"No se encontró {args.xlsx}.", file=sys.stderr)
         sys.exit(1)
 
+    rep = report.Report("automotriz", "load-history")
     conn = db.get_conn()
     try:
         for serie in config.SERIES:
             rows = read_series(args.xlsx, serie)
             if not rows:
-                print(f"{serie:11} sin filas")
+                rep.info(f"{serie}: sin filas")
                 continue
-            inserted = 0
+            rep.info(f"{serie}: {len(rows)} filas | "
+                     f"rango {rows[0][0]:%Y-%m}..{rows[-1][0]:%Y-%m}")
             for date, valor in rows:
-                if db.insert_if_changed(
+                rep.tally(db.insert_if_changed(
                     conn, table=config.TABLE, key_cols=config.KEY_COLS,
                     key_vals=[serie, date], value_cols=config.VALUE_COLS,
                     row={"valor": valor}, estado=None, fuente=FUENTE, force=args.force,
-                ):
-                    inserted += 1
-            print(f"{serie:11} insertadas={inserted} sin_cambios={len(rows) - inserted} "
-                  f"rango={rows[0][0]:%Y-%m}..{rows[-1][0]:%Y-%m}")
+                ))
     finally:
         conn.close()
+    rep.summary()
 
 
 if __name__ == "__main__":

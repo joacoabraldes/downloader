@@ -62,7 +62,9 @@ def main(argv=None) -> None:
 
     out = Path(args.dir)
     out.mkdir(parents=True, exist_ok=True)
+    print("[export]")
     conn = db.get_conn()
+    archivos = total = 0
     try:
         for name in names:
             if name == "automotriz":
@@ -74,12 +76,13 @@ def main(argv=None) -> None:
             else:  # cemento
                 path = out / "cemento_d11.csv"
                 n = export_simple(conn, "cemento_despacho_desest", path)
-            print(f"  {name}: {n} filas -> {path}")
-            if n == 0:
-                print(f"  (vacío: ¿corriste la desestacionalización de {name}?)")
+            archivos += 1
+            total += n
+            extra = "  (vacio: corriste la desest?)" if n == 0 else ""
+            print(f"  {name}  filas={n}  -> {path}{extra}")
     finally:
         conn.close()
-    print("export OK")
+    print(f"resumen [export]  archivos={archivos}  filas={total}")
 
 
 if __name__ == "__main__":
