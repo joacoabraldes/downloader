@@ -76,16 +76,12 @@ def main(argv=None) -> None:
             rep.summary()
 
         if not args.no_desest:
-            for serie in config.SERIES:
-                try:
-                    seasonal.deseasonalize(
-                        conn, table=config.TABLE, source_view=config.ACTUAL_VIEW,
+            jobs = [(serie, dict(
+                        table=config.TABLE, source_view=config.ACTUAL_VIEW,
                         conflict_cols=("serie", "date"), extra_cols={"serie": serie},
-                        where="serie = %s", where_params=(serie,),
-                        keep_dir=args.x13_out,
-                    )
-                except Exception as e:  # X-13 nunca tumba el ETL
-                    print(f"  [desest] {serie}: error inesperado: {e}")
+                        where="serie = %s", where_params=(serie,), keep_dir=args.x13_out))
+                    for serie in config.SERIES]
+            seasonal.run_desest(conn, "automotriz", jobs)
     finally:
         conn.close()
 

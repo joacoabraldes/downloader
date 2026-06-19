@@ -87,12 +87,9 @@ def main(argv=None) -> None:
         rep.summary()
 
         if not args.no_desest:
-            try:
-                seasonal.deseasonalize(conn, table=config.TABLE,
-                                       source_view=config.ACTUAL_VIEW,
-                                       keep_dir=args.x13_out)
-            except Exception as e:  # degradación elegante: el ETL no se rompe
-                print(f"[desest] saltado: {e}", file=sys.stderr)
+            seasonal.run_desest(conn, "granos", [
+                (config.TABLE, dict(table=config.TABLE, source_view=config.ACTUAL_VIEW,
+                                    keep_dir=args.x13_out))])
     finally:
         conn.close()
 

@@ -87,10 +87,20 @@ def _parse_d11(path):
     return out
 
 
+def x13_available() -> bool:
+    """True si hay binario x13as resoluble (X13PATH seteado y existe)."""
+    return _x13_binary() is not None
+
+
+def _result(tag, status, *, n=0, mode=None, reason="", outdir=None) -> dict:
+    return {"tag": tag, "status": status, "n": n,
+            "mode": mode or "mult", "reason": reason, "outdir": outdir}
+
+
 def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
                   extra_cols=None, where=None, where_params=(),
                   out_estado="desestacionalizado", fuente="census x13",
-                  keep_dir=None) -> str:
+                  keep_dir=None) -> dict:
     """Corre X-13 sobre la serie observada y hace UPSERT de la desestacionalizada.
 
     - `source_view`   vista con (date, valor) de la serie observada.
@@ -101,15 +111,15 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
                       modelo/factores/diagnósticos, + tablas d10/d11/d12/d13 y el .spc) en
                       `keep_dir/<tag>/` y NO la borra (para inspeccionar / ajustar la serie).
 
-    Devuelve "ok", "skipped" o "error".
+    No imprime: devuelve un dict {tag, status(ok|skipped|error), n, mode, reason, outdir}
+    que el caller reporta de forma uniforme (ver `run_desest`).
     """
-    x13bin = _x13_binary()
-    if not x13bin:
-        print("  [desest] X13PATH no seteado o binario x13as no encontrado -> se saltea")
-        return "skipped"
-
     extra_cols = dict(extra_cols or {})
     tag = "_".join(str(v) for v in extra_cols.values()) or table
+
+    x13bin = _x13_binary()
+    if not x13bin:
+        return _result(tag, "skipped", reason="x13as no encontrado (setear X13PATH)")
 
     # 1. Serie observada (1 valor por mes) desde la vista.
     sql = f"select date, valor from {source_view}"
@@ -120,20 +130,16 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
         cur.execute(sql, where_params)
         rows = cur.fetchall()
     if len(rows) < MIN_MESES:
-        print(f"  [desest] serie demasiado corta ({len(rows)} meses) -> se saltea")
-        return "skipped"
+        return _result(tag, "skipped", reason=f"serie corta ({len(rows)} meses, min {MIN_MESES})")
     dates = [r[0] for r in rows]
     values = [float(r[1]) for r in rows]
     if not _es_contigua(dates):
-        print("  [desest] la serie tiene huecos mensuales -> se saltea")
-        return "skipped"
+        return _result(tag, "skipped", reason="la serie tiene huecos mensuales")
 
     # 2. Correr x13as en un directorio temporal.
     # El X-11 multiplicativo (default) no admite valores <= 0; si la serie tiene algún
     # cero/negativo (p.ej. produccion abril-2020, COVID), usamos modo aditivo.
     mode = "add" if any(v <= 0 for v in values) else None
-    if mode:
-        print(f"  [desest] serie con valores <= 0 -> X-11 aditivo (mode=add)")
     if keep_dir:
         workdir = os.path.join(keep_dir, tag)
         os.makedirs(workdir, exist_ok=True)
@@ -145,13 +151,13 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
         subprocess.run([x13bin, base], cwd=workdir, capture_output=True,
                        text=True, timeout=120)
     except Exception as e:
-        print(f"  [desest] no se pudo ejecutar x13as: {e}")
-        return "error"
+        return _result(tag, "error", mode=mode, reason=f"x13as no se pudo ejecutar: {e}")
 
     d11 = os.path.join(workdir, base + ".d11")
     if not os.path.isfile(d11):
-        print(f"  [desest] X-13 no produjo d11. Revisar {workdir}/{base}_err.html")
-        return "error"
+        return _result(tag, "error", mode=mode,
+                       reason=f"sin d11 (ver {workdir}/{base}_err.html)",
+                       outdir=workdir if keep_dir else None)
     series = _parse_d11(d11)
 
     # 3. UPSERT: 1 fila por mes con estado=out_estado (se actualiza cada corrida).
@@ -169,12 +175,24 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
             cur.execute(sql, fixed + [d, val, out_estado, fuente])
     conn.commit()
 
-    if keep_dir:
-        print(f"  [desest] salida de X-13 guardada en {workdir} "
-              f"(serie.html, serie.d10/d11/d12/d13, serie.spc)")
-    else:
+    if not keep_dir:
         shutil.rmtree(workdir, ignore_errors=True)
-    label = " ".join(f"{k}={v}" for k, v in extra_cols.items())
-    print(f"  [desest] {len(series)} meses desestacionalizados "
-          f"(UPSERT{', ' + label if label else ''}, fuente='{fuente}')")
-    return "ok"
+    return _result(tag, "ok", n=len(series), mode=mode,
+                   outdir=workdir if keep_dir else None)
+
+
+def run_desest(conn, dataset: str, jobs) -> None:
+    """Corre la desest de uno o más series y reporta el bloque `[dataset / desest]`.
+
+    `jobs` = lista de (tag, kwargs_para_deseasonalize). X-13 nunca tumba el ETL: cualquier
+    excepción se reporta como status=error.
+    """
+    from . import report  # import local: evita ciclo y solo se usa acá
+    drep = report.DesestReport(dataset)
+    for tag, kwargs in jobs:
+        try:
+            res = deseasonalize(conn, **kwargs)
+        except Exception as e:  # DB caída, etc.
+            res = _result(tag, "error", reason=str(e))
+        drep.add(res)
+    drep.summary()

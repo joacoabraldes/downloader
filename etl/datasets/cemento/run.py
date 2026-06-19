@@ -84,12 +84,9 @@ def main(argv=None):
         rep.summary()
 
         if not args.no_desest:
-            try:
-                seasonal.deseasonalize(conn, table=config.TABLE,
-                                       source_view=config.ACTUAL_VIEW,
-                                       keep_dir=args.x13_out)
-            except Exception as e:  # X-13 nunca debe tumbar el ETL
-                print(f"  [desest] error inesperado: {e}")
+            seasonal.run_desest(conn, "cemento", [
+                (config.TABLE, dict(table=config.TABLE, source_view=config.ACTUAL_VIEW,
+                                    keep_dir=args.x13_out))])
     finally:
         conn.close()
 

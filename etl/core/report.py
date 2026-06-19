@@ -71,3 +71,32 @@ class Report:
         keys = list(_ALWAYS) + [k for k in _OPTIONAL if self.counts[k]]
         body = "  ".join(f"{k}={self.counts[k]}" for k in keys)
         print(f"resumen [{self.title}]  {body}")
+
+
+class DesestReport:
+    """Bloque uniforme de la etapa X-13: `[dataset / desest]` + una línea por serie."""
+
+    def __init__(self, dataset: str):
+        self.title = f"{dataset} / desest"
+        self.series = self.upserts = self.saltadas = 0
+        print(f"[{self.title}]")
+
+    def add(self, result: dict) -> None:
+        """result = dict de `seasonal.deseasonalize` (tag, status, n, mode, reason, outdir)."""
+        self.series += 1
+        tag = result["tag"]
+        if result["status"] == "ok":
+            self.upserts += result["n"]
+            line = f"  {tag:14} upserts={result['n']}  modo={result['mode']}"
+            if result.get("outdir"):
+                line += f"  (salida: {result['outdir']})"
+            print(line)
+        else:
+            self.saltadas += 1
+            print(f"  {tag:14} -> {result['status']}: {result['reason']}")
+
+    def summary(self) -> None:
+        body = f"series={self.series}  upserts={self.upserts}"
+        if self.saltadas:
+            body += f"  saltadas={self.saltadas}"
+        print(f"resumen [{self.title}]  {body}")
