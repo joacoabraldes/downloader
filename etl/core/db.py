@@ -44,7 +44,10 @@ def get_conn():
         dbname=os.environ.get("PGDATABASE", os.environ.get("POSTGRES_DB", "postgres")),
         user=os.environ.get("PGUSER", os.environ.get("POSTGRES_USER", "postgres")),
         password=os.environ.get("PGPASSWORD") or os.environ.get("POSTGRES_PASSWORD", ""),
-        sslmode=os.environ.get("PGSSLMODE", os.environ.get("POSTGRES_SSLMODE", "require")),
+        # 'prefer' (default de libpq): usa SSL si el server lo ofrece y si no cae a no-SSL.
+        # Sirve igual para Supabase (usa SSL) y para un Postgres local sin SSL (server del
+        # jefe). Setear PGSSLMODE=require/disable en el .bashrc si se quiere forzar.
+        sslmode=os.environ.get("PGSSLMODE", os.environ.get("POSTGRES_SSLMODE", "prefer")),
     )
 
 
