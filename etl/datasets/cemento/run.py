@@ -23,40 +23,38 @@ from etl.core import db, report, seasonal, window
 from . import config, source
 
 
-def _row_from_fields(fields: dict) -> dict:
-    """Mapea el dict del parser a las columnas de la tabla (despacho_nacional->valor)."""
-    return {
-        "valor": fields.get("despacho_nacional"),
-        "exportacion": fields.get("exportacion"),
-        "consumo_despacho_nacional": fields.get("consumo_despacho_nacional"),
-        "importaciones_propias": fields.get("importaciones_propias"),
-    }
-
-
 def process_month(conn, rep, fecha, *, force: bool) -> None:
-    """Trae provisorio y definitivo del mes y los snapshotea si corresponde."""
-    # Si el mes ya tiene definitivo, el dato es final: no se vuelve a bajar (salvo --force).
+    """Trae provisorio y definitivo del mes y snapshotea cada serie si corresponde.
+
+    El parser devuelve un dict keyeado por nombre de serie (`despacho_nacional`,
+    `exportacion`, ...). El provisorio solo trae `despacho_nacional`; el definitivo trae las 4.
+    """
+    # Si el mes ya tiene definitivo (en la serie principal), el dato es final: no se vuelve a
+    # bajar (salvo --force).
     if not force and db.has_estado(conn, table=config.TABLE, key_cols=config.KEY_COLS,
-                                   key_vals=[fecha], estado="definitivo"):
+                                   key_vals=[config.MAIN_SERIE, fecha], estado="definitivo"):
         rep.note(f"{fecha:%Y-%m} definitivo ", "ya cerrado", status="sin_cambios")
         return
     for estado, getter in (("provisorio", source.get_provisorio),
                            ("definitivo", source.get_definitivo)):
-        label = f"{fecha:%Y-%m} {estado:10}"
         try:
             fields, url = getter(fecha.year, fecha.month)
         except Exception as e:  # red caída, HTML inesperado, etc.
-            rep.note(label, f"ERROR {e}", status="saltado")
+            rep.note(f"{fecha:%Y-%m} {estado:10}", f"ERROR {e}", status="saltado")
             continue
         if fields is None:
-            rep.note(label, "no publicado")
+            rep.note(f"{fecha:%Y-%m} {estado:10}", "no publicado")
             continue
-        row = _row_from_fields(fields)
-        status = db.insert_if_changed(
-            conn, table=config.TABLE, key_cols=config.KEY_COLS, key_vals=[fecha],
-            value_cols=config.VALUE_COLS, row=row, estado=estado, fuente=url, force=force,
-        )
-        rep.item(label, status, valor=row["valor"])
+        for serie in config.SERIES:
+            valor = fields.get(serie)
+            if valor is None:
+                continue  # p.ej. el provisorio no trae exportacion/consumo/importaciones
+            status = db.insert_if_changed(
+                conn, table=config.TABLE, key_cols=config.KEY_COLS,
+                key_vals=[serie, fecha], value_cols=config.VALUE_COLS,
+                row={"valor": valor}, estado=estado, fuente=url, force=force,
+            )
+            rep.item(f"{fecha:%Y-%m} {estado:10} {serie}", status, valor=valor)
 
 
 def main(argv=None):
@@ -85,8 +83,11 @@ def main(argv=None):
 
         if not args.no_desest:
             seasonal.run_desest(conn, "cemento", [
-                (config.TABLE, dict(table=config.TABLE, source_view=config.ACTUAL_VIEW,
-                                    keep_dir=args.x13_out))])
+                (config.MAIN_SERIE, dict(
+                    table=config.TABLE, source_view=config.ACTUAL_VIEW,
+                    conflict_cols=("serie", "date"), extra_cols={"serie": config.MAIN_SERIE},
+                    where="serie = %s", where_params=(config.MAIN_SERIE,),
+                    keep_dir=args.x13_out))])
     finally:
         conn.close()
 

@@ -11,6 +11,7 @@ from pathlib import Path
 from etl.core import db
 
 DATASETS_DIR = Path(__file__).parent / "datasets"
+UNIFIED_SCHEMA = Path(__file__).parent / "schema_unified.sql"
 ALL = ["granos", "cemento", "automotriz"]
 
 
@@ -24,6 +25,18 @@ def apply_schema(conn, name: str) -> bool:
         cur.execute(sql)
     conn.commit()
     print(f"  {name}  -> schema aplicado")
+    return True
+
+
+def apply_unified(conn) -> bool:
+    """Vistas unificadas (series_actual / series_desest). Dependen de los 3 datasets."""
+    if not UNIFIED_SCHEMA.is_file():
+        return False
+    sql = UNIFIED_SCHEMA.read_text(encoding="utf-8")
+    with conn.cursor() as cur:
+        cur.execute(sql)
+    conn.commit()
+    print("  unificadas  -> series_actual / series_desest")
     return True
 
 
@@ -44,6 +57,9 @@ def main(argv=None) -> None:
     try:
         for name in names:
             aplicados += apply_schema(conn, name)
+        # Las vistas unificadas referencian las 3 tablas: solo cuando se inicializan todas.
+        if set(names) >= set(ALL):
+            apply_unified(conn)
     finally:
         conn.close()
     print(f"resumen [init-db]  aplicados={aplicados}")

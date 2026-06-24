@@ -63,15 +63,19 @@ def main(argv=None) -> None:
         sys.exit(1)
 
     rep = report.Report("granos", "load-history")
-    rep.info(f"Excel: {len(rows)} filas | rango: {rows[0][0]:%Y-%m}..{rows[-1][0]:%Y-%m}")
+    rep.info(f"Excel: {len(rows)} filas x {len(config.SERIES)} series | "
+             f"rango: {rows[0][0]:%Y-%m}..{rows[-1][0]:%Y-%m}")
     conn = db.get_conn()
     try:
         for date, row in rows:
-            rep.tally(db.insert_if_changed(
-                conn, table=config.TABLE, key_cols=config.KEY_COLS, key_vals=[date],
-                value_cols=config.VALUE_COLS, row=row, estado=None, fuente=FUENTE,
-                force=args.force,
-            ))
+            for serie in config.SERIES:
+                col = config.SERIE_COL.get(serie, serie)
+                rep.tally(db.insert_if_changed(
+                    conn, table=config.TABLE, key_cols=config.KEY_COLS,
+                    key_vals=[serie, date], value_cols=config.VALUE_COLS,
+                    row={"valor": row[col]}, estado=None, fuente=FUENTE,
+                    force=args.force,
+                ))
     finally:
         conn.close()
     rep.summary()

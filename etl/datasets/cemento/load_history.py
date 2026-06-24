@@ -53,16 +53,19 @@ def main(argv=None):
 
     rows = read_rows(args.xlsx)
     rep = report.Report("cemento", "load-history")
-    rep.info(f"Excel: {len(rows)} filas | excluido(abril-2026, se carga por scraping): 1")
+    rep.info(f"Excel: {len(rows)} filas (serie {config.MAIN_SERIE}) | "
+             f"excluido(abril-2026, se carga por scraping): 1")
     conn = db.get_conn()
     try:
+        # El xlsx histórico solo tiene la serie principal (despacho_nacional); las otras 3
+        # series se llenan vía scraping de los 'definitivo'.
         for fecha, valor in rows:
             if fecha in EXCLUDE:
                 continue
             rep.tally(db.insert_if_changed(
-                conn, table=config.TABLE, key_cols=config.KEY_COLS, key_vals=[fecha],
-                value_cols=config.VALUE_COLS, row={"valor": valor}, estado=None,
-                fuente=FUENTE, force=args.force,
+                conn, table=config.TABLE, key_cols=config.KEY_COLS,
+                key_vals=[config.MAIN_SERIE, fecha], value_cols=config.VALUE_COLS,
+                row={"valor": valor}, estado=None, fuente=FUENTE, force=args.force,
             ))
     finally:
         conn.close()

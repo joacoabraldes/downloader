@@ -13,8 +13,16 @@ Census X-13** reutilizable. La base es el proyecto **`afcp_cemento`** de Supabas
 | `cemento` | `cemento_despacho` | `cemento.xlsx` | HTML AFCP (provisorio/definitivo) |
 | `automotriz` | `automotriz` | `ind_automotriz.xlsx` | **PDF ADEFA** (pdfplumber) |
 
-`automotriz` maneja 3 series — **produccion, ventas (mayoristas), expo** — en formato
-*long* (una fila por `serie, date, estado`), cada una desestacionalizada por separado.
+Las tres tablas están en formato **long** (una fila por `serie, date, estado`). Series por
+dataset:
+- **granos**: `total` (molienda total) + los 7 granos `soja`, `girasol`, `lino`, `mani`,
+  `algodon`, `cartamo`, `canola`.
+- **cemento**: `despacho_nacional` + `exportacion`, `consumo_despacho_nacional`,
+  `importaciones_propias` (estas 3 solo se llenan en los `definitivo`).
+- **automotriz**: `produccion`, `ventas` (mayoristas), `expo`.
+
+La desest X-13 corre sobre la **serie principal** de cada dataset (granos `total`, cemento
+`despacho_nacional`) y, en automotriz, sobre las 3.
 
 ## Estructura del repo
 
@@ -87,9 +95,14 @@ python -m etl export automotriz --dir ~/csvs
 Cada tabla es **append-only**: una corrida inserta un snapshot nuevo (con `ingested_at`)
 solo si el valor es nuevo o cambió respecto del último de ese `(clave, estado)`. `estado`:
 `NULL` = histórico (Excel) · `provisorio`/`definitivo` = fuente mensual · `desestacionalizado`
-= X-13. Vistas por serie:
-- `<serie>_actual`: serie **observada** (último snapshot por mes, excluye la desest).
-- `<serie>_desest`: serie **desestacionalizada** (X-13), un valor por mes.
+= X-13. Vistas por dataset:
+- `<tabla>_actual`: serie **observada** (último snapshot por `serie, mes`, excluye la desest).
+- `<tabla>_desest`: serie **desestacionalizada** (X-13), un valor por `serie, mes`.
+
+Y dos vistas que **homogeneízan el consumo** de los 3 datasets en una sola forma (agregan una
+columna `dataset`):
+- `series_actual`: serie observada actual de granos + cemento + automotriz.
+- `series_desest`: serie desestacionalizada de los 3.
 
 ## Desestacionalización (Census X-13)
 

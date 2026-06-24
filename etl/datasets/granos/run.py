@@ -78,18 +78,24 @@ def main(argv=None) -> None:
                  f"{max(parsed):%Y-%m}) | a procesar: {len(dates)}")
         for d in dates:
             row = parsed[d]
-            status = db.insert_if_changed(
-                conn, table=config.TABLE, key_cols=config.KEY_COLS, key_vals=[d],
-                value_cols=config.VALUE_COLS, row=row, estado=ESTADO,
-                fuente=source.PAGE_URL, force=args.force,
-            )
-            rep.item(d, status, valor=row["valor"])
+            for serie in config.SERIES:
+                col = config.SERIE_COL.get(serie, serie)
+                status = db.insert_if_changed(
+                    conn, table=config.TABLE, key_cols=config.KEY_COLS,
+                    key_vals=[serie, d], value_cols=config.VALUE_COLS,
+                    row={"valor": row[col]}, estado=ESTADO,
+                    fuente=source.PAGE_URL, force=args.force,
+                )
+                rep.item(f"{d:%Y-%m} {serie:9}", status, valor=row[col])
         rep.summary()
 
         if not args.no_desest:
             seasonal.run_desest(conn, "granos", [
-                (config.TABLE, dict(table=config.TABLE, source_view=config.ACTUAL_VIEW,
-                                    keep_dir=args.x13_out))])
+                (config.MAIN_SERIE, dict(
+                    table=config.TABLE, source_view=config.ACTUAL_VIEW,
+                    conflict_cols=("serie", "date"), extra_cols={"serie": config.MAIN_SERIE},
+                    where="serie = %s", where_params=(config.MAIN_SERIE,),
+                    keep_dir=args.x13_out))])
     finally:
         conn.close()
 
