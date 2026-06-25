@@ -21,6 +21,8 @@ import subprocess
 import tempfile
 from datetime import date
 
+from psycopg2.extras import Json
+
 MIN_MESES = 36           # X-13 necesita varios años de historia
 VALORES_POR_LINEA = 10   # X-13 corta líneas de input a ~132 chars
 
@@ -50,22 +52,33 @@ def _es_contigua(dates) -> bool:
 
 
 def _write_spc(path, dates, values, mode=None):
-    """Escribe el .spc de X-13 con los datos wrapeados a VALORES_POR_LINEA por línea.
+    """Escribe el .spc de X-13: preajuste regARIMA (modelo ARIMA automático + outliers) + X-11.
 
-    `mode` = modo del X-11 ('add' aditivo / None = default multiplicativo). El
-    multiplicativo no admite valores <= 0; para series con ceros/negativos usar 'add'.
+    Flujo X-13ARIMA-SEATS estándar: `automdl` elige un modelo ARIMA sobre la serie, `outlier`
+    detecta outliers (AO/LS/TC), X-13 extiende la serie con pronósticos del modelo y recién ahí
+    `x11` hace la descomposición (leemos d11). Esto se acerca al X-13 "completo" (a diferencia
+    del X-11 pelado anterior).
+
+    `mode` = modo del X-11 ('add' aditivo / None = multiplicativo). El multiplicativo va con
+    `transform=log` (requiere serie estrictamente positiva); el aditivo con `transform=none`
+    (admite ceros, p.ej. produccion abril-2020). Esa elección la hace el caller según si la
+    serie tiene algún valor <= 0.
     """
     y, m = dates[0].year, dates[0].month
     nums = [f"{v:.3f}" for v in values]
     bloques = ["  " + " ".join(nums[i:i + VALORES_POR_LINEA])
                for i in range(0, len(nums), VALORES_POR_LINEA)]
     data = "\n".join(bloques)
+    transform = "none" if mode == "add" else "log"
     # d10=factores estacionales, d11=serie desest, d12=tendencia, d13=irregular.
     saves = "save=(d10 d11 d12 d13)"
-    x11_opts = saves if not mode else f"mode={mode} {saves}"
+    x11_opts = f"mode=add {saves}" if mode == "add" else saves
     spc = (
         f'series{{ title="serie" start={y}.{m:02d} period=12\n'
         f' data=(\n{data}\n ) }}\n'
+        f'transform{{ function={transform} }}\n'
+        f'automdl{{ }}\n'
+        f'outlier{{ }}\n'
         f'x11{{ {x11_opts} }}\n'
     )
     with open(path, "w") as f:
@@ -85,6 +98,27 @@ def _parse_d11(path):
                 continue  # saltea header y separador
             out.append((date(int(ym[:4]), int(ym[4:6]), 1), round(float(val), 3)))
     return out
+
+
+def _read_udg(path) -> dict:
+    """Lee el `.udg` de x13as (diagnósticos en líneas 'clave: valor') a un dict. {} si no está."""
+    out = {}
+    if os.path.isfile(path):
+        with open(path) as f:
+            for ln in f:
+                if ":" in ln:
+                    k, _, v = ln.partition(":")
+                    out[k.strip()] = v.strip()
+    return out
+
+
+def _arima_model(udg: dict):
+    """Modelo ARIMA elegido por automdl, leído del .udg (la clave varía según build; probamos
+    varias). Devuelve el string del modelo (ej. '(0 1 1)(0 1 1)') o None."""
+    for k in ("arimamdl", "automdl.model", "arima.model", "samodel", "finalmodel"):
+        if udg.get(k):
+            return udg[k]
+    return None
 
 
 def x13_available() -> bool:
@@ -160,19 +194,41 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
                        outdir=workdir if keep_dir else None)
     series = _parse_d11(d11)
 
+    # Parámetros de la corrida X-13, para auditar por qué un valor puede no coincidir con otro
+    # cálculo. Corremos regARIMA (modelo ARIMA automático + outliers) + X-11; el modelo que
+    # eligió automdl se lee del .udg. Lo que más mueve la serie ajustada es el modo (mult/add).
+    udg = _read_udg(os.path.join(workdir, base + ".udg"))
+    params = {
+        "metodo": "x11",
+        "modo": "aditivo" if mode == "add" else "multiplicativo",
+        "transform": "none" if mode == "add" else "log",
+        "regarima": True,        # preajuste regARIMA con modelo ARIMA automático (automdl)
+        "automdl": True,
+        "outliers": "auto",      # outlier{} detecta AO/LS/TC
+        "tabla": "d11",          # serie ajustada por X-11 que leemos
+        "n_meses": len(rows),
+    }
+    arima = _arima_model(udg)
+    if arima:
+        params["arima"] = arima   # modelo ARIMA elegido (ej. '(0 1 1)(0 1 1)')
+    if mode == "add":
+        params["modo_motivo"] = "serie con algun valor <= 0 (el X-11 multiplicativo no lo admite)"
+    params_json = Json(params)
+
     # 3. UPSERT: 1 fila por mes con estado=out_estado (se actualiza cada corrida).
-    cols = list(extra_cols) + ["date", "valor", "estado", "fuente"]
+    cols = list(extra_cols) + ["date", "valor", "estado", "fuente", "parametros"]
     placeholders = ", ".join(["%s"] * len(cols))
     target = ", ".join(conflict_cols)
     sql = (
         f"insert into {table} ({', '.join(cols)}) values ({placeholders}) "
         f"on conflict ({target}) where estado = '{out_estado}' "
-        f"do update set valor = excluded.valor, ingested_at = now()"
+        f"do update set valor = excluded.valor, ingested_at = now(), "
+        f"parametros = excluded.parametros"
     )
     fixed = list(extra_cols.values())
     with conn.cursor() as cur:
         for d, val in series:
-            cur.execute(sql, fixed + [d, val, out_estado, fuente])
+            cur.execute(sql, fixed + [d, val, out_estado, fuente, params_json])
     conn.commit()
 
     if not keep_dir:

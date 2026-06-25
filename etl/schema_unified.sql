@@ -17,12 +17,13 @@ create or replace view series_actual as
     from automotriz_actual;
 
 -- Serie desestacionalizada (X-13) de todos los datasets, un valor por serie/mes.
+-- `parametros` (jsonb) trae lo que se usó en la corrida X-13 (modo mult/add, metodo, etc.).
 create or replace view series_desest as
-  select 'granos'::text     as dataset, serie, date, valor, fuente, ingested_at
+  select 'granos'::text     as dataset, serie, date, valor, fuente, ingested_at, parametros
     from molienda_granos_desest
   union all
-  select 'cemento'::text    as dataset, serie, date, valor, fuente, ingested_at
+  select 'cemento'::text    as dataset, serie, date, valor, fuente, ingested_at, parametros
     from cemento_despacho_desest
   union all
-  select 'automotriz'::text as dataset, serie, date, valor, fuente, ingested_at
+  select 'automotriz'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
     from automotriz_desest;

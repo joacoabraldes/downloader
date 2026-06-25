@@ -48,7 +48,12 @@ Crear un archivo **`.env`** en la raíz (no se versiona) con la connection strin
 ```
 DATABASE_URL=postgresql://postgres.<ref>:<PASS>@aws-1-<region>.pooler.supabase.com:5432/postgres
 X13PATH=/ruta/a/la/carpeta/del/binario/x13as     # opcional, para la desestacionalización
+CEMENTO_PROXY=http://usuario:pass@host:puerto     # opcional; salida de cemento por proxy (afcp.info bloquea IPs de datacenter)
 ```
+> En vez de `DATABASE_URL` también se aceptan las variables sueltas
+> `PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD` (o `POSTGRES_*`) — útil cuando la base ya las
+> expone en el entorno (p.ej. el server). `CEMENTO_PROXY` evita tener que anteponer
+> `HTTPS_PROXY=... ` al comando de cemento: se setea una vez y `python -m etl cemento` lo usa solo.
 
 ## 1) Crear las tablas (DDL)
 
@@ -97,7 +102,9 @@ solo si el valor es nuevo o cambió respecto del último de ese `(clave, estado)
 `NULL` = histórico (Excel) · `provisorio`/`definitivo` = fuente mensual · `desestacionalizado`
 = X-13. Vistas por dataset:
 - `<tabla>_actual`: serie **observada** (último snapshot por `serie, mes`, excluye la desest).
-- `<tabla>_desest`: serie **desestacionalizada** (X-13), un valor por `serie, mes`.
+- `<tabla>_desest`: serie **desestacionalizada** (X-13), un valor por `serie, mes`. Incluye
+  la columna **`parametros`** (jsonb) con lo que se usó en la corrida (modo mult/add, método,
+  etc.), para poder auditar diferencias contra otro cálculo.
 
 Y dos vistas que **homogeneízan el consumo** de los 3 datasets en una sola forma (agregan una
 columna `dataset`):
@@ -109,6 +116,14 @@ columna `dataset`):
 `etl/core/seasonal.py` arma un `.spc`, ejecuta el binario `x13as` (ruta en `X13PATH`) y lee
 la tabla **d11**. Si `X13PATH`/el binario no están, **saltea con aviso** (no rompe el ETL;
 útil para correr el resto en Windows y la desest en una VM Linux).
+
+Corre el flujo **X-13ARIMA-SEATS** con preajuste **regARIMA** (modelo ARIMA automático vía
+`automdl`) + detección de **outliers**, y descomposición **X-11** (leemos d11). El modo es
+multiplicativo (`transform=log`) por default, o aditivo (`transform=none`) si la serie tiene
+algún valor ≤ 0. Cada fila desestacionalizada guarda en **`parametros`** (jsonb) lo que se usó:
+`{metodo, modo, transform, regarima, automdl, outliers, tabla, n_meses, arima}` — donde `arima`
+es el modelo que eligió automdl (ej. `(0 1 1)(0 1 1)`), leído del `.udg` (+ `modo_motivo` cuando
+va en aditivo).
 
 **Guardar la salida de X-13 (para auditar / ajustar la serie):** agregá `--x13-out DIR` a
 cualquier `run`. Guarda en `DIR/<serie>/` el corrido completo de `x13as`: el `serie.html`

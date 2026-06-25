@@ -11,10 +11,14 @@ Hay dos fuentes:
 NOTA: los selectores/regex se afinan contra el HTML real. Las funciones de parsing
 reciben el HTML como string para poder testearlas con fixtures.
 """
+import os
 import re
 
 import requests
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BASE = "https://afcp.info/ESTADISTICAS"
 HEADERS = {"User-Agent": "Mozilla/5.0 (cemento_downloader ETL)"}
@@ -23,6 +27,15 @@ TIMEOUT = 30
 # Sesión compartida: reutiliza la conexión TCP/TLS (keep-alive) entre meses.
 SESSION = requests.Session()
 SESSION.headers.update(HEADERS)
+
+# afcp.info bloquea la IP de salida del server (datacenter GCP), así que la VM no llega directo
+# y hay que salir por un proxy. La URL del proxy se configura en UNA variable, CEMENTO_PROXY
+# (en el .env local, o exportada en el server/cron), igual que las vars de Postgres. Así el
+# comando es siempre `python -m etl cemento` (sin prefijos) y cambiar de proxy = editar una
+# sola línea. Formato: http://usuario:pass@host:puerto  (vacía = conexión directa).
+_PROXY = os.environ.get("CEMENTO_PROXY")
+if _PROXY:
+    SESSION.proxies = {"http": _PROXY, "https": _PROXY}
 
 MESES = {
     1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",

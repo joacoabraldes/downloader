@@ -10,8 +10,11 @@ create table if not exists automotriz (
   valor       double precision,                -- unidades
   estado      text,                            -- NULL=histórico (Excel) / provisorio (PDF) / desestacionalizado (X-13)
   fuente      text,                            -- 'excel historico' / URL del PDF ADEFA / 'census x13'
+  parametros  jsonb,                           -- solo en desest: parámetros de la corrida X-13 (modo, metodo, ...)
   ingested_at timestamptz not null default now()
 );
+-- Upgrade idempotente para bases ya creadas sin esta columna.
+alter table automotriz add column if not exists parametros jsonb;
 
 -- Búsqueda del último snapshot de un (serie, date, estado).
 create index if not exists automotriz_serie_date_estado_idx
@@ -38,7 +41,7 @@ order by serie, date,
 -- Serie desestacionalizada (X-13), un valor por (serie, mes).
 create or replace view automotriz_desest as
 select distinct on (serie, date)
-    serie, date, valor, fuente, ingested_at
+    serie, date, valor, fuente, ingested_at, parametros
 from automotriz
 where estado = 'desestacionalizado'
 order by serie, date, ingested_at desc;

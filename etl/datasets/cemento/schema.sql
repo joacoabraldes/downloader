@@ -14,8 +14,11 @@ create table if not exists cemento_despacho (
   valor       double precision,             -- miles de toneladas
   estado      text    check (estado in ('provisorio','definitivo','desestacionalizado')),  -- null = histórico xlsx
   fuente      text,                           -- url de origen / 'census x13' (null para histórico)
+  parametros  jsonb,                          -- solo en desest: parámetros de la corrida X-13 (modo, metodo, ...)
   ingested_at timestamptz not null default now()
 );
+-- Upgrade idempotente para bases ya creadas sin esta columna.
+alter table cemento_despacho add column if not exists parametros jsonb;
 
 create index if not exists cemento_despacho_serie_date_estado_idx
   on cemento_despacho (serie, date, estado, ingested_at desc);
@@ -39,7 +42,7 @@ order by serie, date,
 
 -- Serie desestacionalizada (Census X-13), un valor por (serie, mes).
 create or replace view cemento_despacho_desest as
-select distinct on (serie, date) serie, date, valor, fuente, ingested_at
+select distinct on (serie, date) serie, date, valor, fuente, ingested_at, parametros
 from cemento_despacho
 where estado = 'desestacionalizado'
 order by serie, date, ingested_at desc;

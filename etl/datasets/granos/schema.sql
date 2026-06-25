@@ -11,8 +11,11 @@ create table if not exists molienda_granos (
     valor       double precision,                -- toneladas
     estado      text,                            -- NULL=histórico (Excel) / provisorio (HTML) / desestacionalizado (X-13)
     fuente      text,                            -- URL del HTML / 'excel historico' / 'census x13'
+    parametros  jsonb,                           -- solo en desest: parámetros de la corrida X-13 (modo, metodo, ...)
     ingested_at timestamptz not null default now()
 );
+-- Upgrade idempotente para bases ya creadas sin esta columna.
+alter table molienda_granos add column if not exists parametros jsonb;
 
 -- Búsqueda del último snapshot de un (serie, date, estado).
 create index if not exists molienda_granos_serie_date_estado_idx
@@ -37,7 +40,7 @@ order by serie, date,
 -- Serie desestacionalizada (X-13), un valor por (serie, mes).
 create or replace view molienda_granos_desest as
 select distinct on (serie, date)
-    serie, date, valor, fuente, ingested_at
+    serie, date, valor, fuente, ingested_at, parametros
 from molienda_granos
 where estado = 'desestacionalizado'
 order by serie, date, ingested_at desc;
