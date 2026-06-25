@@ -16,6 +16,7 @@ la demo en Windows siguen andando (la desest se corre aparte, p.ej. en una VM Li
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -100,24 +101,31 @@ def _parse_d11(path):
     return out
 
 
-def _read_udg(path) -> dict:
-    """Lee el `.udg` de x13as (diagnósticos en líneas 'clave: valor') a un dict. {} si no está."""
-    out = {}
-    if os.path.isfile(path):
-        with open(path) as f:
-            for ln in f:
-                if ":" in ln:
-                    k, _, v = ln.partition(":")
-                    out[k.strip()] = v.strip()
-    return out
+_TAG_RE = re.compile(r"<[^>]*>")
+# Modelo ARIMA: dos triples entre paréntesis, ej. (1 1 1)(0 1 1).
+_MODEL_RE = re.compile(r"\(\s*\d+\s+\d+\s+\d+\s*\)\s*\(\s*\d+\s+\d+\s+\d+\s*\)")
 
 
-def _arima_model(udg: dict):
-    """Modelo ARIMA elegido por automdl, leído del .udg (la clave varía según build; probamos
-    varias). Devuelve el string del modelo (ej. '(0 1 1)(0 1 1)') o None."""
-    for k in ("arimamdl", "automdl.model", "arima.model", "samodel", "finalmodel"):
-        if udg.get(k):
-            return udg[k]
+def _arima_model(workdir, base):
+    """Modelo ARIMA elegido por automdl, leído del `serie.html` (la build HTML no genera .udg).
+
+    Ancla en 'Final automatic model choice' o 'ARIMA Model:' para tomar el modelo FINAL (no el
+    'Preliminary model choice'). Devuelve el string normalizado, ej. '(1 1 1)(0 1 1)', o None.
+    """
+    path = os.path.join(workdir, base + ".html")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            text = _TAG_RE.sub("", f.read())
+    except OSError:
+        return None
+    for label in ("Final automatic model choice", "ARIMA Model:"):
+        idx = text.find(label)
+        if idx != -1:
+            m = _MODEL_RE.search(text, idx)
+            if m:
+                return re.sub(r"\s+", " ", m.group(0))
     return None
 
 
@@ -197,7 +205,6 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
     # Parámetros de la corrida X-13, para auditar por qué un valor puede no coincidir con otro
     # cálculo. Corremos regARIMA (modelo ARIMA automático + outliers) + X-11; el modelo que
     # eligió automdl se lee del .udg. Lo que más mueve la serie ajustada es el modo (mult/add).
-    udg = _read_udg(os.path.join(workdir, base + ".udg"))
     params = {
         "metodo": "x11",
         "modo": "aditivo" if mode == "add" else "multiplicativo",
@@ -208,7 +215,7 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
         "tabla": "d11",          # serie ajustada por X-11 que leemos
         "n_meses": len(rows),
     }
-    arima = _arima_model(udg)
+    arima = _arima_model(workdir, base)
     if arima:
         params["arima"] = arima   # modelo ARIMA elegido (ej. '(0 1 1)(0 1 1)')
     if mode == "add":

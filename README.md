@@ -122,8 +122,8 @@ Corre el flujo **X-13ARIMA-SEATS** con preajuste **regARIMA** (modelo ARIMA auto
 multiplicativo (`transform=log`) por default, o aditivo (`transform=none`) si la serie tiene
 algún valor ≤ 0. Cada fila desestacionalizada guarda en **`parametros`** (jsonb) lo que se usó:
 `{metodo, modo, transform, regarima, automdl, outliers, tabla, n_meses, arima}` — donde `arima`
-es el modelo que eligió automdl (ej. `(0 1 1)(0 1 1)`), leído del `.udg` (+ `modo_motivo` cuando
-va en aditivo).
+es el modelo que eligió automdl (ej. `(1 1 1)(0 1 1)`), parseado del `serie.html` (la build HTML
+no genera `.udg`) anclando en "Final automatic model choice" (+ `modo_motivo` cuando va en aditivo).
 
 **Guardar la salida de X-13 (para auditar / ajustar la serie):** agregá `--x13-out DIR` a
 cualquier `run`. Guarda en `DIR/<serie>/` el corrido completo de `x13as`: el `serie.html`
