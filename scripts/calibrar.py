@@ -1,18 +1,23 @@
 """Harness de calibración del X-13 contra la referencia de Juan (produccion).
 
-Objetivo: encontrar qué configuración de X-13 (modo, modelo, outliers, método)
+Objetivo: encontrar qué configuración de X-13 (modo, modelo, outliers, filtro estacional)
 reproduce los valores desestacionalizados de Juan a partir de los originales.
 
 Lee `autos_prod.xlsx` (3 columnas sin header: fecha | original | desest_juan), y para
 cada variante de spec corre el binario x13as sobre los ORIGINALES de Juan, lee la serie
-ajustada y la compara contra la columna desest_juan (error max/medio + el valor puntual
-de abril-2020, que es el "tell": Juan da -1914 ahí => aditivo y sin outlier).
+ajustada y la compara contra la columna desest_juan. Reporta:
+  - err_medio   : error absoluto medio sobre TODOS los meses
+  - err_exCOVID : error medio EXCLUYENDO 2020-2021 (si esto se va a ~0, matcheamos salvo COVID)
+  - err_max @   : peor error y en qué mes cae
+  - abr2020     : el valor en abril-2020 (Juan da -1914; es el "tell")
 
-Uso (en el server, con el venv activado y X13PATH seteado):
+Iteración 2: ninguna de las variantes estándar matcheó (las aditivas dan abr2020 ~+690,
+Juan da -1914), así que ahora barremos el FILTRO ESTACIONAL del X-11 (seasonalma), que es
+la palanca que más mueve los factores estacionales.
+
+Uso (en el server, venv activado, X13PATH seteado):
     python scripts/calibrar.py [ruta_al_xlsx]
-
-Necesita: openpyxl (ya está en el venv) y el binario x13as (vía X13PATH o ~/x13).
-NO toca la base de datos. Deja la salida de cada variante en /tmp/calibrar/<n>/ para inspeccionar.
+NO toca la base. Deja la salida de cada variante en /tmp/calibrar/<n>/.
 """
 from __future__ import annotations
 
@@ -26,12 +31,12 @@ import openpyxl
 
 OUT_BASE = "/tmp/calibrar"
 APR2020 = (2020, 4)
+COVID_YEARS = {2020, 2021}
 _MODEL_RE = re.compile(r"\(\s*\d+\s+\d+\s+\d+\s*\)\s*\(\s*\d+\s+\d+\s+\d+\s*\)")
 _TAG_RE = re.compile(r"<[^>]*>")
 
 
 def find_binary() -> str:
-    """Ruta al binario x13as: X13PATH (archivo o carpeta) o ~/x13/x13as/x13as_html."""
     p = os.environ.get("X13PATH")
     cands = []
     if p:
@@ -46,7 +51,6 @@ def find_binary() -> str:
 
 
 def read_juan(path: str):
-    """(dates, original, desest_juan) desde el xlsx (col A=fecha, B=original, C=desest)."""
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb[wb.sheetnames[0]]
     dates, orig, des = [], [], []
@@ -62,7 +66,6 @@ def read_juan(path: str):
 
 
 def interp_nonpositive(values):
-    """Reemplaza valores <= 0 por interpolación lineal de vecinos positivos (para log/mult)."""
     v = list(values)
     n = len(v)
     for i in range(n):
@@ -77,12 +80,8 @@ def interp_nonpositive(values):
             right = values[k] if k < n else None
             if left is not None and right is not None:
                 v[i] = left + (right - left) * (i - j) / (k - j)
-            elif left is not None:
-                v[i] = left
-            elif right is not None:
-                v[i] = right
             else:
-                v[i] = 1.0
+                v[i] = left if left is not None else (right if right is not None else 1.0)
     return v
 
 
@@ -102,15 +101,21 @@ def build_spc(dates, values, opt) -> str:
     if opt.get("outlier"):
         lines.append("outlier{ }")
     if opt.get("decomp", "x11") == "x11":
-        mode = opt.get("mode")
-        lines.append(f'x11{{ {("mode=" + mode + " ") if mode else ""}save=(d11) }}')
+        parts = []
+        if opt.get("mode"):
+            parts.append(f"mode={opt['mode']}")
+        if opt.get("seasonalma"):
+            parts.append(f"seasonalma={opt['seasonalma']}")
+        if opt.get("trendma"):
+            parts.append(f"trendma={opt['trendma']}")
+        parts.append("save=(d11)")
+        lines.append("x11{ " + " ".join(parts) + " }")
     else:
         lines.append("seats{ save=(s11) }")
     return "\n".join(lines) + "\n"
 
 
 def parse_table(path):
-    """Lee un save table de x13as (lineas 'yyyymm valor') -> dict {(y,m): valor}."""
     out = {}
     with open(path) as f:
         for ln in f:
@@ -118,12 +123,11 @@ def parse_table(path):
             if len(parts) < 2:
                 continue
             ym = parts[0]
-            if not (len(ym) == 6 and ym.isdigit()):
-                continue
-            try:
-                out[(int(ym[:4]), int(ym[4:6]))] = float(parts[1])
-            except ValueError:
-                pass
+            if len(ym) == 6 and ym.isdigit():
+                try:
+                    out[(int(ym[:4]), int(ym[4:6]))] = float(parts[1])
+                except ValueError:
+                    pass
     return out
 
 
@@ -146,45 +150,48 @@ def run_variant(binary, dates, values, opt, workdir):
     os.makedirs(workdir, exist_ok=True)
     with open(os.path.join(workdir, "serie.spc"), "w") as f:
         f.write(build_spc(dates, values, opt))
-    subprocess.run([binary, "serie"], cwd=workdir, capture_output=True,
-                   text=True, timeout=180)
+    subprocess.run([binary, "serie"], cwd=workdir, capture_output=True, text=True, timeout=180)
     ext = ".d11" if opt.get("decomp", "x11") == "x11" else ".s11"
     p = os.path.join(workdir, "serie" + ext)
-    if not os.path.isfile(p):
-        return None
-    return parse_table(p)
+    return parse_table(p) if os.path.isfile(p) else None
 
 
-def compare(model_series, dates, desest):
-    """Devuelve (max_err, mean_err, valor_abr2020) comparando contra Juan."""
-    errs = []
-    apr = None
+def compare(series, dates, desest):
+    errs, errs_ex = [], []
+    apr, mx = None, (-1.0, None)
     for d, s in zip(dates, desest):
         if s is None:
             continue
-        got = model_series.get((d.year, d.month))
+        got = series.get((d.year, d.month))
         if got is None:
             continue
-        errs.append(abs(got - s))
+        e = abs(got - s)
+        errs.append(e)
+        if d.year not in COVID_YEARS:
+            errs_ex.append(e)
+        if e > mx[0]:
+            mx = (e, f"{d.year}-{d.month:02d}")
         if (d.year, d.month) == APR2020:
             apr = got
     if not errs:
-        return None, None, apr
-    return max(errs), sum(errs) / len(errs), apr
+        return None
+    return dict(mean=sum(errs) / len(errs),
+                mean_ex=(sum(errs_ex) / len(errs_ex)) if errs_ex else float("nan"),
+                mx=mx[0], mx_at=mx[1], apr=apr)
 
 
+# Iteración 2: foco en ADITIVO (mult/seats ya descartados) + barrido de filtro estacional.
 GRID = [
-    dict(label="X11 puro ADITIVO, sin outlier", mode="add", positive=False),
-    dict(label="X11 puro ADITIVO, sin outlier (mode auto)", mode=None, positive=False),
-    dict(label="X11 puro ADITIVO, CON outlier", transform="none", outlier=True, mode="add", positive=False),
-    dict(label="regARIMA(automdl) ADITIVO, sin outlier", transform="none", model="automdl", mode="add", positive=False),
-    dict(label="regARIMA(automdl) ADITIVO, CON outlier  [~actual]", transform="none", model="automdl", outlier=True, mode="add", positive=False),
-    dict(label="ARIMA(0 1 1)(0 1 1) ADITIVO, sin outlier", transform="none", model="(0 1 1)(0 1 1)", mode="add", positive=False),
-    dict(label="X11 puro MULT, sin outlier (cero interp)", mode="mult", positive=True),
-    dict(label="regARIMA(automdl) MULT, sin outlier (cero interp)", transform="log", model="automdl", positive=True),
-    dict(label="regARIMA(automdl) MULT, CON outlier (cero interp)", transform="log", model="automdl", outlier=True, positive=True),
-    dict(label="SEATS ADITIVO automdl, sin outlier", transform="none", model="automdl", decomp="seats", positive=False),
-    dict(label="SEATS MULT automdl, sin outlier (cero interp)", transform="log", model="automdl", decomp="seats", positive=True),
+    dict(label="ADITIVO X11 puro (msr default), sin outlier", mode="add"),
+    dict(label="ADITIVO automdl, sin outlier", transform="none", model="automdl", mode="add"),
+    dict(label="ADITIVO automdl, CON outlier  [~actual]", transform="none", model="automdl", outlier=True, mode="add"),
+    dict(label="ADITIVO X11 seasonalma=stable", mode="add", seasonalma="stable"),
+    dict(label="ADITIVO X11 seasonalma=s3x3", mode="add", seasonalma="s3x3"),
+    dict(label="ADITIVO X11 seasonalma=s3x5", mode="add", seasonalma="s3x5"),
+    dict(label="ADITIVO X11 seasonalma=s3x9", mode="add", seasonalma="s3x9"),
+    dict(label="ADITIVO X11 seasonalma=s3x15", mode="add", seasonalma="s3x15"),
+    dict(label="ADITIVO automdl seasonalma=s3x9, sin outlier", transform="none", model="automdl", mode="add", seasonalma="s3x9"),
+    dict(label="ADITIVO automdl seasonalma=stable, sin outlier", transform="none", model="automdl", mode="add", seasonalma="stable"),
 ]
 
 
@@ -198,8 +205,8 @@ def main(argv=None):
     dates, orig, desest = read_juan(xlsx)
     juan_apr = next((s for d, s in zip(dates, desest) if (d.year, d.month) == APR2020), None)
     print(f"binario: {binary}")
-    print(f"datos: {len(dates)} meses {dates[0]}..{dates[-1]} | desest_juan abr-2020 = {juan_apr}")
-    print(f"salidas en: {OUT_BASE}/<n>/\n")
+    print(f"datos: {len(dates)} meses {dates[0]}..{dates[-1]} | desest_juan abr-2020 = {juan_apr:.0f}")
+    print(f"(err_exCOVID excluye 2020-2021; si tiende a 0, matcheamos salvo COVID)\n")
 
     results = []
     for i, opt in enumerate(GRID):
@@ -208,25 +215,27 @@ def main(argv=None):
         try:
             series = run_variant(binary, dates, values, opt, workdir)
         except Exception as e:
-            print(f"[{i}] {opt['label']:50} ERROR: {e}")
+            print(f"[{i}] {opt['label']:46} ERROR: {e}")
             continue
-        if series is None:
-            print(f"[{i}] {opt['label']:50} sin salida (ver {workdir}/serie_err.html)")
+        if not series:
+            print(f"[{i}] {opt['label']:46} sin salida (ver {workdir}/serie_err.html)")
             continue
-        mx, mn, apr = compare(series, dates, desest)
-        arima = arima_from_html(workdir) if opt.get("model") == "automdl" else (opt.get("model") or "x11-puro")
-        results.append((mn, mx, apr, opt["label"], arima, i))
+        c = compare(series, dates, desest)
+        arima = arima_from_html(workdir) if opt.get("model") == "automdl" else (opt.get("model") or "x11")
+        results.append((c, opt["label"], arima, i))
 
-    print("\n==== RESULTADOS (ordenados por error medio; menor = mejor match a Juan) ====")
-    print(f"{'err_medio':>12} {'err_max':>12} {'abr2020':>10}  modelo            variante")
-    for mn, mx, apr, label, arima, i in sorted(results, key=lambda r: r[0]):
-        aprs = f"{apr:10.0f}" if apr is not None else "     n/a"
-        print(f"{mn:12.2f} {mx:12.2f} {aprs}  {str(arima):16}  [{i}] {label}")
+    print("\n==== RESULTADOS (orden por err_exCOVID; menor = mejor match a Juan) ====")
+    print(f"{'err_medio':>10} {'err_exCOVID':>12} {'err_max':>10} {'@mes':>8} {'abr2020':>9}  modelo          variante")
+    for c, label, arima, i in sorted(results, key=lambda r: (r[0]['mean_ex'])):
+        print(f"{c['mean']:10.1f} {c['mean_ex']:12.1f} {c['mx']:10.0f} {c['mx_at']:>8} "
+              f"{c['apr']:9.0f}  {str(arima):14}  [{i}] {label}")
 
     if results:
-        best = min(results, key=lambda r: r[0])
-        print(f"\nMEJOR: [{best[5]}] {best[3]}  (err_medio={best[0]:.2f}, abr2020={best[2]:.0f} vs juan={juan_apr:.0f})")
-        print(f"Mirá el spc/reporte en {OUT_BASE}/{best[5]}/serie.spc  y  serie.html")
+        best = min(results, key=lambda r: r[0]['mean_ex'])
+        c = best[0]
+        print(f"\nMEJOR (fuera de COVID): [{best[3]}] {best[1]}")
+        print(f"  err_exCOVID={c['mean_ex']:.1f}  err_medio={c['mean']:.1f}  abr2020={c['apr']:.0f} vs juan={juan_apr:.0f}")
+        print(f"  spc/reporte: {OUT_BASE}/{best[3]}/serie.spc  y  serie.html")
 
 
 if __name__ == "__main__":
