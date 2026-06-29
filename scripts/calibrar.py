@@ -101,7 +101,8 @@ def build_spc(dates, values, opt) -> str:
     elif model:
         lines.append(f"arima{{ model={model} }}")
     if opt.get("outlier"):
-        lines.append("outlier{ }")
+        crit = opt.get("critical")
+        lines.append("outlier{ " + (f"critical={crit} " if crit else "") + "}")
     if opt.get("decomp", "x11") == "x11":
         parts = []
         if opt.get("mode"):
@@ -112,6 +113,8 @@ def build_spc(dates, values, opt) -> str:
             parts.append(f"trendma={opt['trendma']}")
         parts.append("save=(d11)")
         lines.append("x11{ " + " ".join(parts) + " }")
+        if opt.get("x11reg"):  # trading-day estimado por el X-11 (forma "clásica")
+            lines.append(f"x11regression{{ variables=({opt['x11reg']}) }}")
     else:
         lines.append("seats{ save=(s11) }")
     return "\n".join(lines) + "\n"
@@ -182,15 +185,18 @@ def compare(series, dates, desest):
                 mx=mx[0], mx_at=mx[1], apr=apr)
 
 
-# Iteración 3: ni X-13 ni clásico matchearon -> probar AJUSTE POR DIAS HABILES (trading-day)
-# + Pascua, que para producción de autos puede explicar el patrón sistemático mes a mes.
+# Iteración 4: el TRADING-DAY bajó el error a la mitad (~1144 -> 484). Afinamos: TD vía
+# regARIMA vs vía X-11 (x11regression, la forma clásica), variantes de TD, sensibilidad de
+# outliers (critical) y modelos fijos. base = aditivo + automdl + td + outlier.
 GRID = [
-    dict(label="ref: ADITIVO X11 puro, sin outlier", mode="add"),
-    dict(label="ref: ADITIVO automdl, CON outlier  [~mejor actual]", transform="none", model="automdl", outlier=True, mode="add"),
-    dict(label="ADITIVO automdl + TRADING-DAY, sin outlier", transform="none", model="automdl", mode="add", reg="td"),
-    dict(label="ADITIVO automdl + TRADING-DAY, CON outlier", transform="none", model="automdl", outlier=True, mode="add", reg="td"),
-    dict(label="ADITIVO automdl + TD + Pascua, CON outlier", transform="none", model="automdl", outlier=True, mode="add", reg="td easter[8]"),
-    dict(label="MULT automdl + TRADING-DAY, CON outlier (cero interp)", transform="log", model="automdl", outlier=True, reg="td", positive=True),
+    dict(label="ref: TD(regARIMA) + outlier  [mejor iter3]", transform="none", model="automdl", outlier=True, mode="add", reg="td"),
+    dict(label="TD via X-11 (x11regression) + outlier", transform="none", model="automdl", outlier=True, mode="add", x11reg="td"),
+    dict(label="TD via X-11 (x11regression), SIN outlier", transform="none", model="automdl", mode="add", x11reg="td"),
+    dict(label="TD1coef(regARIMA) + outlier", transform="none", model="automdl", outlier=True, mode="add", reg="td1coef"),
+    dict(label="TD(regARIMA) + outlier critical=3", transform="none", model="automdl", outlier=True, critical=3, mode="add", reg="td"),
+    dict(label="TD(regARIMA) + outlier critical=5", transform="none", model="automdl", outlier=True, critical=5, mode="add", reg="td"),
+    dict(label="TD(regARIMA) + outlier + seasonalma=s3x5", transform="none", model="automdl", outlier=True, mode="add", reg="td", seasonalma="s3x5"),
+    dict(label="TD(regARIMA) + ARIMA(0 1 1)(0 1 1) + outlier", transform="none", model="(0 1 1)(0 1 1)", outlier=True, mode="add", reg="td"),
 ]
 
 
