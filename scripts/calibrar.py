@@ -93,6 +93,8 @@ def build_spc(dates, values, opt) -> str:
     lines = [f'series{{ title="serie" start={y}.{m:02d} period=12\n data=(\n{data}\n ) }}']
     if opt.get("transform"):
         lines.append(f'transform{{ function={opt["transform"]} }}')
+    if opt.get("reg"):
+        lines.append(f"regression{{ variables=({opt['reg']}) }}")
     model = opt.get("model")
     if model == "automdl":
         lines.append("automdl{ }")
@@ -180,18 +182,15 @@ def compare(series, dates, desest):
                 mx=mx[0], mx_at=mx[1], apr=apr)
 
 
-# Iteración 2: foco en ADITIVO (mult/seats ya descartados) + barrido de filtro estacional.
+# Iteración 3: ni X-13 ni clásico matchearon -> probar AJUSTE POR DIAS HABILES (trading-day)
+# + Pascua, que para producción de autos puede explicar el patrón sistemático mes a mes.
 GRID = [
-    dict(label="ADITIVO X11 puro (msr default), sin outlier", mode="add"),
-    dict(label="ADITIVO automdl, sin outlier", transform="none", model="automdl", mode="add"),
-    dict(label="ADITIVO automdl, CON outlier  [~actual]", transform="none", model="automdl", outlier=True, mode="add"),
-    dict(label="ADITIVO X11 seasonalma=stable", mode="add", seasonalma="stable"),
-    dict(label="ADITIVO X11 seasonalma=s3x3", mode="add", seasonalma="s3x3"),
-    dict(label="ADITIVO X11 seasonalma=s3x5", mode="add", seasonalma="s3x5"),
-    dict(label="ADITIVO X11 seasonalma=s3x9", mode="add", seasonalma="s3x9"),
-    dict(label="ADITIVO X11 seasonalma=s3x15", mode="add", seasonalma="s3x15"),
-    dict(label="ADITIVO automdl seasonalma=s3x9, sin outlier", transform="none", model="automdl", mode="add", seasonalma="s3x9"),
-    dict(label="ADITIVO automdl seasonalma=stable, sin outlier", transform="none", model="automdl", mode="add", seasonalma="stable"),
+    dict(label="ref: ADITIVO X11 puro, sin outlier", mode="add"),
+    dict(label="ref: ADITIVO automdl, CON outlier  [~mejor actual]", transform="none", model="automdl", outlier=True, mode="add"),
+    dict(label="ADITIVO automdl + TRADING-DAY, sin outlier", transform="none", model="automdl", mode="add", reg="td"),
+    dict(label="ADITIVO automdl + TRADING-DAY, CON outlier", transform="none", model="automdl", outlier=True, mode="add", reg="td"),
+    dict(label="ADITIVO automdl + TD + Pascua, CON outlier", transform="none", model="automdl", outlier=True, mode="add", reg="td easter[8]"),
+    dict(label="MULT automdl + TRADING-DAY, CON outlier (cero interp)", transform="log", model="automdl", outlier=True, reg="td", positive=True),
 ]
 
 
