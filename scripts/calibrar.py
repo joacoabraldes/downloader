@@ -185,18 +185,17 @@ def compare(series, dates, desest):
                 mx=mx[0], mx_at=mx[1], apr=apr)
 
 
-# Iteración 4: el TRADING-DAY bajó el error a la mitad (~1144 -> 484). Afinamos: TD vía
-# regARIMA vs vía X-11 (x11regression, la forma clásica), variantes de TD, sensibilidad de
-# outliers (critical) y modelos fijos. base = aditivo + automdl + td + outlier.
+# Iteración 5: td1coef (trading-day de 1 coeficiente) bajó el error a 145 (0.4%). Afinamos
+# alrededor de td1coef: leap-year, Pascua, filtro estacional, modelo fijo. base = aditivo +
+# automdl + td1coef + outlier.
 GRID = [
-    dict(label="ref: TD(regARIMA) + outlier  [mejor iter3]", transform="none", model="automdl", outlier=True, mode="add", reg="td"),
-    dict(label="TD via X-11 (x11regression) + outlier", transform="none", model="automdl", outlier=True, mode="add", x11reg="td"),
-    dict(label="TD via X-11 (x11regression), SIN outlier", transform="none", model="automdl", mode="add", x11reg="td"),
-    dict(label="TD1coef(regARIMA) + outlier", transform="none", model="automdl", outlier=True, mode="add", reg="td1coef"),
-    dict(label="TD(regARIMA) + outlier critical=3", transform="none", model="automdl", outlier=True, critical=3, mode="add", reg="td"),
-    dict(label="TD(regARIMA) + outlier critical=5", transform="none", model="automdl", outlier=True, critical=5, mode="add", reg="td"),
-    dict(label="TD(regARIMA) + outlier + seasonalma=s3x5", transform="none", model="automdl", outlier=True, mode="add", reg="td", seasonalma="s3x5"),
-    dict(label="TD(regARIMA) + ARIMA(0 1 1)(0 1 1) + outlier", transform="none", model="(0 1 1)(0 1 1)", outlier=True, mode="add", reg="td"),
+    dict(label="ref: td1coef + outlier  [mejor iter4]", transform="none", model="automdl", outlier=True, mode="add", reg="td1coef"),
+    dict(label="td1nolpyear + outlier (1 coef, sin leap-year)", transform="none", model="automdl", outlier=True, mode="add", reg="td1nolpyear"),
+    dict(label="td1coef + Pascua + outlier", transform="none", model="automdl", outlier=True, mode="add", reg="td1coef easter[8]"),
+    dict(label="td1coef + outlier + seasonalma=s3x5", transform="none", model="automdl", outlier=True, mode="add", reg="td1coef", seasonalma="s3x5"),
+    dict(label="td1coef + outlier + seasonalma=s3x3", transform="none", model="automdl", outlier=True, mode="add", reg="td1coef", seasonalma="s3x3"),
+    dict(label="td1coef + ARIMA(1 1 1)(0 1 1) fijo + outlier", transform="none", model="(1 1 1)(0 1 1)", outlier=True, mode="add", reg="td1coef"),
+    dict(label="td1coef SIN outlier", transform="none", model="automdl", mode="add", reg="td1coef"),
 ]
 
 
