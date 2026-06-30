@@ -117,13 +117,17 @@ columna `dataset`):
 la tabla **d11**. Si `X13PATH`/el binario no están, **saltea con aviso** (no rompe el ETL;
 útil para correr el resto en Windows y la desest en una VM Linux).
 
-Corre el flujo **X-13ARIMA-SEATS** con preajuste **regARIMA** (modelo ARIMA automático vía
-`automdl`) + detección de **outliers**, y descomposición **X-11** (leemos d11). El modo es
-multiplicativo (`transform=log`) por default, o aditivo (`transform=none`) si la serie tiene
-algún valor ≤ 0. Cada fila desestacionalizada guarda en **`parametros`** (jsonb) lo que se usó:
-`{metodo, modo, transform, regarima, automdl, outliers, tabla, n_meses, arima}` — donde `arima`
-es el modelo que eligió automdl (ej. `(1 1 1)(0 1 1)`), parseado del `serie.html` (la build HTML
-no genera `.udg`) anclando en "Final automatic model choice" (+ `modo_motivo` cuando va en aditivo).
+Corre el flujo **X-13ARIMA-SEATS**: preajuste **regARIMA** (modelo ARIMA automático vía
+`automdl`) + **ajuste por días hábiles** (`regression{variables=(td1coef)}`, trading-day de 1
+coeficiente — las series son de flujo: un mes con más días laborables produce/vende más) +
+detección de **outliers**, y descomposición **X-11** con filtro estacional **s3x5** (leemos
+d11). El modo es multiplicativo (`transform=log`) por default, o aditivo (`transform=none`) si
+la serie tiene algún valor ≤ 0. **Esta config reproduce exacto la referencia del jefe**
+(produccion, error 0; ver `scripts/calibrar.py`, el harness que la reverse-engineereó). Cada
+fila desestacionalizada guarda en **`parametros`** (jsonb) lo usado:
+`{metodo, modo, transform, regarima, automdl, outliers, trading_day, seasonalma, tabla,
+n_meses, arima}` — `arima` es el modelo que eligió automdl (ej. `(1 1 1)(0 1 1)`), parseado del
+`serie.html` (la build HTML no genera `.udg`) anclando en "Final automatic model choice".
 
 **Guardar la salida de X-13 (para auditar / ajustar la serie):** agregá `--x13-out DIR` a
 cualquier `run`. Guarda en `DIR/<serie>/` el corrido completo de `x13as`: el `serie.html`

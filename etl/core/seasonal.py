@@ -53,12 +53,15 @@ def _es_contigua(dates) -> bool:
 
 
 def _write_spc(path, dates, values, mode=None):
-    """Escribe el .spc de X-13: preajuste regARIMA (modelo ARIMA automático + outliers) + X-11.
+    """Escribe el .spc de X-13: regARIMA (modelo ARIMA auto + outliers) + trading-day + X-11.
 
-    Flujo X-13ARIMA-SEATS estándar: `automdl` elige un modelo ARIMA sobre la serie, `outlier`
-    detecta outliers (AO/LS/TC), X-13 extiende la serie con pronósticos del modelo y recién ahí
-    `x11` hace la descomposición (leemos d11). Esto se acerca al X-13 "completo" (a diferencia
-    del X-11 pelado anterior).
+    Esta config reproduce EXACTO la referencia del jefe para produccion (error 0 sobre los 388
+    meses; ver scripts/calibrar.py). Componentes:
+      - `transform`  none (aditivo) / log (multiplicativo), según `mode`.
+      - `regression{ variables=(td1coef) }`  ajuste por días hábiles, 1 coeficiente (clave: las
+        series son de flujo mensual; un mes con más días laborables produce/vende más).
+      - `automdl`  elige el modelo ARIMA; `outlier` detecta AO/LS/TC.
+      - `x11{ seasonalma=s3x5 }`  filtro estacional 3x5 (el que usa el jefe); leemos d11.
 
     `mode` = modo del X-11 ('add' aditivo / None = multiplicativo). El multiplicativo va con
     `transform=log` (requiere serie estrictamente positiva); el aditivo con `transform=none`
@@ -73,11 +76,12 @@ def _write_spc(path, dates, values, mode=None):
     transform = "none" if mode == "add" else "log"
     # d10=factores estacionales, d11=serie desest, d12=tendencia, d13=irregular.
     saves = "save=(d10 d11 d12 d13)"
-    x11_opts = f"mode=add {saves}" if mode == "add" else saves
+    x11_opts = ("mode=add seasonalma=s3x5 " if mode == "add" else "seasonalma=s3x5 ") + saves
     spc = (
         f'series{{ title="serie" start={y}.{m:02d} period=12\n'
         f' data=(\n{data}\n ) }}\n'
         f'transform{{ function={transform} }}\n'
+        f'regression{{ variables=(td1coef) }}\n'
         f'automdl{{ }}\n'
         f'outlier{{ }}\n'
         f'x11{{ {x11_opts} }}\n'
@@ -212,6 +216,8 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
         "regarima": True,        # preajuste regARIMA con modelo ARIMA automático (automdl)
         "automdl": True,
         "outliers": "auto",      # outlier{} detecta AO/LS/TC
+        "trading_day": "td1coef",  # ajuste por días hábiles, 1 coeficiente
+        "seasonalma": "s3x5",      # filtro estacional 3x5
         "tabla": "d11",          # serie ajustada por X-11 que leemos
         "n_meses": len(rows),
     }
