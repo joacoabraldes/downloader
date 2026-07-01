@@ -87,6 +87,7 @@ def main(argv=None):
                     table=config.TABLE, source_view=config.ACTUAL_VIEW,
                     conflict_cols=("serie", "date"), extra_cols={"serie": config.MAIN_SERIE},
                     where="serie = %s", where_params=(config.MAIN_SERIE,),
+                    td="td",  # cemento matchea al jefe con trading-day de 6 coef (no td1coef)
                     keep_dir=args.x13_out))])
     finally:
         conn.close()

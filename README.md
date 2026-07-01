@@ -118,12 +118,14 @@ la tabla **d11**. Si `X13PATH`/el binario no están, **saltea con aviso** (no ro
 útil para correr el resto en Windows y la desest en una VM Linux).
 
 Corre el flujo **X-13ARIMA-SEATS**: preajuste **regARIMA** (modelo ARIMA automático vía
-`automdl`) + **ajuste por días hábiles** (`regression{variables=(td1coef)}`, trading-day de 1
-coeficiente — las series son de flujo: un mes con más días laborables produce/vende más) +
-detección de **outliers**, y descomposición **X-11** con filtro estacional **s3x5** (leemos
-d11). El modo es multiplicativo (`transform=log`) por default, o aditivo (`transform=none`) si
-la serie tiene algún valor ≤ 0. **Esta config reproduce exacto la referencia del jefe**
-(produccion, error 0; ver `scripts/calibrar.py`, el harness que la reverse-engineereó). Cada
+`automdl`) + **ajuste por días hábiles** (`regression{variables=(<td>)}` — las series son de
+flujo: un mes con más días laborables produce/vende más) + detección de **outliers**, y
+descomposición **X-11** con filtro estacional **s3x5** (leemos d11). El modo es multiplicativo
+(`transform=log`) por default, o aditivo (`transform=none`) si la serie tiene algún valor ≤ 0.
+El **trading-day es por serie** (`deseasonalize(td=...)`, default `td1coef`): produccion usa
+`td1coef` (1 coef) y cemento `td` (6 coef). **Esta config reproduce exacto las referencias del
+jefe** (produccion y cemento, error 0; ver `scripts/calibrar.py` y `scripts/calibrar_cemento.py`,
+los harness que las reverse-engineerearon). Cada
 fila desestacionalizada guarda en **`parametros`** (jsonb) lo usado:
 `{metodo, modo, transform, regarima, automdl, outliers, trading_day, seasonalma, tabla,
 n_meses, arima}` — `arima` es el modelo que eligió automdl (ej. `(1 1 1)(0 1 1)`), parseado del

@@ -52,16 +52,16 @@ def _es_contigua(dates) -> bool:
     return True
 
 
-def _write_spc(path, dates, values, mode=None):
+def _write_spc(path, dates, values, mode=None, td="td1coef", seasonalma="s3x5"):
     """Escribe el .spc de X-13: regARIMA (modelo ARIMA auto + outliers) + trading-day + X-11.
 
-    Esta config reproduce EXACTO la referencia del jefe para produccion (error 0 sobre los 388
-    meses; ver scripts/calibrar.py). Componentes:
+    Esta config reproduce EXACTO las referencias del jefe (error 0; ver scripts/calibrar.py y
+    calibrar_cemento.py). Componentes:
       - `transform`  none (aditivo) / log (multiplicativo), según `mode`.
-      - `regression{ variables=(td1coef) }`  ajuste por días hábiles, 1 coeficiente (clave: las
-        series son de flujo mensual; un mes con más días laborables produce/vende más).
+      - `regression{ variables=(<td>) }`  ajuste por días hábiles. **Es por serie**: produccion
+        matchea con `td1coef` (1 coef) y cemento con `td` (6 coef). Default `td1coef`.
       - `automdl`  elige el modelo ARIMA; `outlier` detecta AO/LS/TC.
-      - `x11{ seasonalma=s3x5 }`  filtro estacional 3x5 (el que usa el jefe); leemos d11.
+      - `x11{ seasonalma=<…> }`  filtro estacional (s3x5 es el que usa el jefe); leemos d11.
 
     `mode` = modo del X-11 ('add' aditivo / None = multiplicativo). El multiplicativo va con
     `transform=log` (requiere serie estrictamente positiva); el aditivo con `transform=none`
@@ -76,12 +76,13 @@ def _write_spc(path, dates, values, mode=None):
     transform = "none" if mode == "add" else "log"
     # d10=factores estacionales, d11=serie desest, d12=tendencia, d13=irregular.
     saves = "save=(d10 d11 d12 d13)"
-    x11_opts = ("mode=add seasonalma=s3x5 " if mode == "add" else "seasonalma=s3x5 ") + saves
+    sma = f"seasonalma={seasonalma} "
+    x11_opts = (f"mode=add {sma}" if mode == "add" else sma) + saves
     spc = (
         f'series{{ title="serie" start={y}.{m:02d} period=12\n'
         f' data=(\n{data}\n ) }}\n'
         f'transform{{ function={transform} }}\n'
-        f'regression{{ variables=(td1coef) }}\n'
+        f'regression{{ variables=({td}) }}\n'
         f'automdl{{ }}\n'
         f'outlier{{ }}\n'
         f'x11{{ {x11_opts} }}\n'
@@ -146,12 +147,14 @@ def _result(tag, status, *, n=0, mode=None, reason="", outdir=None) -> dict:
 def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
                   extra_cols=None, where=None, where_params=(),
                   out_estado="desestacionalizado", fuente="census x13",
-                  keep_dir=None) -> dict:
+                  td="td1coef", seasonalma="s3x5", keep_dir=None) -> dict:
     """Corre X-13 sobre la serie observada y hace UPSERT de la desestacionalizada.
 
     - `source_view`   vista con (date, valor) de la serie observada.
     - `where`/`where_params`  filtro opcional sobre la vista (p.ej. por `serie`).
     - `extra_cols`    columnas fijas a setear en cada fila insertada (p.ej. {"serie": ...}).
+    - `td`            variable de trading-day del .spc; matchea al jefe POR SERIE (produccion
+                      `td1coef`, cemento `td`). `seasonalma`  filtro estacional (default s3x5).
     - `conflict_cols` columnas del índice parcial único (target del ON CONFLICT).
     - `keep_dir`      si se pasa, guarda la salida completa de x13as (serie.html con el
                       modelo/factores/diagnósticos, + tablas d10/d11/d12/d13 y el .spc) en
@@ -192,7 +195,8 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
     else:
         workdir = tempfile.mkdtemp(prefix="x13_")
     base = "serie"
-    _write_spc(os.path.join(workdir, base + ".spc"), dates, values, mode=mode)
+    _write_spc(os.path.join(workdir, base + ".spc"), dates, values, mode=mode,
+               td=td, seasonalma=seasonalma)
     try:
         subprocess.run([x13bin, base], cwd=workdir, capture_output=True,
                        text=True, timeout=120)
@@ -216,8 +220,8 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
         "regarima": True,        # preajuste regARIMA con modelo ARIMA automático (automdl)
         "automdl": True,
         "outliers": "auto",      # outlier{} detecta AO/LS/TC
-        "trading_day": "td1coef",  # ajuste por días hábiles, 1 coeficiente
-        "seasonalma": "s3x5",      # filtro estacional 3x5
+        "trading_day": td,       # ajuste por días hábiles (por serie: produccion td1coef, cemento td)
+        "seasonalma": seasonalma,  # filtro estacional (s3x5)
         "tabla": "d11",          # serie ajustada por X-11 que leemos
         "n_meses": len(rows),
     }

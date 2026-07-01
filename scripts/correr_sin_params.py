@@ -3,7 +3,8 @@
 Arma un .spc minimo con un unico bloque `series{...}` (sin transform, sin regression,
 sin automdl, sin outlier, sin x11/seats) y ejecuta X-13 para ver que resultado da.
 
-Compara contra la columna desest_juan de `autos_prod.xlsx` y muestra errores.
+Si X-13 no emite una tabla desestacionalizada, lo reporta como resultado esperado
+de una corrida sin bloque de descomposicion.
 
 Uso (server, venv activado, X13PATH seteado):
     python scripts/correr_sin_params.py [xlsx] [workdir]
@@ -93,30 +94,27 @@ def main(argv=None):
     if proc.returncode != 0:
         print(f"WARN: x13as devolvio codigo {proc.returncode}")
 
-    if not series:
-        err_html = os.path.join(workdir, "serie_err.html")
-        out_html = os.path.join(workdir, "serie.html")
-        sys.exit(
-            "No se encontro ninguna tabla de salida parseable (d11/s11/d12/d13/d10). "
-            f"Revisar: {err_html} y {out_html}.\n"
-            "El .spc usado (solo series) quedo en: "
-            f"{os.path.join(workdir, 'serie.spc')}"
-        )
-
-    comp = C.compare(series, dates, desest)
     model = C.arima_from_html(workdir)
 
-    print(f"tabla usada para comparar: {used_table}")
     print(f"modelo detectado en html: {model or 'N/D'}")
 
-    if comp:
-        print("\n=== Comparacion vs desest_juan ===")
-        print(f"err_medio   : {comp['mean']:.2f}")
-        print(f"err_exCOVID : {comp['mean_ex']:.2f}")
-        print(f"err_max     : {comp['mx']:.2f} @ {comp['mx_at']}")
-        print(f"abr2020     : {comp['apr']:.2f} (juan={juan_apr:.2f})")
+    if not series:
+        print("\n=== Resultado ===")
+        print("X-13 con 'solo series' no genero una tabla parseable de salida.")
+        print("No hay d11/s11 para comparar contra la columna desest_juan.")
+        print("Eso es lo esperable cuando se corre sin bloques de modelo/descomposicion.")
     else:
-        print("No se pudo calcular comparacion (sin meses en comun con referencia).")
+        comp = C.compare(series, dates, desest)
+        print(f"tabla usada para comparar: {used_table}")
+
+        if comp:
+            print("\n=== Comparacion vs desest_juan ===")
+            print(f"err_medio   : {comp['mean']:.2f}")
+            print(f"err_exCOVID : {comp['mean_ex']:.2f}")
+            print(f"err_max     : {comp['mx']:.2f} @ {comp['mx_at']}")
+            print(f"abr2020     : {comp['apr']:.2f} (juan={juan_apr:.2f})")
+        else:
+            print("No se pudo calcular comparacion (sin meses en comun con referencia).")
 
     print("\nArchivos para mostrar al jefe:")
     print(f"- SPC sin params: {os.path.join(workdir, 'serie.spc')}")
