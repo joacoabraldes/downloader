@@ -131,13 +131,15 @@ Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`.
 
 **Cron en el servidor** (idempotente: corre todos los días de la ventana hasta que la fuente
 publica; cuando el dato ya está, es un no-op barato). Publican: cemento, automotriz y
-patentamientos (SIOMAA) entre el 1 y el 10; granos cerca del 20.
+patentamientos (SIOMAA) entre el 1 y el 10; granos cerca del 20; acero (CAA) entre el 25 y
+el 5 del mes siguiente.
 ```cron
 # ETLs mensuales downloader (idempotentes: corren diario en la ventana hasta que publican)
-0  12 1-10  * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl cemento        >> /home/jmt/data/etls/cemento.log 2>&1
-10 12 1-10  * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl automotriz     >> /home/jmt/data/etls/automotriz.log 2>&1
-0  12 18-31 * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl granos         >> /home/jmt/data/etls/granos.log 2>&1
-0  13 1-10  * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl patentamientos >> /home/jmt/data/etls/patentamientos.log 2>&1
+0  12 1-10     * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl cemento        >> /home/jmt/data/etls/cemento.log 2>&1
+10 12 1-10     * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl automotriz     >> /home/jmt/data/etls/automotriz.log 2>&1
+0  12 18-31    * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl granos         >> /home/jmt/data/etls/granos.log 2>&1
+0  13 1-10     * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl patentamientos >> /home/jmt/data/etls/patentamientos.log 2>&1
+0  10 25-31,1-5 * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl acero         >> /home/jmt/data/etls/acero.log 2>&1
 ```
 > El `cd` al repo es obligatorio (para que `python -m etl` encuentre el paquete y el `.venv`).
 > Conexión, `X13PATH` y `CEMENTO_PROXY` salen del bloque de env del **crontab** (cron no
