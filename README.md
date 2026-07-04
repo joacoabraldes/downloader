@@ -1,4 +1,4 @@
-# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves)
+# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche)
 
 Monorepo de ETLs de series mensuales argentinas. Un **núcleo compartido** + un paquete por
 serie, todo detrás de un solo CLI (`python -m etl ...`). Modelo de datos **append-only**
@@ -15,6 +15,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `patentamientos` | `patentamientos` | PDFs SIOMAA (backfill) | **PDF SIOMAA** (pdfplumber) |
 | `acero` | `acero` | `Acero.xlsx` (1993→) | **PDF CAA** (scrape + pdfplumber) |
 | `aves` | `aves` | `Aves.xlsx` (1981→) | **xlsx MAGyP** (scrape) |
+| `leche` | `leche` | `leche.xlsx` (2015→) | **xlsx MAGyP** (URL fija) |
 
 Las tablas están en formato **long** (una fila por `serie, date, estado`). Series por
 dataset:
@@ -33,6 +34,8 @@ dataset:
   crudo, que es la única con histórico (1993→) y referencia de calibración.
 - **aves**: `faena` avícola (MAGyP, datos SENASA), en miles de cabezas. Histórico 1981→. La
   fuente de indicadores trae además producción/comercio/consumo, que podrían sumarse.
+- **leche**: `produccion` nacional de leche (MAGyP, Dir. Nacional de Lechería), en litros por
+  mes. Histórico 2015→.
 
 **Qué series se desestacionalizan y con qué parámetros lo define el cuadro central
 `etl/series_desest.toml`** (ver la sección *Desestacionalización*): granos **5** series
@@ -176,8 +179,8 @@ solo si el valor es nuevo o cambió respecto del último de ese `(clave, estado)
 
 Y dos vistas que **homogeneízan el consumo** de todos los datasets en una sola forma (agregan
 una columna `dataset`):
-- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves.
-- `series_desest`: serie desestacionalizada de los seis.
+- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves + leche.
+- `series_desest`: serie desestacionalizada de los siete.
 
 ## Desestacionalización (Census X-13)
 
@@ -211,6 +214,7 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 | patentamientos | las 7 categorías | `auto` | `td1coef` | `s3x5` |
 | acero | `acero_crudo` | `add` | `td1coef` | `s3x5` |
 | aves | `faena` | `mult` | `td` | `s3x5` |
+| leche | `produccion` | `add` | `td1coef` | `s3x5` |
 
 > **patentamientos** aún no tiene referencia de calibración: `mode=auto` deja que X-13 elija
 > add/mult por AIC. La desest arranca en **2022-12** (`start` en el cuadro): el informe de
@@ -223,6 +227,11 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 > **aves** es multiplicativa (`mult`). `mult` + `td` + `s3x5` es lo que **más se acerca** a la
 > referencia (`Aves.xlsx`), pero **no la reproduce exacto**: ~0.26% de error medio (1.73% máx
 > sobre 545 meses). La referencia se hizo con un método algo distinto del x13as del repo.
+
+> **leche** está calibrada contra la referencia (`leche.xlsx`): `add` + `td1coef` + `s3x5`
+> reproduce el d11 con error ~0 (máx 0.0002% sobre 137 meses). Los valores son **litros**
+> (~9 dígitos): el núcleo envuelve las líneas del `.spc` por ancho de caracteres (`MAX_LINEA`)
+> para que X-13 no parta un número — si no, una línea de 10 valores grandes desborda su límite.
 
 > **Guard de ceros:** aunque el cuadro diga `mult`/`auto`, si la serie tiene algún valor ≤ 0
 > (p.ej. `produccion` en **abril-2020**, COVID: producción 0) el núcleo la fuerza a **aditivo**
@@ -318,3 +327,15 @@ El histórico profundo (faena 1981→) sale de `etl/datasets/aves/data/Aves.xlsx
 (`load-history`), cuya columna `desest` es la **referencia de calibración**. A diferencia de
 acero, la desest **no reproduce exacto** esa referencia (mejor: `mult`+`td`+`s3x5`, ~0.26%
 medio); ver la nota en *Desestacionalización*.
+
+## La fuente de leche (MAGyP)
+
+`etl/datasets/leche/source.py` baja el Excel **`PPV021_PPV022.xlsx`** de la Dirección Nacional
+de Lechería (`.../ss_lecheria/estadisticas/_01_primaria/_archivos/`). La **URL es fija** —
+MAGyP pisa el mismo archivo cada mes—, así que el `run` la baja directo (con un fallback que
+scrapea la página por si algún día cambiara). Se lee la hoja *Mensual* (`MES | Litros`),
+producción nacional en litros desde 2015. El Excel re-publica toda la serie, así que
+`insert_if_changed` absorbe revisiones; se guarda como `definitivo`.
+
+El histórico también está en `etl/datasets/leche/data/leche.xlsx` (`load-history`), cuya
+columna `desest` es la **referencia de calibración** (reproducida con error ~0).

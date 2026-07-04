@@ -25,7 +25,7 @@ from datetime import date
 from psycopg2.extras import Json
 
 MIN_MESES = 36           # X-13 necesita varios años de historia
-VALORES_POR_LINEA = 10   # X-13 corta líneas de input a ~132 chars
+MAX_LINEA = 120          # X-13 corta las líneas de input a ~132 chars; dejamos margen
 
 
 def _x13_binary():
@@ -72,8 +72,19 @@ def _write_spc(path, dates, values, mode="auto", td="td1coef", seasonalma="s3x5"
     """
     y, m = dates[0].year, dates[0].month
     nums = [f"{v:.3f}" for v in values]
-    bloques = ["  " + " ".join(nums[i:i + VALORES_POR_LINEA])
-               for i in range(0, len(nums), VALORES_POR_LINEA)]
+    # Envolver por ancho de línea (no por conteo fijo): series de valores grandes (p.ej. leche
+    # en litros, ~9 dígitos) desbordan el límite de ~132 chars de X-13 y le parten un número.
+    # X-13 lee formato libre, así que el agrupado no cambia su salida.
+    bloques, cur = [], "  "
+    for n in nums:
+        add = n if cur == "  " else " " + n
+        if cur != "  " and len(cur) + len(add) > MAX_LINEA:
+            bloques.append(cur)
+            cur = "  " + n
+        else:
+            cur += add
+    if cur.strip():
+        bloques.append(cur)
     data = "\n".join(bloques)
     transform = {"add": "none", "mult": "log", "auto": "auto"}[mode]
     # d10=factores estacionales, d11=serie desest, d12=tendencia, d13=irregular.

@@ -24,7 +24,10 @@ create or replace view series_actual as
     from acero_actual
   union all
   select 'aves'::text as dataset, serie, date, valor, estado, fuente, ingested_at
-    from aves_actual;
+    from aves_actual
+  union all
+  select 'leche'::text as dataset, serie, date, valor, estado, fuente, ingested_at
+    from leche_actual;
 
 -- Serie desestacionalizada (X-13) de todos los datasets, un valor por serie/mes.
 -- `parametros` (jsonb) trae lo que se usó en la corrida X-13 (modo mult/add, metodo, etc.).
@@ -45,4 +48,7 @@ create or replace view series_desest as
     from acero_desest
   union all
   select 'aves'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
-    from aves_desest;
+    from aves_desest
+  union all
+  select 'leche'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
+    from leche_desest;

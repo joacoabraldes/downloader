@@ -64,6 +64,16 @@ seasonalma = "s3x5"
 # mensual, siempre positivas (histórico desde 2022, sin ceros). Sin referencia de
 # calibración: mode=auto deja que X-13 elija add/mult por AIC. Ajustar con overrides si
 # alguna categoría no matchea contra una referencia futura.
+[leche]
+table = "leche"
+desest = ["produccion"]
+# Calibrado contra la referencia (leche.xlsx, columna desest): add + td1coef + s3x5 reproduce
+# el d11 con error ~0 (máx 0.0002% sobre 137 meses). Los valores son litros (~9 dígitos): el
+# núcleo envuelve las líneas del .spc por ancho para que X-13 no parta un número.
+mode = "add"
+td = "td1coef"
+seasonalma = "s3x5"
+
 [aves]
 table = "aves"
 desest = ["faena"]
