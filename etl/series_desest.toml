@@ -59,3 +59,19 @@ desest = ["despacho_nacional"]   # las otras 3 series (expo/consumo/import) no s
 mode = "mult"
 td = "td"            # cemento reproduce exacto en multiplicativo + trading-day de 6 coef
 seasonalma = "s3x5"
+
+# Patentamientos 0km (SIOMAA), 4W. Todas las categorías del mercado son series de flujo
+# mensual, siempre positivas (histórico desde 2022, sin ceros). Sin referencia de
+# calibración: mode=auto deja que X-13 elija add/mult por AIC. Ajustar con overrides si
+# alguna categoría no matchea contra una referencia futura.
+[patentamientos]
+table = "patentamientos"
+desest = ["total_mercado", "autos", "comercial_liviano", "comercial_pesado",
+          "otros_pesados", "autos_cl", "autos_cl_cp"]
+mode = "auto"
+td = "td1coef"
+seasonalma = "s3x5"
+# El informe de nov-2022 es pago (no está en el histórico), lo que deja un hueco. X-13 exige
+# meses contiguos, así que la desest arranca en la corrida contigua más larga: 2022-12 en
+# adelante (43 meses). Los meses ene..oct-2022 quedan guardados como observados, sin ajustar.
+start = 2022-12-01

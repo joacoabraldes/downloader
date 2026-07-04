@@ -1,4 +1,4 @@
-# ETLs mensuales → Postgres (granos · cemento · automotriz)
+# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos)
 
 Monorepo de ETLs de series mensuales argentinas. Un **núcleo compartido** + un paquete por
 serie, todo detrás de un solo CLI (`python -m etl ...`). Modelo de datos **append-only**
@@ -12,21 +12,27 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `granos` | `molienda_granos` | Excel MAGyP | HTML MAGyP (provisorios) |
 | `cemento` | `cemento_despacho` | `cemento.xlsx` | HTML AFCP (provisorio/definitivo) |
 | `automotriz` | `automotriz` | `ind_automotriz.xlsx` | **PDF ADEFA** (pdfplumber) |
+| `patentamientos` | `patentamientos` | PDFs SIOMAA (backfill) | **PDF SIOMAA** (pdfplumber) |
 
-Las tres tablas están en formato **long** (una fila por `serie, date, estado`). Series por
+Las tablas están en formato **long** (una fila por `serie, date, estado`). Series por
 dataset:
 - **granos**: `total` (molienda total) + los 7 granos `soja`, `girasol`, `lino`, `mani`,
   `algodon`, `cartamo`, `canola`.
 - **cemento**: `despacho_nacional` + `exportacion`, `consumo_despacho_nacional`,
   `importaciones_propias` (estas 3 solo se llenan en los `definitivo`).
-- **automotriz**: `produccion`, `ventas` (mayoristas), `expo`.
+- **automotriz**: `produccion`, `ventas` (mayoristas), `expo`. Es **producción de fábrica**
+  (ADEFA), no registraciones.
+- **patentamientos**: registraciones 0km del mercado 4W (SIOMAA). Una serie por categoría:
+  `total_mercado`, `autos`, `comercial_liviano`, `comercial_pesado`, `otros_pesados`,
+  `autos_cl` (autos + C.L.), `autos_cl_cp` (autos + C.L. + C.P.). De la Tabla 1 del informe
+  se guardan **solo las unidades del mes**; las variaciones/acumulados son recalculables.
 
 **Qué series se desestacionalizan y con qué parámetros lo define el cuadro central
 `etl/series_desest.toml`** (ver la sección *Desestacionalización*): granos **5** series
 (`total`, `soja`, `girasol`, `lino`, `mani`), automotriz las 3 (`produccion`, `ventas`,
-`expo`), cemento `despacho_nacional`. `algodon`, `cartamo` y `canola` **no** se
-desestacionalizan: su molienda es intermitente (mayormente ceros) y X-13 no puede ajustarlas;
-quedan solo como serie observada.
+`expo`), cemento `despacho_nacional`, patentamientos las 7 categorías. `algodon`, `cartamo`
+y `canola` **no** se desestacionalizan: su molienda es intermitente (mayormente ceros) y
+X-13 no puede ajustarlas; quedan solo como serie observada.
 
 ## Estructura del repo
 
@@ -101,8 +107,14 @@ Inserta el histórico con `estado = NULL`.
 python -m etl granos                  # baja últimos meses + desestacionaliza
 python -m etl cemento --month 2026-04
 python -m etl automotriz              # baja el PDF de ADEFA del mes + desestacionaliza
+python -m etl patentamientos          # baja el ÚLTIMO informe SIOMAA + desestacionaliza
 ```
 Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`.
+
+> **patentamientos es distinto**: SIOMAA sólo expone el **último** informe gratuito (detrás de
+> un flujo de verificación por email), no se puede pedir un mes arbitrario por URL. Por eso su
+> `run` es "bajar el último" (sin `--month`/`--months-back`) y el histórico se carga aparte
+> desde los PDFs ya bajados: `python -m etl patentamientos load-history --dir CARPETA`.
 
 **Cron en el servidor** (idempotente: corre todos los días de la ventana hasta que la fuente
 publica; cuando el dato ya está, es un no-op barato). Publican: cemento y automotriz entre el
@@ -123,11 +135,12 @@ cuadro `etl/series_desest.toml`), ver la sección *Recalcular la desest* más ab
 ## 4) Exportar los d11 (serie desestacionalizada) a CSV
 
 ```bash
-python -m etl export                  # los 3 datasets a CSV en la carpeta actual
+python -m etl export                  # todos los datasets a CSV en la carpeta actual
 python -m etl export automotriz       # solo automotriz -> automotriz_d11.csv
 python -m etl export automotriz --dir ~/csvs
 ```
-`automotriz_d11.csv` sale en formato ancho: `date, produccion, ventas, expo`.
+`automotriz_d11.csv` y `patentamientos_d11.csv` salen en formato ancho (`date` + una columna
+por serie); granos y cemento en `date, d11`.
 
 ## Modelo de datos
 
@@ -140,10 +153,10 @@ solo si el valor es nuevo o cambió respecto del último de ese `(clave, estado)
   la columna **`parametros`** (jsonb) con lo que se usó en la corrida (modo mult/add/auto,
   trading-day, filtro, etc.), para poder auditar diferencias contra otro cálculo.
 
-Y dos vistas que **homogeneízan el consumo** de los 3 datasets en una sola forma (agregan una
-columna `dataset`):
-- `series_actual`: serie observada actual de granos + cemento + automotriz.
-- `series_desest`: serie desestacionalizada de los 3.
+Y dos vistas que **homogeneízan el consumo** de todos los datasets en una sola forma (agregan
+una columna `dataset`):
+- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos.
+- `series_desest`: serie desestacionalizada de los cuatro.
 
 ## Desestacionalización (Census X-13)
 
@@ -174,6 +187,11 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 | automotriz | `produccion`, `expo` | `add` | `td1coef` | `s3x5` |
 | automotriz | `ventas` | `auto` | `td` | `s3x5` |
 | cemento | `despacho_nacional` | `mult` | `td` | `s3x5` |
+| patentamientos | las 7 categorías | `auto` | `td1coef` | `s3x5` |
+
+> **patentamientos** aún no tiene referencia de calibración: `mode=auto` deja que X-13 elija
+> add/mult por AIC. La desest arranca en **2022-12** (`start` en el cuadro): el informe de
+> nov-2022 es pago y falta, y X-13 exige meses contiguos.
 
 > **Guard de ceros:** aunque el cuadro diga `mult`/`auto`, si la serie tiene algún valor ≤ 0
 > (p.ej. `produccion` en **abril-2020**, COVID: producción 0) el núcleo la fuerza a **aditivo**
@@ -224,3 +242,20 @@ y el `serie.spc` usado. Ej.: `python -m etl redesest automotriz --x13-out ~/x13_
 (`https://www.adefa.org.ar/upload/estadisticas/resumen-<YYYY>-<MM>-es.pdf`) y, con
 `pdfplumber`, lee las 3 cifras del mes (Producción Nacional / Exportaciones / Ventas a
 Concesionarios) de la tabla **"Comparativo"** del PDF.
+
+## La fuente de patentamientos (SIOMAA)
+
+`etl/datasets/patentamientos/source.py` descubre el último "Informe de Mercado 4W" gratuito
+de la tienda de SIOMAA y lo descarga completando un **flujo de verificación por email**: la
+tienda manda un token de 6 dígitos que se recibe con un email temporario (`mail.tm`) y se
+devuelve para bajar el ZIP con el PDF. Todo automático, sin intervención.
+
+El parseo de la **Tabla 1** ("Resumen del mercado") es especial: el texto del PDF está
+posicionado por coordenadas y sale entreverado con `extract_text()`. Se reconstruye por
+posición (chars agrupados por fila `y`, cortados en celdas por gaps de `x`) y de cada fila de
+categoría se toma la 1ª cifra = unidades del mes. El mes/año se detectan del encabezado de
+columna de la propia tabla (`Ene.2022` / `JUN.26`), robusto a las variantes LITE/full.
+
+El histórico se cargó desde los ~53 PDFs ya bajados (ene-2022 en adelante) con
+`load-history --dir`. Esos PDFs **no se versionan** (viven en el repo original de scraping);
+para re-hacer el backfill hay que tenerlos a mano.

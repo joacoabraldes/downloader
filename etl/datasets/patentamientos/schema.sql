@@ -1,0 +1,50 @@
+-- Patentamientos 0km del mercado 4W (SIOMAA), formato LONG: una serie por categoría
+-- del mercado (autos, comerciales, total, ...), cada una con su propia desest X-13.
+-- Modelo append-only: cada corrida inserta un snapshot nuevo con su ingested_at; nunca
+-- se pisa un dato. Todo sale del PDF mensual de SIOMAA (Tabla 1, "Resumen del mercado").
+--
+-- Fuente distinta de `automotriz` (ADEFA = producción/ventas/expo de fábrica): acá son
+-- registraciones (patentamientos). Sólo se guardan las UNIDADES del mes por categoría;
+-- las variaciones/acumulados del PDF son recalculables y no se persisten.
+
+create table if not exists patentamientos (
+  id          bigint generated always as identity primary key,
+  serie       text   not null check (serie in (
+                 'total_mercado','autos','comercial_liviano','comercial_pesado',
+                 'otros_pesados','autos_cl','autos_cl_cp')),
+  date        date   not null,                 -- primer día del mes del informe
+  valor       double precision,                -- unidades patentadas en el mes
+  estado      text,                            -- provisorio (PDF SIOMAA) / desestacionalizado (X-13)
+  fuente      text,                            -- nombre del informe SIOMAA / 'census x13'
+  parametros  jsonb,                           -- solo en desest: parámetros de la corrida X-13
+  ingested_at timestamptz not null default now()
+);
+-- Upgrade idempotente para bases ya creadas sin esta columna.
+alter table patentamientos add column if not exists parametros jsonb;
+
+-- Búsqueda del último snapshot de un (serie, date, estado).
+create index if not exists patentamientos_serie_date_estado_idx
+  on patentamientos (serie, date, estado, ingested_at desc);
+
+-- Una sola fila desestacionalizada por (serie, mes) (UPSERT desde el núcleo X-13).
+create unique index if not exists patentamientos_desest_uq
+  on patentamientos (serie, date)
+  where estado = 'desestacionalizado';
+
+-- Serie observada "actual" por (serie, mes): último snapshot, excluyendo la desest.
+create or replace view patentamientos_actual as
+select distinct on (serie, date)
+    serie, date, valor, estado, fuente, ingested_at
+from patentamientos
+where estado is distinct from 'desestacionalizado'
+order by serie, date,
+         (case when estado = 'provisorio' then 0 when estado is null then 1 else 2 end),
+         ingested_at desc;
+
+-- Serie desestacionalizada (X-13), un valor por (serie, mes).
+create or replace view patentamientos_desest as
+select distinct on (serie, date)
+    serie, date, valor, fuente, ingested_at, parametros
+from patentamientos
+where estado = 'desestacionalizado'
+order by serie, date, ingested_at desc;

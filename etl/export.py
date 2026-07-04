@@ -1,9 +1,10 @@
 """Exporta las series desestacionalizadas (d11 de X-13) a CSV.
 
 Lee las vistas *_desest de la base y escribe un CSV por dataset:
-  - automotriz -> automotriz_d11.csv  (formato ancho: date, produccion, ventas, expo)
-  - granos     -> granos_d11.csv      (date, d11)
-  - cemento    -> cemento_d11.csv     (date, d11)
+  - automotriz     -> automotriz_d11.csv      (formato ancho: date, produccion, ventas, expo)
+  - patentamientos -> patentamientos_d11.csv  (formato ancho: date + una col por categoría)
+  - granos         -> granos_d11.csv          (date, d11)
+  - cemento        -> cemento_d11.csv          (date, d11)
 
 Uso: `python -m etl export [datasets...] [--dir CARPETA]` (sin datasets = todos).
 Corré antes el ETL/desest del dataset para tener los d11 al día en la base.
@@ -16,7 +17,7 @@ from pathlib import Path
 
 from etl.core import db
 
-ALL = ["granos", "cemento", "automotriz"]
+ALL = ["granos", "cemento", "automotriz", "patentamientos"]
 
 
 def _write(path: Path, header: list[str], rows: list) -> int:
@@ -35,17 +36,15 @@ def export_simple(conn, view: str, path: Path) -> int:
     return _write(path, ["date", "d11"], rows)
 
 
-def export_automotriz(conn, path: Path) -> int:
-    """3 series en formato ancho: date, produccion, ventas, expo."""
+def export_wide(conn, view: str, series: list[str], path: Path) -> int:
+    """Varias series en formato ancho: date + una columna por serie (en el orden dado)."""
     with conn.cursor() as cur:
-        cur.execute("select date, serie, valor from automotriz_desest "
-                    "order by date, serie")
+        cur.execute(f"select date, serie, valor from {view} order by date, serie")
         wide: dict = {}
         for d, serie, valor in cur.fetchall():
             wide.setdefault(d, {})[serie] = valor
-    rows = [[d, w.get("produccion", ""), w.get("ventas", ""), w.get("expo", "")]
-            for d, w in sorted(wide.items())]
-    return _write(path, ["date", "produccion", "ventas", "expo"], rows)
+    rows = [[d] + [w.get(s, "") for s in series] for d, w in sorted(wide.items())]
+    return _write(path, ["date"] + series, rows)
 
 
 def main(argv=None) -> None:
@@ -68,8 +67,13 @@ def main(argv=None) -> None:
     try:
         for name in names:
             if name == "automotriz":
+                from .datasets.automotriz import config as ac
                 path = out / "automotriz_d11.csv"
-                n = export_automotriz(conn, path)
+                n = export_wide(conn, "automotriz_desest", ac.SERIES, path)
+            elif name == "patentamientos":
+                from .datasets.patentamientos import config as pc
+                path = out / "patentamientos_d11.csv"
+                n = export_wide(conn, "patentamientos_desest", pc.SERIES, path)
             elif name == "granos":
                 path = out / "granos_d11.csv"
                 n = export_simple(conn, "molienda_granos_desest", path)
