@@ -64,6 +64,16 @@ seasonalma = "s3x5"
 # mensual, siempre positivas (histórico desde 2022, sin ceros). Sin referencia de
 # calibración: mode=auto deja que X-13 elija add/mult por AIC. Ajustar con overrides si
 # alguna categoría no matchea contra una referencia futura.
+[aves]
+table = "aves"
+desest = ["faena"]
+# Faena es multiplicativa (log). mult + td (6 coef) + s3x5 es lo que MÁS se acerca a la
+# referencia (Aves.xlsx col desest): ~0.26% error medio, 1.73% máx. NO reproduce exacto
+# (a diferencia de acero): la referencia se hizo con un método algo distinto de X-13.
+mode = "mult"
+td = "td"
+seasonalma = "s3x5"
+
 [acero]
 table = "acero"
 desest = ["acero_crudo"]

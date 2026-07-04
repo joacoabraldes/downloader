@@ -1,4 +1,4 @@
-# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero)
+# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves)
 
 Monorepo de ETLs de series mensuales argentinas. Un **núcleo compartido** + un paquete por
 serie, todo detrás de un solo CLI (`python -m etl ...`). Modelo de datos **append-only**
@@ -14,6 +14,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `automotriz` | `automotriz` | `ind_automotriz.xlsx` | **PDF ADEFA** (pdfplumber) |
 | `patentamientos` | `patentamientos` | PDFs SIOMAA (backfill) | **PDF SIOMAA** (pdfplumber) |
 | `acero` | `acero` | `Acero.xlsx` (1993→) | **PDF CAA** (scrape + pdfplumber) |
+| `aves` | `aves` | `Aves.xlsx` (1981→) | **xlsx MAGyP** (scrape) |
 
 Las tablas están en formato **long** (una fila por `serie, date, estado`). Series por
 dataset:
@@ -30,12 +31,14 @@ dataset:
 - **acero**: producción de `acero_crudo` (Cámara Argentina del Acero), en miles de toneladas.
   El PDF mensual trae 8 series (arrabio, esponja, laminados, etc.); hoy se ingesta solo acero
   crudo, que es la única con histórico (1993→) y referencia de calibración.
+- **aves**: `faena` avícola (MAGyP, datos SENASA), en miles de cabezas. Histórico 1981→. La
+  fuente de indicadores trae además producción/comercio/consumo, que podrían sumarse.
 
 **Qué series se desestacionalizan y con qué parámetros lo define el cuadro central
 `etl/series_desest.toml`** (ver la sección *Desestacionalización*): granos **5** series
 (`total`, `soja`, `girasol`, `lino`, `mani`), automotriz las 3 (`produccion`, `ventas`,
-`expo`), cemento `despacho_nacional`, patentamientos las 7 categorías, acero `acero_crudo`.
-`algodon`, `cartamo`
+`expo`), cemento `despacho_nacional`, patentamientos las 7 categorías, acero `acero_crudo`,
+aves `faena`. `algodon`, `cartamo`
 y `canola` **no** se desestacionalizan: su molienda es intermitente (mayormente ceros) y
 X-13 no puede ajustarlas; quedan solo como serie observada.
 
@@ -114,6 +117,7 @@ python -m etl cemento --month 2026-04
 python -m etl automotriz              # baja el PDF de ADEFA del mes + desestacionaliza
 python -m etl patentamientos          # baja el ÚLTIMO informe SIOMAA + desestacionaliza
 python -m etl acero                   # baja el último PDF de Cifras de la CAA + desestacionaliza
+python -m etl aves                    # baja el último xlsx de indicadores de MAGyP + desestacionaliza
 ```
 Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`.
 
@@ -171,8 +175,8 @@ solo si el valor es nuevo o cambió respecto del último de ese `(clave, estado)
 
 Y dos vistas que **homogeneízan el consumo** de todos los datasets en una sola forma (agregan
 una columna `dataset`):
-- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero.
-- `series_desest`: serie desestacionalizada de los cinco.
+- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves.
+- `series_desest`: serie desestacionalizada de los seis.
 
 ## Desestacionalización (Census X-13)
 
@@ -205,6 +209,7 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 | cemento | `despacho_nacional` | `mult` | `td` | `s3x5` |
 | patentamientos | las 7 categorías | `auto` | `td1coef` | `s3x5` |
 | acero | `acero_crudo` | `add` | `td1coef` | `s3x5` |
+| aves | `faena` | `mult` | `td` | `s3x5` |
 
 > **patentamientos** aún no tiene referencia de calibración: `mode=auto` deja que X-13 elija
 > add/mult por AIC. La desest arranca en **2022-12** (`start` en el cuadro): el informe de
@@ -213,6 +218,10 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 > **acero** está calibrado contra la referencia (`Acero.xlsx`, columna `desest`): `add` +
 > `td1coef` + `s3x5` reproduce el d11 con error ~0 (máx 0.001% sobre 401 meses). En `auto`
 > X-13 converge al mismo modelo.
+
+> **aves** es multiplicativa (`mult`). `mult` + `td` + `s3x5` es lo que **más se acerca** a la
+> referencia (`Aves.xlsx`), pero **no la reproduce exacto**: ~0.26% de error medio (1.73% máx
+> sobre 545 meses). La referencia se hizo con un método algo distinto del x13as del repo.
 
 > **Guard de ceros:** aunque el cuadro diga `mult`/`auto`, si la serie tiene algún valor ≤ 0
 > (p.ej. `produccion` en **abril-2020**, COVID: producción 0) el núcleo la fuerza a **aditivo**
@@ -294,3 +303,17 @@ las revisiones que la CAA hace de meses previos. La cifra del PDF se guarda como
 
 El histórico profundo (acero crudo 1993→) sale de `etl/datasets/acero/data/Acero.xlsx`
 (`load-history`), cuya columna `desest` es además la **referencia de calibración** de X-13.
+
+## La fuente de aves (MAGyP)
+
+`etl/datasets/aves/source.py` scrapea la página de "Carne Aviar" de MAGyP
+(`.../areas/aves/estadistica/carne/index.php`) y elige el xlsx **"Indicadores de Oferta y
+Demanda"** de mayor año. Ese Excel trae la **faena mensual** (columna *Faena SENASA*, miles
+de cabezas) de todos los años desde 2016 en un solo archivo, apilado por año (fila del año +
+12 filas de mes). El `run` reingesta toda esa ventana y `insert_if_changed` absorbe las
+revisiones de MAGyP; la cifra se guarda como `definitivo`.
+
+El histórico profundo (faena 1981→) sale de `etl/datasets/aves/data/Aves.xlsx`
+(`load-history`), cuya columna `desest` es la **referencia de calibración**. A diferencia de
+acero, la desest **no reproduce exacto** esa referencia (mejor: `mult`+`td`+`s3x5`, ~0.26%
+medio); ver la nota en *Desestacionalización*.

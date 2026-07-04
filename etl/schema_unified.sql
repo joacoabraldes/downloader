@@ -21,7 +21,10 @@ create or replace view series_actual as
     from patentamientos_actual
   union all
   select 'acero'::text as dataset, serie, date, valor, estado, fuente, ingested_at
-    from acero_actual;
+    from acero_actual
+  union all
+  select 'aves'::text as dataset, serie, date, valor, estado, fuente, ingested_at
+    from aves_actual;
 
 -- Serie desestacionalizada (X-13) de todos los datasets, un valor por serie/mes.
 -- `parametros` (jsonb) trae lo que se usó en la corrida X-13 (modo mult/add, metodo, etc.).
@@ -39,4 +42,7 @@ create or replace view series_desest as
     from patentamientos_desest
   union all
   select 'acero'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
-    from acero_desest;
+    from acero_desest
+  union all
+  select 'aves'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
+    from aves_desest;
