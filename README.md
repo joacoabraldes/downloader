@@ -1,9 +1,9 @@
-# ETLs mensuales → Supabase (granos · cemento · automotriz)
+# ETLs mensuales → Postgres (granos · cemento · automotriz)
 
 Monorepo de ETLs de series mensuales argentinas. Un **núcleo compartido** + un paquete por
 serie, todo detrás de un solo CLI (`python -m etl ...`). Modelo de datos **append-only**
 (cada corrida guarda un snapshot, nunca pisa) con deduplicación, y **desestacionalización
-Census X-13** reutilizable. La base es el proyecto **`afcp_cemento`** de Supabase.
+Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16.3/data`).
 
 ## Series
 
@@ -21,21 +21,27 @@ dataset:
   `importaciones_propias` (estas 3 solo se llenan en los `definitivo`).
 - **automotriz**: `produccion`, `ventas` (mayoristas), `expo`.
 
-La desest X-13 corre sobre la **serie principal** de cada dataset (granos `total`, cemento
-`despacho_nacional`) y, en automotriz, sobre las 3.
+**Qué series se desestacionalizan y con qué parámetros lo define el cuadro central
+`etl/series_desest.toml`** (ver la sección *Desestacionalización*): granos **5** series
+(`total`, `soja`, `girasol`, `lino`, `mani`), automotriz las 3 (`produccion`, `ventas`,
+`expo`), cemento `despacho_nacional`. `algodon`, `cartamo` y `canola` **no** se
+desestacionalizan: su molienda es intermitente (mayormente ceros) y X-13 no puede ajustarlas;
+quedan solo como serie observada.
 
 ## Estructura del repo
 
 ```
 etl/
+  series_desest.toml   CUADRO: qué series desestacionaliza cada dataset y con qué parámetros X-13
   core/        db.py (conexión + insert/dedup genérico)  ·  seasonal.py (X-13)
+               desest_params.py (lee el cuadro y arma los jobs de desest)
   datasets/<serie>/
        source.py       scraping/parsing de la fuente
        load_history.py carga histórica (one-off, desde Excel)
        run.py          ETL incremental + desestacionalización
        config.py       tabla/columnas de la serie
        schema.sql      DDL de la serie (tabla + índices + vistas)
-  __main__.py  initdb.py  export.py
+  __main__.py  initdb.py  export.py  redesest.py (recalcular la desest desde la base)
 ```
 
 ## Requisitos
@@ -43,17 +49,24 @@ etl/
 ```bash
 pip install -r requirements.txt
 ```
-Crear un archivo **`.env`** en la raíz (no se versiona) con la connection string del
-*pooler* de Supabase:
+**No hay archivo `.env`.** La configuración va por **variables de entorno**. `db.py` llama a
+`load_dotenv()` (por si existiera un `.env`), pero hoy no hay ninguno: todo sale del entorno.
+La conexión a Postgres se resuelve en este orden (ver `etl/core/db.py`): **1)** `DATABASE_URL`
+si está (no se usa acá); **2)** `PG*`; **3)** `POSTGRES_*`. Se usan las `POSTGRES_*`.
+
+Variables necesarias (host `10.0.16.3`, db `data`):
 ```
-DATABASE_URL=postgresql://postgres.<ref>:<PASS>@aws-1-<region>.pooler.supabase.com:5432/postgres
-X13PATH=/ruta/a/la/carpeta/del/binario/x13as     # opcional, para la desestacionalización
-CEMENTO_PROXY=http://usuario:pass@host:puerto     # opcional; salida de cemento por proxy (afcp.info bloquea IPs de datacenter)
+POSTGRES_HOST  POSTGRES_PORT  POSTGRES_DB  POSTGRES_USER  POSTGRES_PASSWORD   # conexión
+X13PATH=/ruta/carpeta/del/binario/x13as    # OBLIGATORIO para la desest (X-13); si falta, se saltea con aviso
+CEMENTO_PROXY=http://usuario:pass@host:puerto   # cemento sale por proxy (afcp.info bloquea IPs de datacenter)
 ```
-> En vez de `DATABASE_URL` también se aceptan las variables sueltas
-> `PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD` (o `POSTGRES_*`) — útil cuando la base ya las
-> expone en el entorno (p.ej. el server). `CEMENTO_PROXY` evita tener que anteponer
-> `HTTPS_PROXY=... ` al comando de cemento: se setea una vez y `python -m etl cemento` lo usa solo.
+Dónde se definen:
+- **Interactivo** (tu shell): exportadas en `~/.bashrc`.
+- **Cron**: cron NO sourcea `~/.bashrc`, así que las mismas variables están declaradas en el
+  **crontab** (bloque de env arriba de los jobs). Si agregás una var nueva al `.bashrc` que el
+  ETL necesite, replicala en el crontab.
+> El `cd /home/jmt/dev/downloader` en cada job del cron es obligatorio para que `python -m etl`
+> encuentre el paquete y el `.venv` (no para cargar un `.env` — no hay).
 
 ## 1) Crear las tablas (DDL)
 
@@ -76,15 +89,36 @@ python -m etl automotriz load-history
 ```
 Inserta el histórico con `estado = NULL`.
 
+> **Piso histórico de granos (1993-01).** El Excel de MAGyP arranca en 1965, pero ese tramo
+> (prefijo de ceros / cambio de escala) cuelga a X-13. Se recorta la ingesta a **1993-01 en
+> adelante** (`config.START_DATE`), aplicado en los dos caminos (`load-history` y `run`), así
+> ninguna corrida vuelve a cargar lo anterior. La base ya fue recortada a ese piso. La desest
+> además arranca en 2003-01 (`start` en el cuadro), donde las series ya son densas.
+
 ## 3) ETL incremental (mensual / cron)
 
 ```bash
 python -m etl granos                  # baja últimos meses + desestacionaliza
 python -m etl cemento --month 2026-04
 python -m etl automotriz              # baja el PDF de ADEFA del mes + desestacionaliza
-python -m etl automotriz --no-fetch   # solo desestacionalizar (no baja el PDF)
 ```
 Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`.
+
+**Cron en el servidor** (idempotente: corre todos los días de la ventana hasta que la fuente
+publica; cuando el dato ya está, es un no-op barato). Publican: cemento y automotriz entre el
+1 y el 10; granos cerca del 20.
+```cron
+# ETLs mensuales downloader (idempotentes: corren diario en la ventana hasta que publican)
+0  12 1-10  * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl cemento    >> /home/jmt/data/cron.log 2>&1
+10 12 1-10  * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl automotriz >> /home/jmt/data/cron.log 2>&1
+0  12 18-31 * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl granos     >> /home/jmt/data/cron.log 2>&1
+```
+> El `cd` al repo es obligatorio (para que `python -m etl` encuentre el paquete y el `.venv`).
+> Conexión, `X13PATH` y `CEMENTO_PROXY` salen del bloque de env del **crontab** (cron no
+> sourcea `.bashrc`; ver *Requisitos*).
+
+Para **recalcular la desestacionalización sin bajar de la web** (p.ej. después de cambiar el
+cuadro `etl/series_desest.toml`), ver la sección *Recalcular la desest* más abajo (`redesest`).
 
 ## 4) Exportar los d11 (serie desestacionalizada) a CSV
 
@@ -103,8 +137,8 @@ solo si el valor es nuevo o cambió respecto del último de ese `(clave, estado)
 = X-13. Vistas por dataset:
 - `<tabla>_actual`: serie **observada** (último snapshot por `serie, mes`, excluye la desest).
 - `<tabla>_desest`: serie **desestacionalizada** (X-13), un valor por `serie, mes`. Incluye
-  la columna **`parametros`** (jsonb) con lo que se usó en la corrida (modo mult/add, método,
-  etc.), para poder auditar diferencias contra otro cálculo.
+  la columna **`parametros`** (jsonb) con lo que se usó en la corrida (modo mult/add/auto,
+  trading-day, filtro, etc.), para poder auditar diferencias contra otro cálculo.
 
 Y dos vistas que **homogeneízan el consumo** de los 3 datasets en una sola forma (agregan una
 columna `dataset`):
@@ -118,29 +152,71 @@ la tabla **d11**. Si `X13PATH`/el binario no están, **saltea con aviso** (no ro
 útil para correr el resto en Windows y la desest en una VM Linux).
 
 Corre el flujo **X-13ARIMA-SEATS**: preajuste **regARIMA** (modelo ARIMA automático vía
-`automdl`) + **ajuste por días hábiles** (`regression{variables=(<td>)}` — las series son de
-flujo: un mes con más días laborables produce/vende más) + detección de **outliers**, y
-descomposición **X-11** con filtro estacional **s3x5** (leemos d11). El modo es multiplicativo
-(`transform=log`) por default, o aditivo (`transform=none`) si la serie tiene algún valor ≤ 0.
-El **trading-day es por serie** (`deseasonalize(td=...)`, default `td1coef`): produccion usa
-`td1coef` (1 coef) y cemento `td` (6 coef). **Esta config reproduce exacto las referencias del
-jefe** (produccion y cemento, error 0; ver `scripts/calibrar.py` y `scripts/calibrar_cemento.py`,
-los harness que las reverse-engineerearon). Cada
-fila desestacionalizada guarda en **`parametros`** (jsonb) lo usado:
+`automdl`) + **ajuste por días hábiles** (*trading-day*: las series son de flujo, un mes con más
+días laborables produce/vende más) + detección de **outliers**, y descomposición **X-11** con
+filtro estacional (leemos d11). Cada corrida recalcula la serie desestacionalizada **entera** (un
+dato nuevo re-ajusta todos los meses).
+
+### El cuadro por serie (`etl/series_desest.toml`)
+
+Los parámetros de X-13 **no son globales: son por serie**, y salen del cuadro central
+`etl/series_desest.toml` (lo lee `etl/core/desest_params.py`). Cada serie define:
+- **`mode`**: `add` (aditivo, `transform=none`, admite ceros) · `mult` (multiplicativo,
+  `transform=log`, requiere serie > 0) · `auto` (X-13 elige el modo por AIC).
+- **`td`** (trading-day): `td1coef` (1 coef) · `td` (6 coef) · `none` (sin ajuste).
+- **`seasonalma`**: filtro estacional del X-11 (`s3x5` estándar).
+
+Parametrización actual (calibrada contra la referencia de cada serie, error ~0):
+
+| Dataset | Series | `mode` | `td` | `seasonalma` |
+|---|---|---|---|---|
+| granos | las 8 (`total` + 7 granos) | `add` | `none` | `s3x5` |
+| automotriz | `produccion`, `expo` | `add` | `td1coef` | `s3x5` |
+| automotriz | `ventas` | `auto` | `td` | `s3x5` |
+| cemento | `despacho_nacional` | `mult` | `td` | `s3x5` |
+
+> **Guard de ceros:** aunque el cuadro diga `mult`/`auto`, si la serie tiene algún valor ≤ 0
+> (p.ej. `produccion` en **abril-2020**, COVID: producción 0) el núcleo la fuerza a **aditivo**
+> (el X-11 multiplicativo/log no admite ceros).
+
+Cada fila desestacionalizada guarda en **`parametros`** (jsonb) lo usado:
 `{metodo, modo, transform, regarima, automdl, outliers, trading_day, seasonalma, tabla,
 n_meses, arima}` — `arima` es el modelo que eligió automdl (ej. `(1 1 1)(0 1 1)`), parseado del
 `serie.html` (la build HTML no genera `.udg`) anclando en "Final automatic model choice".
 
-**Guardar la salida de X-13 (para auditar / ajustar la serie):** agregá `--x13-out DIR` a
-cualquier `run`. Guarda en `DIR/<serie>/` el corrido completo de `x13as`: el `serie.html`
-(modelo elegido, factores estacionales, diagnósticos M/Q), las tablas `serie.d10` (factores
-estacionales), `serie.d11` (desest), `serie.d12` (tendencia), `serie.d13` (irregular) y el
-`serie.spc` usado. Ej.: `python -m etl automotriz --no-fetch --x13-out ~/x13_out`.
+### Agregar una serie o un dataset nuevo
 
-> **Modo del X-11**: por defecto **multiplicativo**. Si una serie tiene algún valor ≤ 0
-> (p.ej. `produccion` en **abril-2020**, COVID: plantas cerradas, producción 0), el núcleo
-> pasa esa serie a **aditivo** automáticamente (el multiplicativo no admite ceros). Por eso
-> hoy `produccion` se desestacionaliza en aditivo.
+Todo se declara en `etl/series_desest.toml` (ver su header):
+- **Serie nueva** en un dataset existente → sumá su nombre a `desest` del dataset (debe existir
+  en la tabla) y, si difiere del default, agregá un `[<dataset>.overrides.<serie>]`.
+- **Dataset nuevo** → un bloque `[<dataset>]` con `table`, `desest` y sus parámetros default.
+
+De esta forma se pueden seguir agregando series para descargar y desestacionalizar sin tocar el
+código del núcleo.
+
+### Recalcular la desest (`redesest`)
+
+`python -m etl redesest` recalcula la serie desestacionalizada de cada dataset **desde el
+histórico que ya está en la base** (lee `<tabla>_actual`), **sin bajar nada de la web**. Corre
+los datasets de corrido. Útil después de cambiar el cuadro.
+
+```bash
+python -m etl redesest                 # todos los datasets del cuadro (UPSERT, pisa en el lugar)
+python -m etl redesest --clean         # borra las filas 'desestacionalizado' y las regenera
+python -m etl redesest granos cemento  # solo esos
+python -m etl redesest --x13-out ~/x13_out
+```
+- **Por default (UPSERT)** pisa cada `(serie, date)` en el lugar; conserva la continuidad por
+  fila. Es lo mismo que hace el `run` mensual al final.
+- **`--clean`** borra primero (`DELETE ... WHERE estado='desestacionalizado'`) y regenera
+  (rebuild limpio): sirve para pizarra limpia y para borrar series huérfanas que salieron del
+  cuadro. **Seguridad:** si falta `X13PATH`/el binario, aborta **sin borrar nada**.
+
+**Guardar la salida de X-13 (para auditar / ajustar la serie):** agregá `--x13-out DIR` a
+cualquier `run` o a `redesest`. Guarda en `DIR/<serie>/` el corrido completo de `x13as`: el
+`serie.html` (modelo elegido, factores estacionales, diagnósticos M/Q), las tablas `serie.d10`
+(factores estacionales), `serie.d11` (desest), `serie.d12` (tendencia), `serie.d13` (irregular)
+y el `serie.spc` usado. Ej.: `python -m etl redesest automotriz --x13-out ~/x13_out`.
 
 ## La fuente de automotriz (ADEFA)
 

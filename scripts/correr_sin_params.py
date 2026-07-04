@@ -116,7 +116,7 @@ def main(argv=None):
         else:
             print("No se pudo calcular comparacion (sin meses en comun con referencia).")
 
-    print("\nArchivos para mostrar al jefe:")
+    print("\nArchivos para revisar:")
     print(f"- SPC sin params: {os.path.join(workdir, 'serie.spc')}")
     print(f"- Reporte X-13  : {os.path.join(workdir, 'serie.html')}")
 

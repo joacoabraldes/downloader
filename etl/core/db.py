@@ -11,7 +11,10 @@ Cada dataset describe su tabla con un `config` (ver `etl/datasets/<name>/config.
                   (p.ej. `["date"]` o `["serie", "date"]`)
   - `VALUE_COLS`  columnas de valor que definen un snapshot (la 1ª suele ser `valor`)
 
-Prioriza `DATABASE_URL` (la cadena del botón "Connect" de Supabase, vía pooler).
+Resolución de conexión: 1) `DATABASE_URL` si está; 2) variables sueltas `PG*`; 3) `POSTGRES_*`
+como fallback. No hay archivo `.env` (se llama a `load_dotenv()` por si existiera): las vars
+salen del entorno — del `~/.bashrc` en interactivo y del crontab en el cron (host `10.0.16.3`,
+db `data`, vía `POSTGRES_*`).
 """
 from __future__ import annotations
 
@@ -31,12 +34,12 @@ def get_conn():
     host = os.environ.get("PGHOST") or os.environ.get("POSTGRES_HOST")
     if not host:
         raise RuntimeError(
-            "Falta DATABASE_URL. El .env no se versiona (está en .gitignore), así que en "
-            "un clone nuevo hay que crearlo. Creá un archivo .env en la raíz del repo con "
-            "la connection string del pooler de Supabase (proyecto afcp_cemento):\n"
-            "  DATABASE_URL=postgresql://postgres.<ref>:<PASS>"
-            "@aws-1-<region>.pooler.supabase.com:5432/postgres\n"
-            "Opcional para X-13:  X13PATH=<carpeta del binario x13as>"
+            "Sin datos de conexión: no hay DATABASE_URL ni PGHOST/POSTGRES_HOST en el entorno. "
+            "En el servidor esas variables (POSTGRES_*) las define el crontab; para correr a "
+            "mano fuera del cron, exportalas en tu shell, p.ej.:\n"
+            "  export POSTGRES_HOST=10.0.16.3 POSTGRES_DB=data POSTGRES_USER=postgres "
+            "POSTGRES_PASSWORD=... POSTGRES_PORT=5432\n"
+            "El .env (no versionado) lleva solo lo que NO es conexión (X13PATH, CEMENTO_PROXY)."
         )
     return psycopg2.connect(
         host=host,
@@ -45,8 +48,8 @@ def get_conn():
         user=os.environ.get("PGUSER", os.environ.get("POSTGRES_USER", "postgres")),
         password=os.environ.get("PGPASSWORD") or os.environ.get("POSTGRES_PASSWORD", ""),
         # 'prefer' (default de libpq): usa SSL si el server lo ofrece y si no cae a no-SSL.
-        # Sirve igual para Supabase (usa SSL) y para un Postgres local sin SSL (server del
-        # jefe). Setear PGSSLMODE=require/disable en el .bashrc si se quiere forzar.
+        # Sirve igual para Supabase (usa SSL) y para un Postgres local sin SSL. Setear
+        # PGSSLMODE=require/disable en el .bashrc si se quiere forzar.
         sslmode=os.environ.get("PGSSLMODE", os.environ.get("POSTGRES_SSLMODE", "prefer")),
     )
 

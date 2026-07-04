@@ -3,7 +3,7 @@
 Juan pidió ver qué da x13as cuando se le pasa "solo la serie, sin parámetros". Este script
 corre la MISMA serie (produccion de autos_prod.xlsx por default) con niveles crecientes de
 config y muestra, para cada uno, el .spc EXACTO que se ejecuta, el modelo ARIMA que estima
-x13as, y el error contra la referencia del jefe:
+x13as, y el error contra la referencia:
 
   1. SIN PARAMS      -> series{} + x11{}            (x13as usa TODOS los defaults)
   2. + automdl       -> series{} + automdl{} + x11{}   (x13as ESTIMA el modelo ARIMA solo)

@@ -2,7 +2,7 @@
 
 El "Informe de prensa" mensual de ADEFA es un PDF con 3 series que nos interesan, cada
 una como serie aparte (en unidades):
-  - produccion  -> "Producción Nacional"   (la "Hoja1 Columna B" del jefe)
+  - produccion  -> "Producción Nacional"   (la "Hoja1 Columna B" del Excel de referencia)
   - expo        -> "Exportaciones"
   - ventas      -> "Ventas a Concesionarios" (ventas mayoristas)
 

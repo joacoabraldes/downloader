@@ -1,6 +1,6 @@
 """Compara la desest de Juan vs la nuestra (MISMO método, MISMO span de datos).
 
-Corre x13as con la config que reproduce la referencia del jefe (aditivo + automdl + td1coef +
+Corre x13as con la config que reproduce la referencia (aditivo + automdl + td1coef +
 outlier + seasonalma=s3x5) sobre los ORIGINALES de Juan (mismos 388 meses, hasta 2026-04) y
 escribe un CSV lado a lado: mes | original | desest_juan | desest_nuestro | diferencia.
 Sirve para mostrarle a Juan que "da igual" y para entregarle el .spc exacto que usamos.
@@ -19,7 +19,7 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 import calibrar as C  # noqa: E402  (reusa read_juan/build_spc/run_variant/find_binary)
 
-# Config que reproduce EXACTO la referencia del jefe (ver scripts/calibrar.py, variante ganadora).
+# Config que reproduce EXACTO la referencia (ver scripts/calibrar.py, variante ganadora).
 WIN = dict(transform="none", model="automdl", outlier=True, mode="add",
            reg="td1coef", seasonalma="s3x5")
 WORKDIR = "/tmp/comparar_prod"
