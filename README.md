@@ -142,7 +142,8 @@ Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`.
 **Cron en el servidor** (idempotente: corre todos los días de la ventana hasta que la fuente
 publica; cuando el dato ya está, es un no-op barato). Publican: cemento, automotriz y
 patentamientos (SIOMAA) entre el 1 y el 10; granos cerca del 20; acero (CAA) entre el 25 y
-el 5 del mes siguiente; aves (MAGyP) entre el 20 y el 31; leche (MAGyP) entre el 20 y el 10.
+el 5 del mes siguiente; aves y bovinos (MAGyP) entre el 20 y el 31; leche (MAGyP) entre el 20
+y el 10.
 ```cron
 # ETLs mensuales downloader (idempotentes: corren diario en la ventana hasta que publican)
 0  12 1-10      * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl cemento        >> /home/jmt/data/etls/cemento.log 2>&1
@@ -152,6 +153,7 @@ el 5 del mes siguiente; aves (MAGyP) entre el 20 y el 31; leche (MAGyP) entre el
 0  10 25-31,1-5 * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl acero         >> /home/jmt/data/etls/acero.log 2>&1
 0  11 20-31     * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl aves           >> /home/jmt/data/etls/aves.log 2>&1
 0  14 20-31,1-10 * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl leche         >> /home/jmt/data/etls/leche.log 2>&1
+0  11 20-31     * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl bovinos        >> /home/jmt/data/etls/bovinos.log 2>&1
 ```
 > El `cd` al repo es obligatorio (para que `python -m etl` encuentre el paquete y el `.venv`).
 > Conexión, `X13PATH` y `CEMENTO_PROXY` salen del bloque de env del **crontab** (cron no
