@@ -6,15 +6,18 @@ La página de información sectorial no linkea el xls de datos directamente: lin
 link embebido en el PDF siempre apunta al vigente. Así que la cadena es:
 página → Tablero PDF → hipervínculo embebido → xls.
 
-El xls (formato .xls viejo, se lee con xlrd) tiene una fila de encabezado con "Mes/Año" y
-"Producción (en miles de toneladas res con hueso)". Se ubican esas columnas por texto (no por
-índice fijo) y se parsea la serie mensual de producción desde 2019.
+El archivo tiene una fila de encabezado con "Mes/Año" y "Producción (en miles de toneladas res
+con hueso)". Se ubican esas columnas por texto (no por índice fijo) y se parsea la serie
+mensual de producción desde 2019. Hoy MAGyP lo publica en `.xls` viejo (se lee con `xlrd`),
+pero el parser detecta el formato por los magic bytes y cae a `openpyxl` si algún día pasan a
+`.xlsx` moderno.
 """
 from __future__ import annotations
 
 import datetime as dt
 import io
 
+import openpyxl
 import pdfplumber
 import requests
 import xlrd
@@ -55,35 +58,62 @@ def download(url: str) -> bytes:
     return r.content
 
 
-def _find_cols(sh) -> tuple[int, int, int]:
-    """(fila de encabezado, col de fecha 'Mes/Año', col de producción) buscando por texto."""
-    for r in range(min(10, sh.nrows)):
+def _find_cols(cell, nrows: int, ncols: int) -> tuple[int, int, int]:
+    """(fila de encabezado, col de fecha 'Mes/Año', col de producción) buscando por texto.
+
+    `cell(r, c)` devuelve el valor de la celda (str/num/None) sea cual sea la lib de lectura.
+    """
+    for r in range(min(10, nrows)):
         fecha_col = prod_col = None
-        for c in range(sh.ncols):
-            txt = str(sh.cell_value(r, c)).lower()
+        for c in range(ncols):
+            txt = str(cell(r, c) or "").lower()
             if "mes" in txt and ("año" in txt or "ano" in txt):
                 fecha_col = c
             if "producci" in txt and "res con hueso" in txt:
                 prod_col = c
         if fecha_col is not None and prod_col is not None:
             return r, fecha_col, prod_col
-    raise RuntimeError("no se ubicaron las columnas 'Mes/Año' y 'Producción' en el xls")
+    raise RuntimeError("no se ubicaron las columnas 'Mes/Año' y 'Producción' en el archivo")
 
 
-def parse_produccion(xls_bytes: bytes) -> dict[dt.date, float]:
-    """{date(primer día del mes): produccion (miles tn res con hueso)} desde el xls."""
-    wb = xlrd.open_workbook(file_contents=xls_bytes)
+def _parse_xls(blob: bytes) -> dict[dt.date, float]:
+    """Parseo del formato .xls viejo (OLE2) con xlrd. La fecha viene como serial de Excel."""
+    wb = xlrd.open_workbook(file_contents=blob)
     sh = wb.sheet_by_index(0)
-    header, fecha_col, prod_col = _find_cols(sh)
+    header, fecha_col, prod_col = _find_cols(sh.cell_value, sh.nrows, sh.ncols)
     out: dict[dt.date, float] = {}
     for r in range(header + 1, sh.nrows):
-        f = sh.cell_value(r, fecha_col)
-        v = sh.cell_value(r, prod_col)
+        f, v = sh.cell_value(r, fecha_col), sh.cell_value(r, prod_col)
         if not isinstance(f, float) or f <= 1000 or not isinstance(v, (int, float)) or not v:
             continue
-        y, m, d = xlrd.xldate_as_tuple(f, wb.datemode)[:3]
+        y, m, _ = xlrd.xldate_as_tuple(f, wb.datemode)[:3]
         out[dt.date(y, m, 1)] = float(v)
     return out
+
+
+def _parse_xlsx(blob: bytes) -> dict[dt.date, float]:
+    """Parseo del formato .xlsx moderno con openpyxl (fallback). La fecha es un datetime."""
+    wb = openpyxl.load_workbook(io.BytesIO(blob), data_only=True)
+    ws = wb[wb.sheetnames[0]]
+    cell = lambda r, c: ws.cell(r + 1, c + 1).value  # openpyxl es 1-based  # noqa: E731
+    header, fecha_col, prod_col = _find_cols(cell, ws.max_row, ws.max_column)
+    out: dict[dt.date, float] = {}
+    for r in range(header + 1, ws.max_row):
+        f, v = cell(r, fecha_col), cell(r, prod_col)
+        if not isinstance(f, dt.datetime) or not isinstance(v, (int, float)) or not v:
+            continue
+        out[dt.date(f.year, f.month, 1)] = float(v)
+    wb.close()
+    return out
+
+
+def parse_produccion(blob: bytes) -> dict[dt.date, float]:
+    """{date(primer día del mes): produccion (miles tn res con hueso)}.
+
+    Detecta el formato por los magic bytes: ZIP (`PK`) = .xlsx moderno (openpyxl); si no,
+    OLE2 = .xls viejo (xlrd), que es lo que MAGyP publica hoy.
+    """
+    return _parse_xlsx(blob) if blob[:2] == b"PK" else _parse_xls(blob)
 
 
 def get_latest() -> tuple[dict[dt.date, float], str] | None:
