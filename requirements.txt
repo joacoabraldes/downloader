@@ -1,4 +1,5 @@
 openpyxl
+xlrd
 requests
 beautifulsoup4
 lxml

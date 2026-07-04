@@ -64,6 +64,16 @@ seasonalma = "s3x5"
 # mensual, siempre positivas (histórico desde 2022, sin ceros). Sin referencia de
 # calibración: mode=auto deja que X-13 elija add/mult por AIC. Ajustar con overrides si
 # alguna categoría no matchea contra una referencia futura.
+[bovinos]
+table = "bovinos"
+desest = ["produccion"]
+# add + td1coef + s3x5 es lo que MÁS se acerca a la referencia (Bovinos.xlsx col desest):
+# ~0.29% error medio (3% máx). NO reproduce exacto (como aves): la referencia se hizo con un
+# método algo distinto de X-13.
+mode = "add"
+td = "td1coef"
+seasonalma = "s3x5"
+
 [leche]
 table = "leche"
 desest = ["produccion"]
