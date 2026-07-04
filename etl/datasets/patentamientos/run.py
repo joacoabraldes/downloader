@@ -43,14 +43,17 @@ def main(argv=None) -> None:
             return
         rep.info(f"fuente: SIOMAA | informe: {latest['name']}")
 
-        # Si ya tenemos ese mes, evitamos la descarga (cara: incluye esperar el email).
+        # Si ya tenemos ese mes observado (provisorio del run o NULL del histórico), evitamos
+        # la descarga: es cara (incluye esperar el email de verificación).
         year, month = latest["year"], latest["month"]
-        if year and month and not args.force and db.has_estado(
-                conn, table=config.TABLE, key_cols=config.KEY_COLS,
-                key_vals=[config.MAIN_SERIE, dt.date(year, month, 1)], estado="provisorio"):
-            rep.note(dt.date(year, month, 1), "ya está en la base", status="sin_cambios")
-            rep.summary()
-            return
+        if year and month and not args.force:
+            key = [config.MAIN_SERIE, dt.date(year, month, 1)]
+            ya = any(db.has_estado(conn, table=config.TABLE, key_cols=config.KEY_COLS,
+                                   key_vals=key, estado=e) for e in ("provisorio", None))
+            if ya:
+                rep.note(dt.date(year, month, 1), "ya está en la base", status="sin_cambios")
+                rep.summary()
+                return
 
         try:
             pdf_bytes = source.download_pdf_bytes(latest["id"])

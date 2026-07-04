@@ -14,7 +14,7 @@ create table if not exists patentamientos (
                  'otros_pesados','autos_cl','autos_cl_cp')),
   date        date   not null,                 -- primer día del mes del informe
   valor       double precision,                -- unidades patentadas en el mes
-  estado      text,                            -- provisorio (PDF SIOMAA) / desestacionalizado (X-13)
+  estado      text,                            -- NULL=histórico (backfill PDFs) / provisorio (run mensual) / desestacionalizado (X-13)
   fuente      text,                            -- nombre del informe SIOMAA / 'census x13'
   parametros  jsonb,                           -- solo en desest: parámetros de la corrida X-13
   ingested_at timestamptz not null default now()

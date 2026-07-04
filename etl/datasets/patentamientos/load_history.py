@@ -18,6 +18,8 @@ from pathlib import Path
 from etl.core import db, report
 from . import config, source
 
+# Carga histórica (one-off): estado NULL = histórico, igual que en los otros datasets.
+# `provisorio` queda reservado para la fuente mensual incremental (run.py).
 FUENTE = "siomaa 4w historico"
 
 
@@ -53,7 +55,7 @@ def main(argv=None) -> None:
                     conn, table=config.TABLE, key_cols=config.KEY_COLS,
                     key_vals=[serie, fecha], value_cols=config.VALUE_COLS,
                     row={"valor": None if valor is None else float(valor)},
-                    estado="provisorio", fuente=FUENTE, force=args.force,
+                    estado=None, fuente=FUENTE, force=args.force,
                 ))
     finally:
         conn.close()
