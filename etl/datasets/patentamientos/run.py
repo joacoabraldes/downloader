@@ -4,7 +4,11 @@ A diferencia de los otros datasets, SIOMAA sólo expone el ÚLTIMO informe gratu
 puede pedir un mes arbitrario por URL. Así que el incremental es "bajar el último": se
 descubre el informe más nuevo y, si ese mes no está en la base, se descarga (flujo de
 verificación por email), se parsea la Tabla 1 y se snapshotean las series con
-estado='provisorio'. Al final, sólo si hubo datos nuevos, desestacionaliza (X-13).
+estado='definitivo'. Al final, sólo si hubo datos nuevos, desestacionaliza (X-13).
+
+SIOMAA publica el dato **final** del mes (no un provisorio que después revise), por eso el
+mensual va como 'definitivo' y no 'provisorio' como en automotriz/granos. El histórico del
+backfill va como NULL; en la vista _actual, 'definitivo' tiene prioridad sobre ese NULL.
 
 El histórico se carga aparte desde los PDFs ya bajados: `python -m etl patentamientos load-history --dir CARPETA`.
 
@@ -43,13 +47,13 @@ def main(argv=None) -> None:
             return
         rep.info(f"fuente: SIOMAA | informe: {latest['name']}")
 
-        # Si ya tenemos ese mes observado (provisorio del run o NULL del histórico), evitamos
+        # Si ya tenemos ese mes observado (definitivo del run o NULL del histórico), evitamos
         # la descarga: es cara (incluye esperar el email de verificación).
         year, month = latest["year"], latest["month"]
         if year and month and not args.force:
             key = [config.MAIN_SERIE, dt.date(year, month, 1)]
             ya = any(db.has_estado(conn, table=config.TABLE, key_cols=config.KEY_COLS,
-                                   key_vals=key, estado=e) for e in ("provisorio", None))
+                                   key_vals=key, estado=e) for e in ("definitivo", None))
             if ya:
                 rep.note(dt.date(year, month, 1), "ya está en la base", status="sin_cambios")
                 rep.summary()
@@ -74,7 +78,7 @@ def main(argv=None) -> None:
                 conn, table=config.TABLE, key_cols=config.KEY_COLS,
                 key_vals=[serie, fecha], value_cols=config.VALUE_COLS,
                 row={"valor": None if valor is None else float(valor)},
-                estado="provisorio", fuente=latest["name"], force=args.force,
+                estado="definitivo", fuente=latest["name"], force=args.force,
             )
             rep.item(f"{fecha:%Y-%m} {serie:17}", status, valor=valor)
         rep.summary()

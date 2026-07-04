@@ -14,7 +14,7 @@ create table if not exists patentamientos (
                  'otros_pesados','autos_cl','autos_cl_cp')),
   date        date   not null,                 -- primer día del mes del informe
   valor       double precision,                -- unidades patentadas en el mes
-  estado      text,                            -- NULL=histórico (backfill PDFs) / provisorio (run mensual) / desestacionalizado (X-13)
+  estado      text,                            -- NULL=histórico (backfill PDFs) / definitivo (run mensual: SIOMAA publica el dato final) / desestacionalizado (X-13)
   fuente      text,                            -- nombre del informe SIOMAA / 'census x13'
   parametros  jsonb,                           -- solo en desest: parámetros de la corrida X-13
   ingested_at timestamptz not null default now()
@@ -31,14 +31,17 @@ create unique index if not exists patentamientos_desest_uq
   on patentamientos (serie, date)
   where estado = 'desestacionalizado';
 
--- Serie observada "actual" por (serie, mes): último snapshot, excluyendo la desest.
+-- Serie observada "actual" por (serie, mes): último snapshot, excluyendo la desest. El
+-- mensual ('definitivo', el dato final que publica SIOMAA) tiene prioridad sobre el
+-- histórico del backfill (NULL) para los meses que ambos cubran.
 create or replace view patentamientos_actual as
 select distinct on (serie, date)
     serie, date, valor, estado, fuente, ingested_at
 from patentamientos
 where estado is distinct from 'desestacionalizado'
 order by serie, date,
-         (case when estado = 'provisorio' then 0 when estado is null then 1 else 2 end),
+         (case when estado = 'definitivo' then 0 when estado = 'provisorio' then 1
+               when estado is null then 2 else 3 end),
          ingested_at desc;
 
 -- Serie desestacionalizada (X-13), un valor por (serie, mes).

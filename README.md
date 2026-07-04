@@ -115,15 +115,18 @@ Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`.
 > un flujo de verificación por email), no se puede pedir un mes arbitrario por URL. Por eso su
 > `run` es "bajar el último" (sin `--month`/`--months-back`) y el histórico se carga aparte
 > desde los PDFs ya bajados: `python -m etl patentamientos load-history --dir CARPETA`.
+> Además, SIOMAA publica el dato **final** del mes, así que el mensual va con
+> `estado='definitivo'` (no `provisorio`); el histórico del backfill va con `NULL`.
 
 **Cron en el servidor** (idempotente: corre todos los días de la ventana hasta que la fuente
-publica; cuando el dato ya está, es un no-op barato). Publican: cemento y automotriz entre el
-1 y el 10; granos cerca del 20.
+publica; cuando el dato ya está, es un no-op barato). Publican: cemento, automotriz y
+patentamientos (SIOMAA) entre el 1 y el 10; granos cerca del 20.
 ```cron
 # ETLs mensuales downloader (idempotentes: corren diario en la ventana hasta que publican)
-0  12 1-10  * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl cemento    >> /home/jmt/data/cron.log 2>&1
-10 12 1-10  * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl automotriz >> /home/jmt/data/cron.log 2>&1
-0  12 18-31 * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl granos     >> /home/jmt/data/cron.log 2>&1
+0  12 1-10  * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl cemento        >> /home/jmt/data/etls/cemento.log 2>&1
+10 12 1-10  * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl automotriz     >> /home/jmt/data/etls/automotriz.log 2>&1
+0  12 18-31 * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl granos         >> /home/jmt/data/etls/granos.log 2>&1
+0  13 1-10  * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl patentamientos >> /home/jmt/data/etls/patentamientos.log 2>&1
 ```
 > El `cd` al repo es obligatorio (para que `python -m etl` encuentre el paquete y el `.venv`).
 > Conexión, `X13PATH` y `CEMENTO_PROXY` salen del bloque de env del **crontab** (cron no
