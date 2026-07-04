@@ -64,6 +64,15 @@ seasonalma = "s3x5"
 # mensual, siempre positivas (histórico desde 2022, sin ceros). Sin referencia de
 # calibración: mode=auto deja que X-13 elija add/mult por AIC. Ajustar con overrides si
 # alguna categoría no matchea contra una referencia futura.
+[acero]
+table = "acero"
+desest = ["acero_crudo"]
+# Calibrado contra la referencia (Acero.xlsx, columna desest): add + td1coef + s3x5
+# reproduce el d11 con error ~0 (máx 0.001%). En modo auto X-13 elige lo mismo.
+mode = "add"
+td = "td1coef"
+seasonalma = "s3x5"
+
 [patentamientos]
 table = "patentamientos"
 desest = ["total_mercado", "autos", "comercial_liviano", "comercial_pesado",

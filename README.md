@@ -1,4 +1,4 @@
-# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos)
+# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero)
 
 Monorepo de ETLs de series mensuales argentinas. Un **núcleo compartido** + un paquete por
 serie, todo detrás de un solo CLI (`python -m etl ...`). Modelo de datos **append-only**
@@ -13,6 +13,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `cemento` | `cemento_despacho` | `cemento.xlsx` | HTML AFCP (provisorio/definitivo) |
 | `automotriz` | `automotriz` | `ind_automotriz.xlsx` | **PDF ADEFA** (pdfplumber) |
 | `patentamientos` | `patentamientos` | PDFs SIOMAA (backfill) | **PDF SIOMAA** (pdfplumber) |
+| `acero` | `acero` | `Acero.xlsx` (1993→) | **PDF CAA** (scrape + pdfplumber) |
 
 Las tablas están en formato **long** (una fila por `serie, date, estado`). Series por
 dataset:
@@ -26,11 +27,15 @@ dataset:
   `total_mercado`, `autos`, `comercial_liviano`, `comercial_pesado`, `otros_pesados`,
   `autos_cl` (autos + C.L.), `autos_cl_cp` (autos + C.L. + C.P.). De la Tabla 1 del informe
   se guardan **solo las unidades del mes**; las variaciones/acumulados son recalculables.
+- **acero**: producción de `acero_crudo` (Cámara Argentina del Acero), en miles de toneladas.
+  El PDF mensual trae 8 series (arrabio, esponja, laminados, etc.); hoy se ingesta solo acero
+  crudo, que es la única con histórico (1993→) y referencia de calibración.
 
 **Qué series se desestacionalizan y con qué parámetros lo define el cuadro central
 `etl/series_desest.toml`** (ver la sección *Desestacionalización*): granos **5** series
 (`total`, `soja`, `girasol`, `lino`, `mani`), automotriz las 3 (`produccion`, `ventas`,
-`expo`), cemento `despacho_nacional`, patentamientos las 7 categorías. `algodon`, `cartamo`
+`expo`), cemento `despacho_nacional`, patentamientos las 7 categorías, acero `acero_crudo`.
+`algodon`, `cartamo`
 y `canola` **no** se desestacionalizan: su molienda es intermitente (mayormente ceros) y
 X-13 no puede ajustarlas; quedan solo como serie observada.
 
@@ -108,8 +113,14 @@ python -m etl granos                  # baja últimos meses + desestacionaliza
 python -m etl cemento --month 2026-04
 python -m etl automotriz              # baja el PDF de ADEFA del mes + desestacionaliza
 python -m etl patentamientos          # baja el ÚLTIMO informe SIOMAA + desestacionaliza
+python -m etl acero                   # baja el último PDF de Cifras de la CAA + desestacionaliza
 ```
 Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`.
+
+> **acero** también scrapea la página de la CAA para encontrar el último PDF de *Cifras* (el
+> nombre del archivo es inconsistente, no se puede construir la URL). Cada PDF re-publica los
+> últimos 13 meses, así que `run` los reingesta y `insert_if_changed` absorbe las revisiones
+> de la CAA. El histórico profundo (desde 1993) sale del Excel: `python -m etl acero load-history`.
 
 > **patentamientos es distinto**: SIOMAA sólo expone el **último** informe gratuito (detrás de
 > un flujo de verificación por email), no se puede pedir un mes arbitrario por URL. Por eso su
@@ -158,8 +169,8 @@ solo si el valor es nuevo o cambió respecto del último de ese `(clave, estado)
 
 Y dos vistas que **homogeneízan el consumo** de todos los datasets en una sola forma (agregan
 una columna `dataset`):
-- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos.
-- `series_desest`: serie desestacionalizada de los cuatro.
+- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero.
+- `series_desest`: serie desestacionalizada de los cinco.
 
 ## Desestacionalización (Census X-13)
 
@@ -191,10 +202,15 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 | automotriz | `ventas` | `auto` | `td` | `s3x5` |
 | cemento | `despacho_nacional` | `mult` | `td` | `s3x5` |
 | patentamientos | las 7 categorías | `auto` | `td1coef` | `s3x5` |
+| acero | `acero_crudo` | `add` | `td1coef` | `s3x5` |
 
 > **patentamientos** aún no tiene referencia de calibración: `mode=auto` deja que X-13 elija
 > add/mult por AIC. La desest arranca en **2022-12** (`start` en el cuadro): el informe de
 > nov-2022 es pago y falta, y X-13 exige meses contiguos.
+
+> **acero** está calibrado contra la referencia (`Acero.xlsx`, columna `desest`): `add` +
+> `td1coef` + `s3x5` reproduce el d11 con error ~0 (máx 0.001% sobre 401 meses). En `auto`
+> X-13 converge al mismo modelo.
 
 > **Guard de ceros:** aunque el cuadro diga `mult`/`auto`, si la serie tiene algún valor ≤ 0
 > (p.ej. `produccion` en **abril-2020**, COVID: producción 0) el núcleo la fuerza a **aditivo**
@@ -262,3 +278,16 @@ columna de la propia tabla (`Ene.2022` / `JUN.26`), robusto a las variantes LITE
 El histórico se cargó desde los ~53 PDFs ya bajados (ene-2022 en adelante) con
 `load-history --dir`. Esos PDFs **no se versionan** (viven en el repo original de scraping);
 para re-hacer el backfill hay que tenerlos a mano.
+
+## La fuente de acero (CAA)
+
+`etl/datasets/acero/source.py` scrapea la página de comunicados de la Cámara Argentina del
+Acero (`https://www.acero.org.ar/comunicados-cifras-2023-2-2-2/`) y elige el PDF de *Cifras*
+más nuevo (por el mes/año que parsea del nombre; los `CAA-INFORME-*` son prosa y se ignoran).
+El PDF de "Producción Siderúrgica Argentina" extrae limpio con `pdfplumber`: cada fila mensual
+es `<Mes> <Año>` + 8 valores, de los que se toma **acero crudo** (4ª columna). Cada PDF trae
+los últimos ~13 meses, así que el `run` reingesta esa ventana y `insert_if_changed` absorbe
+las revisiones que la CAA hace de meses previos.
+
+El histórico profundo (acero crudo 1993→) sale de `etl/datasets/acero/data/Acero.xlsx`
+(`load-history`), cuya columna `desest` es además la **referencia de calibración** de X-13.

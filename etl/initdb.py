@@ -12,7 +12,7 @@ from etl.core import db
 
 DATASETS_DIR = Path(__file__).parent / "datasets"
 UNIFIED_SCHEMA = Path(__file__).parent / "schema_unified.sql"
-ALL = ["granos", "cemento", "automotriz", "patentamientos"]
+ALL = ["granos", "cemento", "automotriz", "patentamientos", "acero"]
 
 
 def apply_schema(conn, name: str) -> bool:
