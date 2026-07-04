@@ -1,9 +1,11 @@
 """ETL incremental de acero crudo (Cámara Argentina del Acero).
 
 Baja el último PDF de "Cifras" (scrapeando la página, porque el nombre es inconsistente),
-parsea las ~13 filas mensuales y snapshotea acero crudo con estado='provisorio'. Como cada
-PDF re-publica los últimos 13 meses, insert_if_changed absorbe revisiones y se pone al día
-solo. Al final, sólo si hubo datos nuevos o actualizados, desestacionaliza (X-13).
+parsea las ~13 filas mensuales y snapshotea acero crudo con estado='definitivo': la cifra
+publicada por la CAA es el número oficial del mes. Como cada PDF re-publica los últimos 13
+meses, insert_if_changed absorbe las revisiones de la CAA (un valor corregido entra como
+snapshot definitivo nuevo) y se pone al día solo. Al final, sólo si hubo datos nuevos o
+actualizados, desestacionaliza (X-13).
 
 El histórico profundo (desde 1993) se carga aparte del Excel de referencia:
 `python -m etl acero load-history`.
@@ -55,7 +57,7 @@ def main(argv=None) -> None:
                 conn, table=config.TABLE, key_cols=config.KEY_COLS,
                 key_vals=[config.MAIN_SERIE, fecha], value_cols=config.VALUE_COLS,
                 row={"valor": None if valor is None else float(valor)},
-                estado="provisorio", fuente=url, force=args.force,
+                estado="definitivo", fuente=url, force=args.force,
             )
             rep.item(f"{fecha:%Y-%m} {config.MAIN_SERIE}", status, valor=valor)
         rep.summary()

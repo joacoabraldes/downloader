@@ -287,7 +287,8 @@ más nuevo (por el mes/año que parsea del nombre; los `CAA-INFORME-*` son prosa
 El PDF de "Producción Siderúrgica Argentina" extrae limpio con `pdfplumber`: cada fila mensual
 es `<Mes> <Año>` + 8 valores, de los que se toma **acero crudo** (4ª columna). Cada PDF trae
 los últimos ~13 meses, así que el `run` reingesta esa ventana y `insert_if_changed` absorbe
-las revisiones que la CAA hace de meses previos.
+las revisiones que la CAA hace de meses previos. La cifra del PDF se guarda como `definitivo`
+(es el número oficial de la CAA); una revisión entra como snapshot `definitivo` nuevo.
 
 El histórico profundo (acero crudo 1993→) sale de `etl/datasets/acero/data/Acero.xlsx`
 (`load-history`), cuya columna `desest` es además la **referencia de calibración** de X-13.
