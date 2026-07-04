@@ -1,8 +1,8 @@
 """ETL incremental del despacho de cemento (AFCP -> Supabase).
 
 Para cada mes objetivo intenta traer los valores provisorio y definitivo de AFCP,
-insertando un snapshot sólo si es nuevo o cambió (append-only con dedup). Al terminar
-corre la desestacionalización (X-13).
+insertando un snapshot sólo si es nuevo o cambió (append-only con dedup). Al terminar,
+sólo si hubo datos nuevos o actualizados, corre la desestacionalización (X-13).
 
 Ventana de meses: por default se pone al día desde el último mes que hay en la base hasta
 hoy (re-chequeando los últimos meses por revisiones). `--month` y `--months-back` siguen
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import argparse
 
-from etl.core import db, report, seasonal, window
+from etl.core import db, desest_params, report, seasonal, window
 from . import config, source
 
 
@@ -81,14 +81,13 @@ def main(argv=None):
             process_month(conn, rep, fecha, force=args.force)
         rep.summary()
 
-        if not args.no_desest:
-            seasonal.run_desest(conn, "cemento", [
-                (config.MAIN_SERIE, dict(
-                    table=config.TABLE, source_view=config.ACTUAL_VIEW,
-                    conflict_cols=("serie", "date"), extra_cols={"serie": config.MAIN_SERIE},
-                    where="serie = %s", where_params=(config.MAIN_SERIE,),
-                    td="td",  # cemento matchea al jefe con trading-day de 6 coef (no td1coef)
-                    keep_dir=args.x13_out))])
+        if args.no_desest:
+            pass
+        elif not rep.changed:
+            print("sin datos nuevos: no se desestacionaliza")
+        else:
+            seasonal.run_desest(conn, "cemento",
+                                desest_params.build_jobs("cemento", keep_dir=args.x13_out))
     finally:
         conn.close()
 

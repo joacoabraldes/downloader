@@ -1,0 +1,61 @@
+# Cuadro de parámetros de desestacionalización X-13ARIMA-SEATS por serie.
+#
+# El ETL relee este archivo al desestacionalizar (ver etl/core/desest_params.py). Cada
+# corrida busca acá qué series de un dataset hay que ajustar y con qué parámetros. Estos
+# valores salieron de calibrar cada serie contra su referencia (error 0.00%, salvo autos
+# ventas que no reproduce exacto y va en modo automático, ~0.33%).
+#
+# Para AGREGAR una serie nueva a desestacionalizar:
+#   1. Sumar su nombre a `desest` del dataset (debe existir en la tabla de ese dataset).
+#   2. Si difiere del default del dataset, agregar un override [<dataset>.overrides.<serie>].
+# Para AGREGAR un dataset nuevo: crear un bloque [<dataset>] con table/desest y su default.
+#
+# Parámetros:
+#   table       tabla postgres (formato long) de la que sale la serie observada.
+#   desest      series (dentro de esa tabla) a desestacionalizar.
+#   mode        add  = aditivo (transform=none; admite ceros)
+#               mult = multiplicativo (transform=log; requiere serie > 0)
+#               auto = X-13 elige el modo por AIC (transform=auto)
+#   td          td1coef = trading-day 1 coef | td = trading-day 6 coef | none = sin ajuste
+#   seasonalma  filtro estacional del X-11 (s3x5 es el estándar).
+#   start       (opcional) fecha YYYY-MM-DD desde la que se desestacionaliza: recorta el
+#               histórico observado a >= start antes de correr X-13. Sirve para excluir un
+#               prefijo degenerado (ceros / cambios de escala) que cuelga a automdl/X-11.
+#
+# Nota: aunque `mode` diga mult/auto, si la serie tiene algún valor <= 0 el ETL fuerza
+# aditivo (el X-11 multiplicativo/log no admite ceros).
+
+[granos]
+table = "molienda_granos"
+# Solo `soja` está calibrada contra referencia; el resto hereda la misma receta (misma
+# naturaleza de serie). Ajustar con overrides si alguno no matchea. Se excluyen algodon,
+# cartamo y canola: su molienda es intermitente (mayormente ceros incluso desde 2003), X-13
+# no puede ajustarlas (falla con "exceeds regression effects allowed"). Quedan crudas.
+desest = ["total", "soja", "girasol", "lino", "mani"]
+mode = "add"
+td = "none"
+seasonalma = "s3x5"
+# La tabla tiene histórico crudo desde 1965, pero ese tramo (prefijo de ceros / cambio de
+# escala de 0 a millones) cuelga a X-13. Se desestacionaliza desde 2003-01, igual que la
+# referencia de calibración (molienda_soja.xlsx) y donde arrancan las 8 series.
+start = 2003-01-01
+
+[automotriz]
+table = "automotriz"
+desest = ["produccion", "ventas", "expo"]
+mode = "add"        # produccion y expo reproducen exacto en aditivo + td1coef
+td = "td1coef"
+seasonalma = "s3x5"
+
+# Ventas no reproduce exacto con ninguna config fija: el mejor ajuste (0.33% vs referencia)
+# es dejar que X-13 elija el modo y testee el trading-day por AIC.
+[automotriz.overrides.ventas]
+mode = "auto"
+td = "td"
+
+[cemento]
+table = "cemento_despacho"
+desest = ["despacho_nacional"]   # las otras 3 series (expo/consumo/import) no se ajustan
+mode = "mult"
+td = "td"            # cemento reproduce exacto en multiplicativo + trading-day de 6 coef
+seasonalma = "s3x5"

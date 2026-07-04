@@ -58,6 +58,8 @@ def main(argv=None) -> None:
     args = ap.parse_args(argv)
 
     rows = read_rows(args.xlsx)
+    # Piso histórico: X-13 no puede con la serie desde 1965 (ver config.START_DATE).
+    rows = [(date, row) for date, row in rows if date >= config.START_DATE]
     if not rows:
         print("No se leyeron filas del Excel.", file=sys.stderr)
         sys.exit(1)

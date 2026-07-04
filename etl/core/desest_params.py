@@ -1,0 +1,78 @@
+"""Lee el cuadro de parámetros de desestacionalización por serie (series_desest.toml).
+
+Es la fuente única de qué series desestacionaliza cada dataset y con qué parámetros de
+X-13. Cada `run.py` llama a `jobs_for(dataset)` al momento de desestacionalizar; agregar
+una serie o un dataset es editar el TOML, no el código (ver el header del .toml).
+"""
+from __future__ import annotations
+
+import os
+import tomllib
+
+_TOML = os.path.join(os.path.dirname(__file__), os.pardir, "series_desest.toml")
+
+# Parámetros de X-13 que se pasan a seasonal.deseasonalize (el resto del job —tabla, vista,
+# claves— lo arma cada run.py desde su config).
+_PARAM_KEYS = ("mode", "td", "seasonalma")
+
+
+def _load() -> dict:
+    with open(_TOML, "rb") as f:
+        return tomllib.load(f)
+
+
+def datasets() -> list[str]:
+    """Datasets declarados en el cuadro (orden del TOML)."""
+    return list(_load().keys())
+
+
+def _cfg(dataset: str) -> dict:
+    data = _load()
+    if dataset not in data:
+        raise KeyError(f"'{dataset}' no está en {os.path.basename(_TOML)}")
+    return data[dataset]
+
+
+def table_for(dataset: str) -> str:
+    """Tabla postgres (formato long) del dataset, según el cuadro."""
+    return _cfg(dataset)["table"]
+
+
+def jobs_for(dataset: str) -> list[tuple[str, dict]]:
+    """[(serie, {mode, td, seasonalma}), ...] para las series a desestacionalizar del dataset.
+
+    El default del dataset se aplica a todas las series de `desest`; cada override
+    [<dataset>.overrides.<serie>] pisa solo las claves que redefine.
+    """
+    cfg = _cfg(dataset)
+    base = {k: cfg[k] for k in _PARAM_KEYS}
+    overrides = cfg.get("overrides", {})
+    jobs = []
+    for serie in cfg["desest"]:
+        params = dict(base)
+        params.update({k: v for k, v in overrides.get(serie, {}).items() if k in _PARAM_KEYS})
+        jobs.append((serie, params))
+    return jobs
+
+
+def build_jobs(dataset: str, *, keep_dir=None) -> list[tuple[str, dict]]:
+    """[(serie, kwargs_para_seasonal.deseasonalize), ...] listos para run_desest.
+
+    Arma el job completo desde el cuadro: los params de X-13 (mode/td/seasonalma) más las
+    columnas de la tabla long (todas las series se filtran por `serie`). La vista insumo sigue
+    la convención `<table>_actual` (override opcional con la clave `view` en el TOML).
+    """
+    cfg = _cfg(dataset)
+    table = cfg["table"]
+    view = cfg.get("view", f"{table}_actual")
+    overrides = cfg.get("overrides", {})
+    ds_start = cfg.get("start")
+    jobs = []
+    for serie, params in jobs_for(dataset):
+        start = overrides.get(serie, {}).get("start", ds_start)  # override por serie o default
+        jobs.append((serie, dict(
+            table=table, source_view=view,
+            conflict_cols=("serie", "date"), extra_cols={"serie": serie},
+            where="serie = %s", where_params=(serie,),
+            start=start, keep_dir=keep_dir, **params)))
+    return jobs

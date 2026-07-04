@@ -1,8 +1,8 @@
 """ETL incremental de la industria automotriz (ADEFA -> Supabase).
 
 Por cada mes objetivo baja el PDF de ADEFA y snapshotea las 3 series (produccion,
-ventas, expo) con estado='provisorio'. Al final desestacionaliza cada serie por
-separado (X-13).
+ventas, expo) con estado='provisorio'. Al final, sólo si hubo datos nuevos o
+actualizados, desestacionaliza cada serie por separado (X-13).
 
 Ventana de meses: por default se pone al día desde el último mes que hay en la base
 (re-chequeando los últimos meses por revisiones) hasta hoy, así nunca se "saltea" el
@@ -12,9 +12,10 @@ Flags:
   --month YYYY-MM     procesar solo ese mes
   --months-back N     últimos N meses a revisar (override de la ventana auto)
   --force             insertar snapshot aunque no haya cambiado
-  --no-fetch          saltear la descarga del PDF (solo desestacionalizar el histórico)
   --no-desest         saltear la desestacionalización X-13
   --x13-out DIR       guardar la salida completa de X-13 en DIR
+
+Para recalcular la desestacionalización SIN bajar el PDF: `python -m etl redesest automotriz`.
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ import argparse
 
 import urllib3
 
-from etl.core import db, report, seasonal, window
+from etl.core import db, desest_params, report, seasonal, window
 from . import config, source
 
 
@@ -55,8 +56,6 @@ def main(argv=None) -> None:
     ap.add_argument("--months-back", type=int,
                     help="últimos N meses a revisar (override de la ventana auto)")
     ap.add_argument("--force", action="store_true", help="insertar aunque no cambie")
-    ap.add_argument("--no-fetch", action="store_true",
-                    help="saltear la descarga del PDF (solo desestacionalizar)")
     ap.add_argument("--no-desest", action="store_true",
                     help="saltear la desestacionalización X-13")
     ap.add_argument("--x13-out", metavar="DIR",
@@ -66,22 +65,21 @@ def main(argv=None) -> None:
 
     conn = db.get_conn()
     try:
-        if not args.no_fetch:
-            months = window.target_months(conn, table=config.TABLE, month=args.month,
-                                          months_back=args.months_back)
-            rep = report.Report("automotriz", "run")
-            rep.info(f"fuente: ADEFA PDF | meses: {months[0]:%Y-%m}..{months[-1]:%Y-%m}")
-            for fecha in months:
-                process_month(conn, rep, fecha, force=args.force)
-            rep.summary()
+        months = window.target_months(conn, table=config.TABLE, month=args.month,
+                                      months_back=args.months_back)
+        rep = report.Report("automotriz", "run")
+        rep.info(f"fuente: ADEFA PDF | meses: {months[0]:%Y-%m}..{months[-1]:%Y-%m}")
+        for fecha in months:
+            process_month(conn, rep, fecha, force=args.force)
+        rep.summary()
 
-        if not args.no_desest:
-            jobs = [(serie, dict(
-                        table=config.TABLE, source_view=config.ACTUAL_VIEW,
-                        conflict_cols=("serie", "date"), extra_cols={"serie": serie},
-                        where="serie = %s", where_params=(serie,), keep_dir=args.x13_out))
-                    for serie in config.SERIES]
-            seasonal.run_desest(conn, "automotriz", jobs)
+        if args.no_desest:
+            pass
+        elif not rep.changed:
+            print("sin datos nuevos: no se desestacionaliza")
+        else:
+            seasonal.run_desest(conn, "automotriz",
+                                desest_params.build_jobs("automotriz", keep_dir=args.x13_out))
     finally:
         conn.close()
 

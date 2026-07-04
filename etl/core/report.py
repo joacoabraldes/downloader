@@ -43,6 +43,11 @@ class Report:
         self.counts = {k: 0 for k in _ALWAYS + _OPTIONAL}
         print(f"[{self.title}]")
 
+    @property
+    def changed(self) -> int:
+        """Registros nuevos o actualizados en esta corrida (0 = nada para desestacionalizar)."""
+        return self.counts["nuevos"] + self.counts["actualizados"]
+
     def info(self, text: str) -> None:
         """Línea informativa secundaria (rango leído, fuente, etc.)."""
         print(f"  {text}")

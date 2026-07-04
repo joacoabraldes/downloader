@@ -1,7 +1,8 @@
 """CLI del monorepo de ETLs.
 
   python -m etl <dataset> [run|load-history] [flags]   # dataset: granos|cemento|automotriz
-  python -m etl init-db [datasets...]                   # aplica los schema.sql
+  python -m etl init-db  [datasets...]                  # aplica los schema.sql
+  python -m etl redesest [datasets...] [--clean]        # recalcula la desest desde la base
 
 Ejemplos:
   python -m etl init-db
@@ -9,7 +10,8 @@ Ejemplos:
   python -m etl granos --months-back 12
   python -m etl cemento --month 2026-04
   python -m etl automotriz load-history
-  python -m etl automotriz --no-fetch        # solo desestacionalizar el histórico
+  python -m etl redesest                     # recalcula la desest de los 3 (sin bajar de la web)
+  python -m etl redesest --clean             # borra las desest y las regenera (rebuild limpio)
 """
 from __future__ import annotations
 
@@ -20,8 +22,9 @@ DATASETS = ["granos", "cemento", "automotriz"]
 SUBCOMMANDS = {"run", "load-history"}
 USAGE = (
     "uso: python -m etl <dataset> [run|load-history] [flags]\n"
-    "     python -m etl init-db [datasets...]\n"
-    "     python -m etl export  [datasets...] [--dir CARPETA]\n"
+    "     python -m etl init-db  [datasets...]\n"
+    "     python -m etl export   [datasets...] [--dir CARPETA]\n"
+    "     python -m etl redesest [datasets...] [--clean] [--x13-out DIR]\n"
     f"     datasets: {', '.join(DATASETS)}"
 )
 
@@ -40,6 +43,10 @@ def main(argv=None) -> None:
 
     if cmd == "export":
         importlib.import_module("etl.export").main(rest)
+        return
+
+    if cmd == "redesest":
+        importlib.import_module("etl.redesest").main(rest)
         return
 
     if cmd not in DATASETS:

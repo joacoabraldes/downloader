@@ -2,8 +2,8 @@
 
 El HTML trae todos los meses publicados; por default se procesan los que están desde el
 último mes en la base hacia adelante (re-chequeando los últimos por revisiones), así nunca
-se saltea el último publicado. Hace insert-if-changed con estado='provisorio' y al final
-corre la desestacionalización X-13 (salvo --no-desest).
+se saltea el último publicado. Hace insert-if-changed con estado='provisorio' y al final,
+sólo si hubo datos nuevos o actualizados, corre la desestacionalización X-13 (salvo --no-desest).
 
 Flags:
   --month YYYY-MM     procesar solo ese mes
@@ -20,7 +20,7 @@ import sys
 
 import urllib3
 
-from etl.core import db, report, seasonal, window
+from etl.core import db, desest_params, report, seasonal, window
 from . import config, source
 
 ESTADO = "provisorio"
@@ -66,6 +66,8 @@ def main(argv=None) -> None:
     urllib3.disable_warnings()
     html = source.fetch_html()
     parsed = source.parse_molienda(html)
+    # Piso histórico: X-13 no puede con la serie desde 1965 (ver config.START_DATE).
+    parsed = {d: r for d, r in parsed.items() if d >= config.START_DATE}
     if not parsed:
         print("No se parseó ningún mes del HTML.", file=sys.stderr)
         sys.exit(1)
@@ -89,13 +91,13 @@ def main(argv=None) -> None:
                 rep.item(f"{d:%Y-%m} {serie:9}", status, valor=row[col])
         rep.summary()
 
-        if not args.no_desest:
-            seasonal.run_desest(conn, "granos", [
-                (config.MAIN_SERIE, dict(
-                    table=config.TABLE, source_view=config.ACTUAL_VIEW,
-                    conflict_cols=("serie", "date"), extra_cols={"serie": config.MAIN_SERIE},
-                    where="serie = %s", where_params=(config.MAIN_SERIE,),
-                    keep_dir=args.x13_out))])
+        if args.no_desest:
+            pass
+        elif not rep.changed:
+            print("sin datos nuevos: no se desestacionaliza")
+        else:
+            seasonal.run_desest(conn, "granos",
+                                desest_params.build_jobs("granos", keep_dir=args.x13_out))
     finally:
         conn.close()
 
