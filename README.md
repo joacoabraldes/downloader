@@ -53,15 +53,19 @@ X-13 no puede ajustarlas; quedan solo como serie observada.
 ```
 etl/
   series_desest.toml   CUADRO: qué series desestacionaliza cada dataset y con qué parámetros X-13
+  schema_unified.sql   vistas series_actual / series_desest (unen todos los datasets)
   core/        db.py (conexión + insert/dedup genérico)  ·  seasonal.py (X-13)
                desest_params.py (lee el cuadro y arma los jobs de desest)
-  datasets/<serie>/
-       source.py       scraping/parsing de la fuente
-       load_history.py carga histórica (one-off, desde Excel)
+               window.py (ventana de meses del incremental)  ·  report.py (salida uniforme)
+  datasets/<dataset>/
+       source.py       scraping/parsing de la fuente (HTML / PDF / xlsx / .xls, según el dataset)
+       load_history.py carga histórica (one-off, desde el Excel de referencia)
        run.py          ETL incremental + desestacionalización
        config.py       tabla/columnas de la serie
        schema.sql      DDL de la serie (tabla + índices + vistas)
+       data/           Excel de referencia/histórico (donde aplica)
   __main__.py  initdb.py  export.py  redesest.py (recalcular la desest desde la base)
+scripts/       harness de calibración X-13 por serie (calibrar_<dataset>.py) y comparaciones
 ```
 
 ## Requisitos
@@ -94,7 +98,7 @@ Los **DDL están en `etl/datasets/<serie>/schema.sql`** (uno por serie). Para ap
 la base apuntada por `DATABASE_URL`:
 
 ```bash
-python -m etl init-db                 # crea las 3 tablas + sus vistas (idempotente)
+python -m etl init-db                 # crea todas las tablas + sus vistas (idempotente)
 python -m etl init-db automotriz      # solo una serie
 ```
 Es idempotente (`create table if not exists` / `create or replace view`): se puede correr
