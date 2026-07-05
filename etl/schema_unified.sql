@@ -27,7 +27,7 @@ create or replace view series_actual as
     from aves_actual
   union all
   select 'leche'::text as dataset, serie, date, valor, estado, fuente, ingested_at
-    from leche_actual
+    from etl_leche_actual
   union all
   select 'bovinos'::text as dataset, serie, date, valor, estado, fuente, ingested_at
     from bovinos_actual
@@ -57,7 +57,7 @@ create or replace view series_desest as
     from aves_desest
   union all
   select 'leche'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
-    from leche_desest
+    from etl_leche_desest
   union all
   select 'bovinos'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
     from bovinos_desest

@@ -15,7 +15,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `patentamientos` | `patentamientos` | PDFs SIOMAA (backfill) | **PDF SIOMAA** (pdfplumber) |
 | `acero` | `acero` | `Acero.xlsx` (1993→) | **PDF CAA** (scrape + pdfplumber) |
 | `aves` | `aves` | `Aves.xlsx` (1981→) | **xlsx MAGyP** (scrape) |
-| `leche` | `leche` | `leche.xlsx` (2015→) | **xlsx MAGyP** (URL fija) |
+| `leche` | `etl_leche` | `leche.xlsx` (2015→) | **xlsx MAGyP** (URL fija) |
 | `bovinos` | `bovinos` | `Bovinos.xlsx` (1998→) | **.xls MAGyP** (link dentro de un PDF) |
 | `demanda_energia` | `etl_demanda_energia` | `energia.xlsx` (2005→) | **xlsx CAMMESA** (URL fija) |
 

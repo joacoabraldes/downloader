@@ -91,7 +91,7 @@ def main(argv=None) -> None:
                 n = export_simple(conn, "aves_desest", path)
             elif name == "leche":
                 path = out / "leche_d11.csv"
-                n = export_simple(conn, "leche_desest", path)
+                n = export_simple(conn, "etl_leche_desest", path)
             elif name == "bovinos":
                 path = out / "bovinos_d11.csv"
                 n = export_simple(conn, "bovinos_desest", path)
