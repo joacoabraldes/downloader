@@ -1,4 +1,4 @@
-# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos)
+# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia)
 
 Monorepo de ETLs de series mensuales argentinas. Un **núcleo compartido** + un paquete por
 serie, todo detrás de un solo CLI (`python -m etl ...`). Modelo de datos **append-only**
@@ -17,6 +17,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `aves` | `aves` | `Aves.xlsx` (1981→) | **xlsx MAGyP** (scrape) |
 | `leche` | `leche` | `leche.xlsx` (2015→) | **xlsx MAGyP** (URL fija) |
 | `bovinos` | `bovinos` | `Bovinos.xlsx` (1998→) | **.xls MAGyP** (link dentro de un PDF) |
+| `demanda_energia` | `etl_demanda_energia` | `energia.xlsx` (2005→) | **xlsx CAMMESA** (URL fija) |
 
 Las tablas están en formato **long** (una fila por `serie, date, estado`). Series por
 dataset:
@@ -39,12 +40,18 @@ dataset:
   mes. Histórico 2015→.
 - **bovinos**: `produccion` de carne bovina (MAGyP, base SENASA), en miles de toneladas res
   con hueso. Histórico 1998→. El xls fuente trae además faena (cabezas), % hembras y peso.
+- **demanda_energia**: demanda eléctrica del MEM (CAMMESA), en **GWh**. La serie principal
+  `no_residencial` = `no_res_estacionalizada` (Demanda No Residencial) + `no_estacionalizada`
+  (grandes usuarios GUDI/GUME/GUMA/MATE). Histórico 2005→ (de `energia.xlsx`); CAMMESA cubre
+  2023→. Se guardan además todas las filas del cuadro como series: `estacionalizada`,
+  `residencial`, `gudi`, `gume`, `guma`, `mate_distribuidor`, `local`. La fuente está en MWh;
+  se convierte a GWh (÷1000). Se parsea **por etiqueta**, no por fila (CAMMESA agrega filas).
 
 **Qué series se desestacionalizan y con qué parámetros lo define el cuadro central
 `etl/series_desest.toml`** (ver la sección *Desestacionalización*): granos **5** series
 (`total`, `soja`, `girasol`, `lino`, `mani`), automotriz las 3 (`produccion`, `ventas`,
 `expo`), cemento `despacho_nacional`, patentamientos las 7 categorías, acero `acero_crudo`,
-aves `faena`. `algodon`, `cartamo`
+aves `faena`, demanda_energia `no_residencial`. `algodon`, `cartamo`
 y `canola` **no** se desestacionalizan: su molienda es intermitente (mayormente ceros) y
 X-13 no puede ajustarlas; quedan solo como serie observada.
 
@@ -147,7 +154,7 @@ Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`.
 publica; cuando el dato ya está, es un no-op barato). Publican: cemento, automotriz y
 patentamientos (SIOMAA) entre el 1 y el 10; granos cerca del 20; acero (CAA) entre el 25 y
 el 5 del mes siguiente; aves y bovinos (MAGyP) entre el 20 y el 31; leche (MAGyP) entre el 20
-y el 10.
+y el 10; demanda_energia (CAMMESA) publica con ~1 mes de rezago, ventana amplia 5-20.
 ```cron
 # ETLs mensuales downloader (idempotentes: corren diario en la ventana hasta que publican)
 0  12 1-10      * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl cemento        >> /home/jmt/data/etls/cemento.log 2>&1
@@ -158,6 +165,7 @@ y el 10.
 0  11 20-31     * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl aves           >> /home/jmt/data/etls/aves.log 2>&1
 0  14 20-31,1-10 * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl leche         >> /home/jmt/data/etls/leche.log 2>&1
 0  11 20-31     * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl bovinos        >> /home/jmt/data/etls/bovinos.log 2>&1
+0  12 5-20      * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl demanda_energia >> /home/jmt/data/etls/demanda_energia.log 2>&1
 ```
 > El `cd` al repo es obligatorio (para que `python -m etl` encuentre el paquete y el `.venv`).
 > Conexión, `X13PATH` y `CEMENTO_PROXY` salen del bloque de env del **crontab** (cron no
@@ -189,8 +197,8 @@ solo si el valor es nuevo o cambió respecto del último de ese `(clave, estado)
 
 Y dos vistas que **homogeneízan el consumo** de todos los datasets en una sola forma (agregan
 una columna `dataset`):
-- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves + leche + bovinos.
-- `series_desest`: serie desestacionalizada de los ocho.
+- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves + leche + bovinos + demanda_energia.
+- `series_desest`: serie desestacionalizada de los nueve.
 
 ## Desestacionalización (Census X-13)
 
@@ -226,6 +234,7 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 | aves | `faena` | `mult` | `td` | `s3x5` |
 | leche | `produccion` | `add` | `td1coef` | `s3x5` |
 | bovinos | `produccion` | `add` | `td1coef` | `s3x5` |
+| demanda_energia | `no_residencial` | `add` | `td1coef` | `s3x5` |
 
 > **patentamientos** aún no tiene referencia de calibración: `mode=auto` deja que X-13 elija
 > add/mult por AIC. La desest arranca en **2022-12** (`start` en el cuadro): el informe de
@@ -247,6 +256,12 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 > **bovinos**, como aves, **no reproduce exacto** la referencia (`Bovinos.xlsx`): `add` +
 > `td1coef` + `s3x5` es lo que más se acerca (~0.29% medio, 3% máx sobre 341 meses). La
 > referencia se hizo con un método algo distinto del x13as del repo.
+
+> **demanda_energia** está calibrada contra la referencia (`energia.xlsx`, columna `desest`):
+> `add` + `td1coef` + `s3x5` reproduce el d11 con error ~0 (medio 0.0000%, máx 0.0001% sobre
+> 257 meses). La serie observada empalma `energia.xlsx` (2005→2022) con CAMMESA (2023→), contigua.
+> Fuente en MWh → se guarda en GWh (÷1000); `no_residencial` = Demanda No Residencial + Demanda
+> No Estacionalizada. Guión de calibración: `scripts/calibrar_demanda_energia.py`.
 
 > **Guard de ceros:** aunque el cuadro diga `mult`/`auto`, si la serie tiene algún valor ≤ 0
 > (p.ej. `produccion` en **abril-2020**, COVID: producción 0) el núcleo la fuerza a **aditivo**
@@ -367,3 +382,20 @@ El xls es formato `.xls` viejo (se lee con **`xlrd`**); se ubican por texto las 
 *Mes/Año* y *Producción (miles tn res con hueso)* y se toma la producción (2019→, `definitivo`).
 El histórico profundo (1998→) sale de `etl/datasets/bovinos/data/Bovinos.xlsx` (`load-history`),
 cuya columna `desest` es la **referencia de calibración**.
+
+## La fuente de demanda_energia (CAMMESA)
+
+`etl/datasets/demanda_energia/source.py` baja el Excel **"Demanda Mensual"** de CAMMESA por
+URL fija (`download/demanda-mensual/?wpdmdl=41426`, el link de la página *estadística /
+informe de síntesis del MEM*). Devuelve el `.xlsx` directo (no un zip), re-publicado entero
+cada mes con ~1 mes de rezago. **Ojo:** existe otro link `demanda-mensual-2` (página
+*gran-demanda*) que baja un zip pero **está atrasado** — no es el que se usa.
+
+El xlsx tiene una sola hoja `DEMANDA` (unidad **MWh**), con una tabla **horizontal**: la fila
+de encabezado (col A = `TIPO DEMANDA`) trae las fechas mensuales en las columnas, y debajo una
+fila por tipo de demanda. Se parsea **por etiqueta de la col A**, no por número de fila —
+CAMMESA agrega filas (p.ej. `MATE DISTRIBUIDOR`), que correrían un parseo posicional. Todas las
+filas se guardan como series (en GWh, ÷1000), con `estado='definitivo'` (2023→). La serie
+`no_residencial` (Demanda No Residencial + Demanda No Estacionalizada) es la principal; su
+histórico profundo (2005→2022) sale de `etl/datasets/demanda_energia/data/energia.xlsx`
+(`load-history`), cuya columna `desest` es la **referencia de calibración**.

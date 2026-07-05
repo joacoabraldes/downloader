@@ -9,6 +9,7 @@ Lee las vistas *_desest de la base y escribe un CSV por dataset:
   - aves           -> aves_d11.csv             (date, d11)
   - leche          -> leche_d11.csv            (date, d11)
   - bovinos        -> bovinos_d11.csv          (date, d11)
+  - demanda_energia-> demanda_energia_d11.csv  (date, d11)  (serie no_residencial)
 
 Uso: `python -m etl export [datasets...] [--dir CARPETA]` (sin datasets = todos).
 Corré antes el ETL/desest del dataset para tener los d11 al día en la base.
@@ -21,7 +22,8 @@ from pathlib import Path
 
 from etl.core import db
 
-ALL = ["granos", "cemento", "automotriz", "patentamientos", "acero", "aves", "leche", "bovinos"]
+ALL = ["granos", "cemento", "automotriz", "patentamientos", "acero", "aves", "leche",
+       "bovinos", "demanda_energia"]
 
 
 def _write(path: Path, header: list[str], rows: list) -> int:
@@ -93,6 +95,10 @@ def main(argv=None) -> None:
             elif name == "bovinos":
                 path = out / "bovinos_d11.csv"
                 n = export_simple(conn, "bovinos_desest", path)
+            elif name == "demanda_energia":
+                # Solo no_residencial se desestacionaliza -> la vista _desest tiene una serie.
+                path = out / "demanda_energia_d11.csv"
+                n = export_simple(conn, "etl_demanda_energia_desest", path)
             else:  # cemento
                 path = out / "cemento_d11.csv"
                 n = export_simple(conn, "cemento_despacho_desest", path)

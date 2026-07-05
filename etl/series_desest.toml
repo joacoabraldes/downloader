@@ -103,6 +103,17 @@ mode = "add"
 td = "td1coef"
 seasonalma = "s3x5"
 
+[demanda_energia]
+table = "etl_demanda_energia"
+desest = ["no_residencial"]
+# Demanda no residencial del MEM (GWh). Calibrado contra la referencia (energia.xlsx, columna
+# desest): add + td1coef + s3x5 reproduce el d11 con error ~0 (medio 0.0000%, máx 0.0001% sobre
+# 257 meses). En modo auto X-13 elige lo mismo. La serie empalma energia.xlsx (2005→2022) con
+# CAMMESA (2023→), contigua, sin huecos: no necesita `start`.
+mode = "add"
+td = "td1coef"
+seasonalma = "s3x5"
+
 [patentamientos]
 table = "patentamientos"
 desest = ["total_mercado", "autos", "comercial_liviano", "comercial_pesado",
