@@ -19,6 +19,7 @@ venv/
 *.webp
 *.heic
 
-# Notas y docs sueltos (markdown), salvo el README que sí se versiona
+# Notas y docs sueltos (markdown), salvo los docs versionados (README, INTEGRATION)
 *.md
 !README.md
+!INTEGRATION.md
