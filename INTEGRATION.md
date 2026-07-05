@@ -18,19 +18,20 @@ filas por `(serie, mes)`. Para consumir hay **dos vistas por dataset** que ya re
 
 | Dataset (`python -m etl …`) | Tabla | Vista observada | Vista desestacionalizada |
 |---|---|---|---|
-| `granos` | `molienda_granos` | `molienda_granos_actual` | `molienda_granos_desest` |
-| `cemento` | `cemento_despacho` | `cemento_despacho_actual` | `cemento_despacho_desest` |
-| `automotriz` | `automotriz` | `automotriz_actual` | `automotriz_desest` |
-| `patentamientos` | `patentamientos` | `patentamientos_actual` | `patentamientos_desest` |
-| `acero` | `acero` | `acero_actual` | `acero_desest` |
-| `aves` | `aves` | `aves_actual` | `aves_desest` |
+| `granos` | `etl_molienda_granos` | `etl_molienda_granos_actual` | `etl_molienda_granos_desest` |
+| `cemento` | `etl_cemento_despacho` | `etl_cemento_despacho_actual` | `etl_cemento_despacho_desest` |
+| `automotriz` | `etl_automotriz` | `etl_automotriz_actual` | `etl_automotriz_desest` |
+| `patentamientos` | `etl_patentamientos` | `etl_patentamientos_actual` | `etl_patentamientos_desest` |
+| `acero` | `etl_acero` | `etl_acero_actual` | `etl_acero_desest` |
+| `aves` | `etl_aves` | `etl_aves_actual` | `etl_aves_desest` |
 | `leche` | `etl_leche` | `etl_leche_actual` | `etl_leche_desest` |
-| `bovinos` | `bovinos` | `bovinos_actual` | `bovinos_desest` |
+| `bovinos` | `etl_bovinos` | `etl_bovinos_actual` | `etl_bovinos_desest` |
 | `demanda_energia` | `etl_demanda_energia` | `etl_demanda_energia_actual` | `etl_demanda_energia_desest` |
 
-> El **nombre del dataset** (comando) no siempre coincide con el de la tabla: `granos` →
-> `molienda_granos`, `cemento` → `cemento_despacho`, `leche` → `etl_leche`,
-> `demanda_energia` → `etl_demanda_energia`. El resto coincide.
+> Todas las tablas llevan prefijo **`etl_`**. El nombre de la tabla no siempre deriva directo
+> del dataset (comando): `granos` → `etl_molienda_granos`, `cemento` → `etl_cemento_despacho`;
+> el resto es `etl_<dataset>`. Consultá siempre las **vistas** `etl_<tabla>_actual` /
+> `etl_<tabla>_desest` (o las unificadas), nunca la tabla append-only directamente.
 
 ## Vistas unificadas (recomendadas para consumo transversal)
 

@@ -6,10 +6,10 @@ Pasó de wide (valor + 3 columnas extra) a long: 1 fila por (serie, date). Serie
 solo sobre la serie principal (`despacho_nacional`).
 """
 
-TABLE = "cemento_despacho"
+TABLE = "etl_cemento_despacho"
 KEY_COLS = ["serie", "date"]
 VALUE_COLS = ["valor"]
-ACTUAL_VIEW = "cemento_despacho_actual"
+ACTUAL_VIEW = "etl_cemento_despacho_actual"
 
 # Series (orden estable). Coinciden con el CHECK de schema.sql y con las claves que devuelve
 # source.parse_*  (el parser ya las nombra así, salvo que antes 'despacho_nacional' iba a 'valor').

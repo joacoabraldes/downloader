@@ -7,10 +7,10 @@ principal (`total`).
 
 import datetime as dt
 
-TABLE = "molienda_granos"
+TABLE = "etl_molienda_granos"
 KEY_COLS = ["serie", "date"]
 VALUE_COLS = ["valor"]
-ACTUAL_VIEW = "molienda_granos_actual"
+ACTUAL_VIEW = "etl_molienda_granos_actual"
 
 # Series (orden estable). Coinciden con el CHECK de schema.sql.
 SERIES = ["total", "soja", "girasol", "lino", "mani", "algodon", "cartamo", "canola"]

@@ -7,7 +7,7 @@
 -- registraciones (patentamientos). Sólo se guardan las UNIDADES del mes por categoría;
 -- las variaciones/acumulados del PDF son recalculables y no se persisten.
 
-create table if not exists patentamientos (
+create table if not exists etl_patentamientos (
   id          bigint generated always as identity primary key,
   serie       text   not null check (serie in (
                  'total_mercado','autos','comercial_liviano','comercial_pesado',
@@ -20,24 +20,24 @@ create table if not exists patentamientos (
   ingested_at timestamptz not null default now()
 );
 -- Upgrade idempotente para bases ya creadas sin esta columna.
-alter table patentamientos add column if not exists parametros jsonb;
+alter table etl_patentamientos add column if not exists parametros jsonb;
 
 -- Búsqueda del último snapshot de un (serie, date, estado).
-create index if not exists patentamientos_serie_date_estado_idx
-  on patentamientos (serie, date, estado, ingested_at desc);
+create index if not exists etl_patentamientos_serie_date_estado_idx
+  on etl_patentamientos (serie, date, estado, ingested_at desc);
 
 -- Una sola fila desestacionalizada por (serie, mes) (UPSERT desde el núcleo X-13).
-create unique index if not exists patentamientos_desest_uq
-  on patentamientos (serie, date)
+create unique index if not exists etl_patentamientos_desest_uq
+  on etl_patentamientos (serie, date)
   where estado = 'desestacionalizado';
 
 -- Serie observada "actual" por (serie, mes): último snapshot, excluyendo la desest. El
 -- mensual ('definitivo', el dato final que publica SIOMAA) tiene prioridad sobre el
 -- histórico del backfill (NULL) para los meses que ambos cubran.
-create or replace view patentamientos_actual as
+create or replace view etl_patentamientos_actual as
 select distinct on (serie, date)
     serie, date, valor, estado, fuente, ingested_at
-from patentamientos
+from etl_patentamientos
 where estado is distinct from 'desestacionalizado'
 order by serie, date,
          (case when estado = 'definitivo' then 0 when estado = 'provisorio' then 1
@@ -45,9 +45,9 @@ order by serie, date,
          ingested_at desc;
 
 -- Serie desestacionalizada (X-13), un valor por (serie, mes).
-create or replace view patentamientos_desest as
+create or replace view etl_patentamientos_desest as
 select distinct on (serie, date)
     serie, date, valor, fuente, ingested_at, parametros
-from patentamientos
+from etl_patentamientos
 where estado = 'desestacionalizado'
 order by serie, date, ingested_at desc;

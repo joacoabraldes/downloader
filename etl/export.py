@@ -75,33 +75,33 @@ def main(argv=None) -> None:
             if name == "automotriz":
                 from .datasets.automotriz import config as ac
                 path = out / "automotriz_d11.csv"
-                n = export_wide(conn, "automotriz_desest", ac.SERIES, path)
+                n = export_wide(conn, "etl_automotriz_desest", ac.SERIES, path)
             elif name == "patentamientos":
                 from .datasets.patentamientos import config as pc
                 path = out / "patentamientos_d11.csv"
-                n = export_wide(conn, "patentamientos_desest", pc.SERIES, path)
+                n = export_wide(conn, "etl_patentamientos_desest", pc.SERIES, path)
             elif name == "granos":
                 path = out / "granos_d11.csv"
-                n = export_simple(conn, "molienda_granos_desest", path)
+                n = export_simple(conn, "etl_molienda_granos_desest", path)
             elif name == "acero":
                 path = out / "acero_d11.csv"
-                n = export_simple(conn, "acero_desest", path)
+                n = export_simple(conn, "etl_acero_desest", path)
             elif name == "aves":
                 path = out / "aves_d11.csv"
-                n = export_simple(conn, "aves_desest", path)
+                n = export_simple(conn, "etl_aves_desest", path)
             elif name == "leche":
                 path = out / "leche_d11.csv"
                 n = export_simple(conn, "etl_leche_desest", path)
             elif name == "bovinos":
                 path = out / "bovinos_d11.csv"
-                n = export_simple(conn, "bovinos_desest", path)
+                n = export_simple(conn, "etl_bovinos_desest", path)
             elif name == "demanda_energia":
                 # Solo no_residencial se desestacionaliza -> la vista _desest tiene una serie.
                 path = out / "demanda_energia_d11.csv"
                 n = export_simple(conn, "etl_demanda_energia_desest", path)
             else:  # cemento
                 path = out / "cemento_d11.csv"
-                n = export_simple(conn, "cemento_despacho_desest", path)
+                n = export_simple(conn, "etl_cemento_despacho_desest", path)
             archivos += 1
             total += n
             extra = "  (vacio: corriste la desest?)" if n == 0 else ""

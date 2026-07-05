@@ -4,7 +4,7 @@
 -- estado NULL) y el definitivo del PDF mensual (la cifra oficial de la CAA; si la CAA revisa
 -- un mes en su ventana de 13, entra un snapshot definitivo nuevo con el valor corregido).
 
-create table if not exists acero (
+create table if not exists etl_acero (
   id          bigint generated always as identity primary key,
   serie       text   not null check (serie in ('acero_crudo')),
   date        date   not null,                 -- primer día del mes
@@ -15,24 +15,24 @@ create table if not exists acero (
   ingested_at timestamptz not null default now()
 );
 -- Upgrade idempotente para bases ya creadas sin esta columna.
-alter table acero add column if not exists parametros jsonb;
+alter table etl_acero add column if not exists parametros jsonb;
 
 -- Búsqueda del último snapshot de un (serie, date, estado).
-create index if not exists acero_serie_date_estado_idx
-  on acero (serie, date, estado, ingested_at desc);
+create index if not exists etl_acero_serie_date_estado_idx
+  on etl_acero (serie, date, estado, ingested_at desc);
 
 -- Una sola fila desestacionalizada por (serie, mes) (UPSERT desde el núcleo X-13).
-create unique index if not exists acero_desest_uq
-  on acero (serie, date)
+create unique index if not exists etl_acero_desest_uq
+  on etl_acero (serie, date)
   where estado = 'desestacionalizado';
 
 -- Serie observada "actual" por (serie, mes): último snapshot, excluyendo la desest. El PDF
 -- (definitivo, la cifra oficial de la CAA) tiene prioridad sobre el histórico (NULL) para los
 -- meses que ambos cubran.
-create or replace view acero_actual as
+create or replace view etl_acero_actual as
 select distinct on (serie, date)
     serie, date, valor, estado, fuente, ingested_at
-from acero
+from etl_acero
 where estado is distinct from 'desestacionalizado'
 order by serie, date,
          (case when estado = 'definitivo' then 0 when estado = 'provisorio' then 1
@@ -40,9 +40,9 @@ order by serie, date,
          ingested_at desc;
 
 -- Serie desestacionalizada (X-13), un valor por (serie, mes).
-create or replace view acero_desest as
+create or replace view etl_acero_desest as
 select distinct on (serie, date)
     serie, date, valor, fuente, ingested_at, parametros
-from acero
+from etl_acero
 where estado = 'desestacionalizado'
 order by serie, date, ingested_at desc;

@@ -6,7 +6,7 @@
 -- priorizando definitivo. La serie desestacionalizada (Census X-13) se guarda como
 -- estado='desestacionalizado' con UPSERT (1 fila por serie/mes).
 
-create table if not exists cemento_despacho (
+create table if not exists etl_cemento_despacho (
   id          bigint generated always as identity primary key,
   serie       text not null check (serie in
                 ('despacho_nacional','exportacion','consumo_despacho_nacional','importaciones_propias')),
@@ -18,22 +18,22 @@ create table if not exists cemento_despacho (
   ingested_at timestamptz not null default now()
 );
 -- Upgrade idempotente para bases ya creadas sin esta columna.
-alter table cemento_despacho add column if not exists parametros jsonb;
+alter table etl_cemento_despacho add column if not exists parametros jsonb;
 
-create index if not exists cemento_despacho_serie_date_estado_idx
-  on cemento_despacho (serie, date, estado, ingested_at desc);
+create index if not exists etl_cemento_despacho_serie_date_estado_idx
+  on etl_cemento_despacho (serie, date, estado, ingested_at desc);
 
 -- UPSERT de la serie desestacionalizada: a lo sumo 1 fila por (serie, mes) con ese estado.
-create unique index if not exists cemento_despacho_desest_uq
-  on cemento_despacho (serie, date) where estado = 'desestacionalizado';
+create unique index if not exists etl_cemento_despacho_desest_uq
+  on etl_cemento_despacho (serie, date) where estado = 'desestacionalizado';
 
 -- Valor "actual" por (serie, mes) de la serie OBSERVADA (excluye desestacionalizado):
 -- último snapshot con prioridad explícita definitivo > histórico(NULL) > provisorio. Se usa
 -- un CASE (no `(estado='definitivo') desc`) porque con NULL ese booleano da NULL y, en DESC,
 -- los NULL irían primero (NULLS FIRST) y la fila histórica le ganaría al definitivo.
-create or replace view cemento_despacho_actual as
+create or replace view etl_cemento_despacho_actual as
 select distinct on (serie, date) serie, date, valor, estado, fuente, ingested_at
-from cemento_despacho
+from etl_cemento_despacho
 where estado is distinct from 'desestacionalizado'
 order by serie, date,
          (case when estado = 'definitivo' then 0 when estado is null then 1
@@ -41,8 +41,8 @@ order by serie, date,
          ingested_at desc;
 
 -- Serie desestacionalizada (Census X-13), un valor por (serie, mes).
-create or replace view cemento_despacho_desest as
+create or replace view etl_cemento_despacho_desest as
 select distinct on (serie, date) serie, date, valor, fuente, ingested_at, parametros
-from cemento_despacho
+from etl_cemento_despacho
 where estado = 'desestacionalizado'
 order by serie, date, ingested_at desc;

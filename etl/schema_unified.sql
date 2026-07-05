@@ -9,28 +9,28 @@
 -- Serie observada actual de todos los datasets (último snapshot por serie/mes, sin desest).
 create or replace view series_actual as
   select 'granos'::text     as dataset, serie, date, valor, estado, fuente, ingested_at
-    from molienda_granos_actual
+    from etl_molienda_granos_actual
   union all
   select 'cemento'::text    as dataset, serie, date, valor, estado, fuente, ingested_at
-    from cemento_despacho_actual
+    from etl_cemento_despacho_actual
   union all
   select 'automotriz'::text as dataset, serie, date, valor, estado, fuente, ingested_at
-    from automotriz_actual
+    from etl_automotriz_actual
   union all
   select 'patentamientos'::text as dataset, serie, date, valor, estado, fuente, ingested_at
-    from patentamientos_actual
+    from etl_patentamientos_actual
   union all
   select 'acero'::text as dataset, serie, date, valor, estado, fuente, ingested_at
-    from acero_actual
+    from etl_acero_actual
   union all
   select 'aves'::text as dataset, serie, date, valor, estado, fuente, ingested_at
-    from aves_actual
+    from etl_aves_actual
   union all
   select 'leche'::text as dataset, serie, date, valor, estado, fuente, ingested_at
     from etl_leche_actual
   union all
   select 'bovinos'::text as dataset, serie, date, valor, estado, fuente, ingested_at
-    from bovinos_actual
+    from etl_bovinos_actual
   union all
   select 'demanda_energia'::text as dataset, serie, date, valor, estado, fuente, ingested_at
     from etl_demanda_energia_actual;
@@ -39,28 +39,28 @@ create or replace view series_actual as
 -- `parametros` (jsonb) trae lo que se usó en la corrida X-13 (modo mult/add, metodo, etc.).
 create or replace view series_desest as
   select 'granos'::text     as dataset, serie, date, valor, fuente, ingested_at, parametros
-    from molienda_granos_desest
+    from etl_molienda_granos_desest
   union all
   select 'cemento'::text    as dataset, serie, date, valor, fuente, ingested_at, parametros
-    from cemento_despacho_desest
+    from etl_cemento_despacho_desest
   union all
   select 'automotriz'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
-    from automotriz_desest
+    from etl_automotriz_desest
   union all
   select 'patentamientos'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
-    from patentamientos_desest
+    from etl_patentamientos_desest
   union all
   select 'acero'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
-    from acero_desest
+    from etl_acero_desest
   union all
   select 'aves'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
-    from aves_desest
+    from etl_aves_desest
   union all
   select 'leche'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
     from etl_leche_desest
   union all
   select 'bovinos'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
-    from bovinos_desest
+    from etl_bovinos_desest
   union all
   select 'demanda_energia'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
     from etl_demanda_energia_desest;

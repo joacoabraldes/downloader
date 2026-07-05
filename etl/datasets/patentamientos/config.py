@@ -1,4 +1,4 @@
-"""Config de la tabla patentamientos (formato long) para el núcleo genérico (etl.core.db).
+"""Config de la tabla etl_patentamientos (formato long) para el núcleo genérico (etl.core.db).
 
 Como automotriz, la clave incluye `serie`: hay una serie por categoría del mercado 4W,
 cada una con su propia desestacionalización X-13.
@@ -8,10 +8,10 @@ del mes** por categoría. Las columnas derivadas del PDF (variaciones m/m, a/a y
 acumulados) NO se guardan: son recalculables desde la serie observada.
 """
 
-TABLE = "patentamientos"
+TABLE = "etl_patentamientos"
 KEY_COLS = ["serie", "date"]
 VALUE_COLS = ["valor"]
-ACTUAL_VIEW = "patentamientos_actual"
+ACTUAL_VIEW = "etl_patentamientos_actual"
 
 # Serie principal (para la ventana incremental y como headline del dataset).
 MAIN_SERIE = "total_mercado"

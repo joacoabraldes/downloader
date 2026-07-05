@@ -1,14 +1,14 @@
-"""Config de la tabla acero (formato long) para el núcleo genérico (etl.core.db).
+"""Config de la tabla etl_acero (formato long) para el núcleo genérico (etl.core.db).
 
 Como automotriz/patentamientos, la clave incluye `serie`. Hoy hay una sola serie
 (`acero_crudo`), pero la tabla queda lista para sumar las otras del PDF (arrabio, esponja,
 laminados, etc.) si en algún momento se decide ingestarlas.
 """
 
-TABLE = "acero"
+TABLE = "etl_acero"
 KEY_COLS = ["serie", "date"]
 VALUE_COLS = ["valor"]
-ACTUAL_VIEW = "acero_actual"
+ACTUAL_VIEW = "etl_acero_actual"
 
 # Serie principal (y única por ahora). Valor en miles de toneladas.
 MAIN_SERIE = "acero_crudo"

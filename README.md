@@ -9,14 +9,14 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 
 | Comando | Tabla | Fuente histórica | Fuente mensual (incremental) |
 |---|---|---|---|
-| `granos` | `molienda_granos` | Excel MAGyP | HTML MAGyP (provisorios) |
-| `cemento` | `cemento_despacho` | `cemento.xlsx` | HTML AFCP (provisorio/definitivo) |
-| `automotriz` | `automotriz` | `ind_automotriz.xlsx` | **PDF ADEFA** (pdfplumber) |
-| `patentamientos` | `patentamientos` | PDFs SIOMAA (backfill) | **PDF SIOMAA** (pdfplumber) |
-| `acero` | `acero` | `Acero.xlsx` (1993→) | **PDF CAA** (scrape + pdfplumber) |
-| `aves` | `aves` | `Aves.xlsx` (1981→) | **xlsx MAGyP** (scrape) |
+| `granos` | `etl_molienda_granos` | Excel MAGyP | HTML MAGyP (provisorios) |
+| `cemento` | `etl_cemento_despacho` | `cemento.xlsx` | HTML AFCP (provisorio/definitivo) |
+| `automotriz` | `etl_automotriz` | `ind_automotriz.xlsx` | **PDF ADEFA** (pdfplumber) |
+| `patentamientos` | `etl_patentamientos` | PDFs SIOMAA (backfill) | **PDF SIOMAA** (pdfplumber) |
+| `acero` | `etl_acero` | `Acero.xlsx` (1993→) | **PDF CAA** (scrape + pdfplumber) |
+| `aves` | `etl_aves` | `Aves.xlsx` (1981→) | **xlsx MAGyP** (scrape) |
 | `leche` | `etl_leche` | `leche.xlsx` (2015→) | **xlsx MAGyP** (URL fija) |
-| `bovinos` | `bovinos` | `Bovinos.xlsx` (1998→) | **.xls MAGyP** (link dentro de un PDF) |
+| `bovinos` | `etl_bovinos` | `Bovinos.xlsx` (1998→) | **.xls MAGyP** (link dentro de un PDF) |
 | `demanda_energia` | `etl_demanda_energia` | `energia.xlsx` (2005→) | **xlsx CAMMESA** (URL fija) |
 
 Las tablas están en formato **long** (una fila por `serie, date, estado`). Series por

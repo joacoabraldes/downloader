@@ -26,7 +26,7 @@
 # aditivo (el X-11 multiplicativo/log no admite ceros).
 
 [granos]
-table = "molienda_granos"
+table = "etl_molienda_granos"
 # Solo `soja` está calibrada contra referencia; el resto hereda la misma receta (misma
 # naturaleza de serie). Ajustar con overrides si alguno no matchea. Se excluyen algodon,
 # cartamo y canola: su molienda es intermitente (mayormente ceros incluso desde 2003), X-13
@@ -41,7 +41,7 @@ seasonalma = "s3x5"
 start = 2003-01-01
 
 [automotriz]
-table = "automotriz"
+table = "etl_automotriz"
 desest = ["produccion", "ventas", "expo"]
 mode = "add"        # produccion y expo reproducen exacto en aditivo + td1coef
 td = "td1coef"
@@ -54,7 +54,7 @@ mode = "auto"
 td = "td"
 
 [cemento]
-table = "cemento_despacho"
+table = "etl_cemento_despacho"
 desest = ["despacho_nacional"]   # las otras 3 series (expo/consumo/import) no se ajustan
 mode = "mult"
 td = "td"            # cemento reproduce exacto en multiplicativo + trading-day de 6 coef
@@ -65,7 +65,7 @@ seasonalma = "s3x5"
 # calibración: mode=auto deja que X-13 elija add/mult por AIC. Ajustar con overrides si
 # alguna categoría no matchea contra una referencia futura.
 [bovinos]
-table = "bovinos"
+table = "etl_bovinos"
 desest = ["produccion"]
 # add + td1coef + s3x5 es lo que MÁS se acerca a la referencia (Bovinos.xlsx col desest):
 # ~0.29% error medio (3% máx). NO reproduce exacto (como aves): la referencia se hizo con un
@@ -85,7 +85,7 @@ td = "td1coef"
 seasonalma = "s3x5"
 
 [aves]
-table = "aves"
+table = "etl_aves"
 desest = ["faena"]
 # Faena es multiplicativa (log). mult + td (6 coef) + s3x5 es lo que MÁS se acerca a la
 # referencia (Aves.xlsx col desest): ~0.26% error medio, 1.73% máx. NO reproduce exacto
@@ -95,7 +95,7 @@ td = "td"
 seasonalma = "s3x5"
 
 [acero]
-table = "acero"
+table = "etl_acero"
 desest = ["acero_crudo"]
 # Calibrado contra la referencia (Acero.xlsx, columna desest): add + td1coef + s3x5
 # reproduce el d11 con error ~0 (máx 0.001%). En modo auto X-13 elige lo mismo.
@@ -115,7 +115,7 @@ td = "td1coef"
 seasonalma = "s3x5"
 
 [patentamientos]
-table = "patentamientos"
+table = "etl_patentamientos"
 desest = ["total_mercado", "autos", "comercial_liviano", "comercial_pesado",
           "otros_pesados", "autos_cl", "autos_cl_cp"]
 mode = "auto"
