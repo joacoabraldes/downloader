@@ -200,6 +200,9 @@ una columna `dataset`):
 - `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves + leche + bovinos + demanda_energia.
 - `series_desest`: serie desestacionalizada de los nueve.
 
+> **Para consumir los datos** (mapa completo de tablas → vistas, series por dataset y columnas
+> de cada vista), ver **[`INTEGRATION.md`](INTEGRATION.md)**.
+
 ## Desestacionalización (Census X-13)
 
 `etl/core/seasonal.py` arma un `.spc`, ejecuta el binario `x13as` (ruta en `X13PATH`) y lee
