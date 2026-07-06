@@ -50,6 +50,49 @@ where dataset = 'demanda_energia' and serie = 'no_residencial'
 order by date;
 ```
 
+## Series diarias (BCRA) — carril separado
+
+Todo lo de arriba es **mensual**. El dataset `reservas_pasivos` (reservas internacionales y principales
+pasivos del BCRA, archivo `diar_bas.xls`) es **diario** y vive en un carril aparte para NO mezclar
+frecuencias: `date` es la **fecha diaria real** (no el primer día del mes) y **no** aparece en
+`series_actual` / `series_desest`.
+
+| Tabla (hechos) | Dimensión (nombres) | Vista observada | Vista unificada diaria |
+|---|---|---|---|
+| `etl_reservas_pasivos` | `etl_reservas_pasivos_series` | `etl_reservas_pasivos_actual` | `series_diarias_actual` |
+
+- **`etl_reservas_pasivos`** es append-only, igual que las mensuales, pero `serie` es el **`cd_serie`** del
+  BCRA (clave estable del archivo: `246`, `247`, … `8843`). No se desestacionaliza.
+- **`etl_reservas_pasivos_series`** es la dimensión con los **nombres legibles**: `cd_serie` (PK), `codigo`
+  (el `bas*` del Excel, solo referencia), `nombre`, `unidad` (`USD millones` / `ARS millones` /
+  `tipo de cambio`), `grupo` (`reservas` / `pasivos` / `tipo_cambio`), `orden`.
+- **`etl_reservas_pasivos_actual`** = último snapshot por `(serie, date)` **con JOIN al catálogo**, así ya
+  trae `cd_serie, codigo, nombre, unidad, grupo, date, valor, estado, fuente, ingested_at`.
+- **`series_diarias_actual`** une los datasets diarios (hoy solo `reservas_pasivos`) en la forma
+  `dataset, serie, date, valor, estado, fuente, ingested_at`.
+
+Son 37 series: reservas internacionales (total + componentes, en USD), principales pasivos (base
+monetaria, circulación, cuenta corriente, LEBAC/LELIQ/NOCOM, pases, depósitos del gobierno, etc.,
+en pesos o USD según la serie) y los tipos de cambio de valuación y referencia.
+
+```sql
+-- Últimas reservas internacionales totales (con nombre y unidad)
+select nombre, unidad, date, valor
+from etl_reservas_pasivos_actual
+where cd_serie = '246'
+order by date desc
+limit 5;
+
+-- Todas las series de un día, legibles
+select nombre, grupo, unidad, valor
+from etl_reservas_pasivos_actual
+where date = (select max(date) from etl_reservas_pasivos_actual)
+order by orden;
+```
+
+> Regla igual que en las mensuales: consumí las **vistas** (`etl_reservas_pasivos_actual` /
+> `series_diarias_actual`), nunca `etl_reservas_pasivos` cruda (append-only, varias filas por `serie/día`).
+
 ## Columnas de las vistas
 
 **`<tabla>_actual` / `series_actual`**

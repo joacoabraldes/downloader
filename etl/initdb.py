@@ -12,8 +12,13 @@ from etl.core import db
 
 DATASETS_DIR = Path(__file__).parent / "datasets"
 UNIFIED_SCHEMA = Path(__file__).parent / "schema_unified.sql"
-ALL = ["granos", "cemento", "automotriz", "patentamientos", "acero", "aves", "leche",
-       "bovinos", "demanda_energia"]
+DAILY_SCHEMA = Path(__file__).parent / "schema_daily.sql"
+# Datasets mensuales: gatean las vistas unificadas series_actual / series_desest.
+MONTHLY = ["granos", "cemento", "automotriz", "patentamientos", "acero", "aves", "leche",
+           "bovinos", "demanda_energia"]
+# Datasets diarios: gatean la vista unificada series_diarias_actual (carril separado).
+DAILY = ["reservas_pasivos"]
+ALL = MONTHLY + DAILY
 
 
 def apply_schema(conn, name: str) -> bool:
@@ -29,16 +34,25 @@ def apply_schema(conn, name: str) -> bool:
     return True
 
 
-def apply_unified(conn) -> bool:
-    """Vistas unificadas (series_actual / series_desest). Dependen de los 3 datasets."""
-    if not UNIFIED_SCHEMA.is_file():
+def apply_sql_file(conn, path: Path, label: str) -> bool:
+    if not path.is_file():
         return False
-    sql = UNIFIED_SCHEMA.read_text(encoding="utf-8")
+    sql = path.read_text(encoding="utf-8")
     with conn.cursor() as cur:
         cur.execute(sql)
     conn.commit()
-    print("  unificadas  -> series_actual / series_desest")
+    print(f"  {label}")
     return True
+
+
+def apply_unified(conn) -> bool:
+    """Vistas unificadas mensuales (series_actual / series_desest). Dependen de los 9 datasets."""
+    return apply_sql_file(conn, UNIFIED_SCHEMA, "unificadas  -> series_actual / series_desest")
+
+
+def apply_daily_unified(conn) -> bool:
+    """Vista unificada diaria (series_diarias_actual). Depende de los datasets diarios."""
+    return apply_sql_file(conn, DAILY_SCHEMA, "unificadas  -> series_diarias_actual")
 
 
 def main(argv=None) -> None:
@@ -58,9 +72,12 @@ def main(argv=None) -> None:
     try:
         for name in names:
             aplicados += apply_schema(conn, name)
-        # Las vistas unificadas referencian las 3 tablas: solo cuando se inicializan todas.
-        if set(names) >= set(ALL):
+        # Cada carril tiene su unificada: se aplican sólo cuando se inicializa el carril completo
+        # (las vistas hacen UNION de las *_actual de ese carril y las referencian a todas).
+        if set(names) >= set(MONTHLY):
             apply_unified(conn)
+        if set(names) >= set(DAILY):
+            apply_daily_unified(conn)
     finally:
         conn.close()
     print(f"resumen [init-db]  aplicados={aplicados}")

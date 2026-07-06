@@ -47,6 +47,27 @@ dataset:
   `residencial`, `gudi`, `gume`, `guma`, `mate_distribuidor`, `local`. La fuente está en MWh;
   se convierte a GWh (÷1000). Se parsea **por etiqueta**, no por fila (CAMMESA agrega filas).
 
+### Series diarias (BCRA)
+
+Además de los datasets mensuales de arriba, hay un **carril diario** (primer y único por ahora):
+
+| Comando | Tabla | Dimensión (nombres) | Fuente |
+|---|---|---|---|
+| `reservas_pasivos` | `etl_reservas_pasivos` | `etl_reservas_pasivos_series` | **.xls BCRA** `diar_bas.xls` (URL fija, `xlrd`) |
+
+`reservas_pasivos` trae las **37 series** del archivo *Información sobre reservas internacionales y
+principales pasivos del BCRA* (reservas en USD + principales pasivos en pesos + tipos de cambio),
+**diarias** desde 1996. Es un dataset distinto al resto: `date` es la **fecha diaria real** (no el
+primer día del mes), **no se desestacionaliza** (es stock/nivel), y `serie` es el **`cd_serie`**
+del BCRA (clave estable del archivo). Los nombres legibles, la unidad y el grupo de cada serie
+viven en la dimensión `etl_reservas_pasivos_series`; la vista `etl_reservas_pasivos_actual` los une por JOIN. El
+consumo transversal va por `series_diarias_actual` (carril separado de `series_actual`, que sigue
+siendo 100% mensual). Ver `INTEGRATION.md`, sección *Series diarias*.
+
+> El parser saltea las filas **aún no publicadas** (el BCRA carga la fila del día con casi todo en
+> 0): usa las reservas totales (`cd 246`, nunca 0 en 30 años) como ancla. Los ceros legítimos de
+> las demás series (p.ej. un monto de vencimiento sin vencimiento ese día) se conservan.
+
 **Qué series se desestacionalizan y con qué parámetros lo define el cuadro central
 `etl/series_desest.toml`** (ver la sección *Desestacionalización*): granos **5** series
 (`total`, `soja`, `girasol`, `lino`, `mani`), automotriz las 3 (`produccion`, `ventas`,
@@ -60,7 +81,8 @@ X-13 no puede ajustarlas; quedan solo como serie observada.
 ```
 etl/
   series_desest.toml   CUADRO: qué series desestacionaliza cada dataset y con qué parámetros X-13
-  schema_unified.sql   vistas series_actual / series_desest (unen todos los datasets)
+  schema_unified.sql   vistas series_actual / series_desest (unen los datasets mensuales)
+  schema_daily.sql     vista series_diarias_actual (une los datasets diarios; hoy solo reservas_pasivos)
   core/        db.py (conexión + insert/dedup genérico)  ·  seasonal.py (X-13)
                desest_params.py (lee el cuadro y arma los jobs de desest)
                window.py (ventana de meses del incremental)  ·  report.py (salida uniforme)
@@ -166,6 +188,7 @@ y el 10; demanda_energia (CAMMESA) publica con ~1 mes de rezago, ventana amplia 
 0  14 20-31,1-10 * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl leche         >> /home/jmt/data/etls/leche.log 2>&1
 0  11 20-31     * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl bovinos        >> /home/jmt/data/etls/bovinos.log 2>&1
 0  12 5-20      * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl demanda_energia >> /home/jmt/data/etls/demanda_energia.log 2>&1
+0  19 *         * 1-5 cd /home/jmt/dev/downloader && .venv/bin/python -m etl reservas_pasivos >> /home/jmt/data/etls/reservas_pasivos.log 2>&1
 ```
 > El `cd` al repo es obligatorio (para que `python -m etl` encuentre el paquete y el `.venv`).
 > Conexión, `X13PATH` y `CEMENTO_PROXY` salen del bloque de env del **crontab** (cron no
@@ -199,6 +222,11 @@ Y dos vistas que **homogeneízan el consumo** de todos los datasets en una sola 
 una columna `dataset`):
 - `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves + leche + bovinos + demanda_energia.
 - `series_desest`: serie desestacionalizada de los nueve.
+
+Y para el **carril diario** (BCRA), una vista aparte que NO se mezcla con las mensuales:
+- `series_diarias_actual`: serie observada de los datasets diarios (hoy solo `reservas_pasivos`). Misma
+  forma que `series_actual` (`dataset, serie, date, valor, estado, fuente, ingested_at`) pero
+  `date` es fecha diaria real.
 
 > **Para consumir los datos** (mapa completo de tablas → vistas, series por dataset y columnas
 > de cada vista), ver **[`INTEGRATION.md`](INTEGRATION.md)**.

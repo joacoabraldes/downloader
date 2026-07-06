@@ -131,6 +131,26 @@ def insert_if_changed(conn, *, table, key_cols, key_vals, value_cols, row,
     return "actualizado" if prev is not None else "nuevo"
 
 
+def bulk_insert(conn, *, table, cols, rows, page_size: int = 2000) -> int:
+    """Inserta filas en lote (append-only, SIN dedup) en una sola transacción.
+
+    Para backfills grandes donde no hay nada contra qué deduplicar (p.ej. la primera carga de un
+    dataset con la tabla vacía). El camino normal `insert_if_changed` hace un SELECT + INSERT +
+    COMMIT por fila: correcto para el incremental, inviable para ~200k filas contra una base
+    remota. Devuelve la cantidad de filas insertadas.
+    """
+    from psycopg2.extras import execute_values
+
+    rows = list(rows)
+    if not rows:
+        return 0
+    sql = f"insert into {table} ({', '.join(cols)}) values %s"
+    with conn.cursor() as cur:
+        execute_values(cur, sql, rows, page_size=page_size)
+    conn.commit()
+    return len(rows)
+
+
 def last_date(conn, *, table, where=None, where_params=()):
     """Último `date` cargado en la tabla (para ponerse al día en el incremental).
 
