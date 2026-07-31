@@ -227,8 +227,9 @@ Cada corrida deja una fila en **`etl_control_ejecucion`** (`etl/schema_control.s
 **Por qué hace falta una tabla aparte**: las tablas de datos son append-only con
 `insert_if_changed`, así que una corrida sin cambios **no escribe nada**. `max(ingested_at)` es
 "último día que un valor cambió", no "último día que el ETL corrió": un ETL muerto hace tres
-meses se ve idéntico a uno que corre a diario sin novedad. Mirando los datos se ve si el **dato**
-está viejo (`scripts/frescura.sql`); esta tabla dice si el **proceso** está vivo.
+meses se ve idéntico a uno que corre a diario sin novedad. Si el **dato** está viejo se ve
+leyendo las tablas (y la vista trae `ultimo_dato` en la misma fila); esta tabla dice si el
+**proceso** está vivo.
 
 Para consumir desde una app, dos vistas:
 
