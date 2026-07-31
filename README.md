@@ -69,10 +69,10 @@ siendo 100% mensual). Ver `INTEGRATION.md`, sección *Series diarias*.
 > las demás series (p.ej. un monto de vencimiento sin vencimiento ese día) se conservan.
 
 **Qué series se desestacionalizan y con qué parámetros lo define el cuadro central
-`etl/series_desest.toml`** (ver la sección *Desestacionalización*): granos **5** series
-(`total`, `soja`, `girasol`, `lino`, `mani`), automotriz las 3 (`produccion`, `ventas`,
+`etl/series_desest.toml`** (ver la sección *Desestacionalización*): granos **4** series
+(`total`, `soja`, `girasol`, `mani`), automotriz las 3 (`produccion`, `ventas`,
 `expo`), cemento `despacho_nacional`, patentamientos las 7 categorías, acero `acero_crudo`,
-aves `faena`, demanda_energia `no_residencial`. `algodon`, `cartamo`
+aves `faena`, demanda_energia `no_residencial`. `lino`, `algodon`, `cartamo`
 y `canola` **no** se desestacionalizan: su molienda es intermitente (mayormente ceros) y
 X-13 no puede ajustarlas; quedan solo como serie observada.
 

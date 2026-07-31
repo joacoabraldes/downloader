@@ -125,7 +125,7 @@ order by orden;
 
 | Dataset | Series observadas | Series desestacionalizadas |
 |---|---|---|
-| `granos` | `total`, `soja`, `girasol`, `lino`, `mani`, `algodon`, `cartamo`, `canola` | `total`, `soja`, `girasol`, `lino`, `mani` |
+| `granos` | `total`, `soja`, `girasol`, `lino`, `mani`, `algodon`, `cartamo`, `canola` | `total`, `soja`, `girasol`, `mani` |
 | `cemento` | `despacho_nacional`, `exportacion`, `consumo_despacho_nacional`, `importaciones_propias` | `despacho_nacional` |
 | `automotriz` | `produccion`, `ventas`, `expo` | `produccion`, `ventas`, `expo` |
 | `patentamientos` | `total_mercado`, `autos`, `comercial_liviano`, `comercial_pesado`, `otros_pesados`, `autos_cl`, `autos_cl_cp` | *(las 7)* |
@@ -135,6 +135,6 @@ order by orden;
 | `bovinos` | `produccion` | `produccion` |
 | `demanda_energia` | `estacionalizada`, `residencial`, `no_res_estacionalizada`, `no_estacionalizada`, `gudi`, `gume`, `guma`, `mate_distribuidor`, `local`, `no_residencial` | `no_residencial` |
 
-> Las series que **no** están en `_desest` (p.ej. `algodon`/`cartamo`/`canola` de granos, o las
-> componentes de `demanda_energia`) quedan solo como observadas: X-13 no las ajusta (molienda
+> Las series que **no** están en `_desest` (p.ej. `lino`/`algodon`/`cartamo`/`canola` de granos, o
+> las componentes de `demanda_energia`) quedan solo como observadas: X-13 no las ajusta (molienda
 > intermitente, o son insumos de una serie derivada). Ver `etl/series_desest.toml`.

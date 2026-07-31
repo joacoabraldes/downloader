@@ -31,7 +31,11 @@ table = "etl_molienda_granos"
 # naturaleza de serie). Ajustar con overrides si alguno no matchea. Se excluyen algodon,
 # cartamo y canola: su molienda es intermitente (mayormente ceros incluso desde 2003), X-13
 # no puede ajustarlas (falla con "exceeds regression effects allowed"). Quedan crudas.
-desest = ["total", "soja", "girasol", "lino", "mani"]
+# `lino` se excluye por lo mismo, aunque falle distinto: no aborta, converge en ~150s (arriba
+# del timeout de 120s de seasonal.py) y termina con "Series should not be a candidate for
+# seasonal adjustment ... no visually significant seasonal peaks". Con 26% de ceros y rachas
+# de hasta 9 meses, no hay estacionalidad que ajustar. Queda cruda.
+desest = ["total", "soja", "girasol", "mani"]
 mode = "add"
 td = "none"
 seasonalma = "s3x5"
