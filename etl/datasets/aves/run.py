@@ -41,7 +41,7 @@ def main(argv=None) -> None:
         try:
             res = source.get_latest()
         except Exception as e:
-            rep.info(f"ERROR bajando/parseando: {e}")
+            rep.error(f"bajando/parseando: {e}")
             rep.summary()
             return
         if not res or not res[0]:

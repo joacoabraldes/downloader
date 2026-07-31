@@ -33,7 +33,7 @@ def process_month(conn, rep, fecha, *, force: bool) -> None:
         data = source.get_month(fecha.year, fecha.month)
         fuente = source.pdf_url(fecha.year, fecha.month)
     except Exception as e:  # red caída, PDF inesperado, etc.
-        rep.note(fecha, f"ERROR {e}", status="saltado")
+        rep.note(fecha, f"ERROR {e}", status="saltado", failure=True)
         return
     if not data:
         rep.note(fecha, "no publicado")

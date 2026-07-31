@@ -40,7 +40,8 @@ def process_month(conn, rep, fecha, *, force: bool) -> None:
         try:
             fields, url = getter(fecha.year, fecha.month)
         except Exception as e:  # red caída, HTML inesperado, etc.
-            rep.note(f"{fecha:%Y-%m} {estado:10}", f"ERROR {e}", status="saltado")
+            rep.note(f"{fecha:%Y-%m} {estado:10}", f"ERROR {e}", status="saltado",
+                     failure=True)
             continue
         if fields is None:
             rep.note(f"{fecha:%Y-%m} {estado:10}", "no publicado")

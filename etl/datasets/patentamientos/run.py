@@ -63,11 +63,11 @@ def main(argv=None) -> None:
             pdf_bytes = source.download_pdf_bytes(latest["id"])
             year, month, data = source.parse_report(pdf_bytes)  # período autoritativo del PDF
         except Exception as e:
-            rep.info(f"ERROR bajando/parseando: {e}")
+            rep.error(f"bajando/parseando: {e}")
             rep.summary()
             return
         if not year or not month or not data:
-            rep.info("no se pudo determinar el mes o parsear la Tabla 1")
+            rep.error("no se pudo determinar el mes o parsear la Tabla 1")
             rep.summary()
             return
 

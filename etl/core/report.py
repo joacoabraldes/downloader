@@ -8,6 +8,12 @@ Cada comando imprime:
 Los status vienen de `db.insert_if_changed`: nuevo / actualizado / sin_cambios / saltado.
 `no_publicado` lo agrega el run cuando la fuente no tiene el mes. Solo ASCII (corre igual
 en Linux y en la consola de Windows).
+
+Además del reporte legible, el módulo lleva un registro de **fallas** de la corrida (ver
+`record_failure`): fuente caída, parseo roto, serie que X-13 no pudo ajustar. `python -m etl`
+lo consulta al terminar y sale con código != 0 si quedó alguna. Una corrida que no pudo traer
+el dato NO es exitosa, y el cron necesita poder distinguirlo: hasta jul-2026 todos estos casos
+salían con código 0 y la falla pasaba inadvertida (ver el wrapper `scripts/run_etl.sh`).
 """
 from __future__ import annotations
 
@@ -23,6 +29,24 @@ _STATUS_KEY = {
 # Claves que siempre se muestran; saltados/no_publicado solo si > 0.
 _ALWAYS = ["leidos", "nuevos", "actualizados", "sin_cambios"]
 _OPTIONAL = ["saltados", "no_publicado"]
+
+# Fallas acumuladas de la corrida (proceso-global: un `python -m etl <ds>` corre un solo ETL).
+_FAILURES: list[str] = []
+
+
+def record_failure(detail: str) -> None:
+    """Registra una falla de la corrida. Hace que el proceso salga con código != 0."""
+    _FAILURES.append(detail)
+
+
+def failures() -> list[str]:
+    """Fallas acumuladas hasta ahora (lista de descripciones legibles)."""
+    return list(_FAILURES)
+
+
+def reset_failures() -> None:
+    """Limpia el registro (para tests o para correr varios ETLs en un mismo proceso)."""
+    _FAILURES.clear()
 
 
 def _fmt(v) -> str:
@@ -52,6 +76,15 @@ class Report:
         """Línea informativa secundaria (rango leído, fuente, etc.)."""
         print(f"  {text}")
 
+    def error(self, text: str) -> None:
+        """Falla de la corrida: la imprime y marca el proceso para salir con código != 0.
+
+        Para lo que impide traer el dato (fuente caída, HTML/PDF que no parsea). No usar para
+        un mes que la fuente todavía no publicó: eso es `note(..., "no publicado")`.
+        """
+        record_failure(f"{self.title}: {text}")
+        print(f"  ERROR {text}")
+
     def tally(self, status: str) -> str:
         """Cuenta un status sin imprimir línea (para cargas masivas)."""
         if status != "no_publicado":
@@ -67,9 +100,16 @@ class Report:
         print("  " + "  ".join(parts))
         return status
 
-    def note(self, period, text: str, status: str = "no_publicado") -> None:
-        """Línea por mes sin inserción: `  2026-06  -> no publicado`."""
+    def note(self, period, text: str, status: str = "no_publicado", *,
+             failure: bool = False) -> None:
+        """Línea por mes sin inserción: `  2026-06  -> no publicado`.
+
+        `failure=True` cuando el mes se saltea porque algo se rompió (no porque la fuente aún
+        no lo publicó): además de contarlo, registra la falla para el código de salida.
+        """
         self.tally(status)
+        if failure:
+            record_failure(f"{self.title} {_period(period)}: {text}")
         print(f"  {_period(period)}  -> {text}")
 
     def summary(self) -> None:
@@ -87,7 +127,11 @@ class DesestReport:
         print(f"[{self.title}]")
 
     def add(self, result: dict) -> None:
-        """result = dict de `seasonal.deseasonalize` (tag, status, n, mode, reason, outdir)."""
+        """result = dict de `seasonal.deseasonalize` (tag, status, n, mode, reason, outdir).
+
+        `status="error"` (X-13 reventó o no dejó d11) cuenta como falla de la corrida. Un
+        `status="skipped"` NO: es un salteo por diseño (serie corta, huecos en los meses).
+        """
         self.series += 1
         tag = result["tag"]
         if result["status"] == "ok":
@@ -98,6 +142,8 @@ class DesestReport:
             print(line)
         else:
             self.saltadas += 1
+            if result["status"] == "error":
+                record_failure(f"{self.title} {tag}: {result['reason']}")
             print(f"  {tag:14} -> {result['status']}: {result['reason']}")
 
     def summary(self) -> None:

@@ -18,6 +18,8 @@ from __future__ import annotations
 import importlib
 import sys
 
+from etl.core import report
+
 DATASETS = ["granos", "cemento", "automotriz", "patentamientos", "acero", "aves", "leche",
             "bovinos", "demanda_energia", "reservas_pasivos"]
 SUBCOMMANDS = {"run", "load-history"}
@@ -28,6 +30,21 @@ USAGE = (
     "     python -m etl redesest [datasets...] [--clean] [--x13-out DIR]\n"
     f"     datasets: {', '.join(DATASETS)}"
 )
+
+
+def _exit_on_failures() -> None:
+    """Sale con código 1 si la corrida registró fallas (ver `etl.core.report.record_failure`).
+
+    El resumen va por stderr: en el cron, `scripts/run_etl.sh` lo reenvía para que dispare el
+    mail del MAILTO. Sin esto la corrida terminaba en 0 aunque no hubiera traído un solo dato.
+    """
+    fails = report.failures()
+    if not fails:
+        return
+    print(f"FALLO: {len(fails)} problema(s) en la corrida:", file=sys.stderr)
+    for f in fails:
+        print(f"  - {f}", file=sys.stderr)
+    sys.exit(1)
 
 
 def main(argv=None) -> None:
@@ -48,6 +65,7 @@ def main(argv=None) -> None:
 
     if cmd == "redesest":
         importlib.import_module("etl.redesest").main(rest)
+        _exit_on_failures()
         return
 
     if cmd not in DATASETS:
@@ -59,6 +77,7 @@ def main(argv=None) -> None:
         sub, rest = rest[0], rest[1:]
     module = "load_history" if sub == "load-history" else "run"
     importlib.import_module(f"etl.datasets.{cmd}.{module}").main(rest)
+    _exit_on_failures()
 
 
 if __name__ == "__main__":

@@ -44,11 +44,11 @@ def main(argv=None) -> None:
         try:
             res = source.get_latest()
         except Exception as e:
-            rep.info(f"ERROR bajando/parseando: {e}")
+            rep.error(f"bajando/parseando: {e}")
             rep.summary()
             return
         if not res or not any(res[0].values()):
-            rep.info("no se pudo bajar/parsear el diar_bas.xls del BCRA")
+            rep.error("no se pudo bajar/parsear el diar_bas.xls del BCRA")
             rep.summary()
             return
         data, url = res

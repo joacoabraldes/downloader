@@ -176,23 +176,40 @@ Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`.
 publica; cuando el dato ya está, es un no-op barato). Publican: cemento, automotriz y
 patentamientos (SIOMAA) entre el 1 y el 10; granos cerca del 20; acero (CAA) entre el 25 y
 el 5 del mes siguiente; aves y bovinos (MAGyP) entre el 20 y el 31; leche (MAGyP) entre el 20
-y el 10; demanda_energia (CAMMESA) publica con ~1 mes de rezago, ventana amplia 5-20.
+y el 10; demanda_energia (CAMMESA) publica con ~1 mes de rezago y **sin fecha previsible**
+(actualiza el mismo archivo, `wpdmdl` fijo), así que corre todos los días.
 ```cron
 # ETLs mensuales downloader (idempotentes: corren diario en la ventana hasta que publican)
-0  12 1-10      * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl cemento        >> /home/jmt/data/etls/cemento.log 2>&1
-10 12 1-10      * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl automotriz     >> /home/jmt/data/etls/automotriz.log 2>&1
-0  12 18-31     * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl granos         >> /home/jmt/data/etls/granos.log 2>&1
-0  13 1-10      * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl patentamientos >> /home/jmt/data/etls/patentamientos.log 2>&1
-0  10 25-31,1-5 * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl acero         >> /home/jmt/data/etls/acero.log 2>&1
-0  11 20-31     * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl aves           >> /home/jmt/data/etls/aves.log 2>&1
-0  14 20-31,1-10 * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl leche         >> /home/jmt/data/etls/leche.log 2>&1
-0  11 20-31     * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl bovinos        >> /home/jmt/data/etls/bovinos.log 2>&1
-0  12 5-20      * * cd /home/jmt/dev/downloader && .venv/bin/python -m etl demanda_energia >> /home/jmt/data/etls/demanda_energia.log 2>&1
-0  19 *         * 1-5 cd /home/jmt/dev/downloader && .venv/bin/python -m etl reservas_pasivos >> /home/jmt/data/etls/reservas_pasivos.log 2>&1
+0  12 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh cemento
+10 12 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh automotriz
+0  12 18-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh granos
+0  13 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh patentamientos
+0  10 25-31,1-5 * * /home/jmt/dev/downloader/scripts/run_etl.sh acero
+0  11 20-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh aves
+0  14 20-31,1-10 * * /home/jmt/dev/downloader/scripts/run_etl.sh leche
+0  11 20-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh bovinos
+0  12 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh demanda_energia
+0  19 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh reservas_pasivos
 ```
-> El `cd` al repo es obligatorio (para que `python -m etl` encuentre el paquete y el `.venv`).
+> Los jobs pasan por **`scripts/run_etl.sh`**, que hace el `cd` al repo, escribe
+> `/home/jmt/data/etls/<dataset>.log` y —sólo si la corrida falla— repite el final por stderr
+> para que dispare el mail del `MAILTO`. **No agregarles `>> log 2>&1`**: eso se traga el aviso
+> y es exactamente el bug que el wrapper viene a resolver (ver *Fallas y código de salida*).
 > Conexión, `X13PATH` y `CEMENTO_PROXY` salen del bloque de env del **crontab** (cron no
 > sourcea `.bashrc`; ver *Requisitos*).
+
+### Fallas y código de salida
+
+`python -m etl <dataset>` sale con **código 1** si la corrida registró alguna falla: fuente
+inalcanzable, HTML/PDF/Excel que no parsea, o una serie que X-13 no pudo ajustar. El detalle
+va por **stderr**; el log del dataset queda igual que siempre.
+
+Lo que **no** es falla: un mes que la fuente todavía no publicó (`-> no publicado`) y un
+`skipped` de X-13 por diseño (serie corta, huecos entre meses). Esas corridas salen 0.
+
+> Hasta jul-2026 **todo** salía con código 0: una corrida con `leidos=0` porque la fuente
+> estaba caída le reportaba éxito al cron. Se detectó con MAGyP caído (aves/bovinos) y con
+> `granos/lino` congelada 10 días tras un timeout de X-13, sin que nadie se enterara.
 
 Para **recalcular la desestacionalización sin bajar de la web** (p.ej. después de cambiar el
 cuadro `etl/series_desest.toml`), ver la sección *Recalcular la desest* más abajo (`redesest`).
