@@ -225,8 +225,12 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
     _write_spc(os.path.join(workdir, base + ".spc"), dates, values, mode=mode,
                td=td, seasonalma=seasonalma)
     try:
+        # 200s: el peor caso medido (jul-2026) es automotriz/produccion con 34s, seguido de
+        # granos/mani con 28s; el resto corre en menos de 4s. El tiempo lo manda la dificultad
+        # de ajuste de automdl, no el largo de la serie (mani: 282 obs / 28s vs aves: 545 obs /
+        # 2s), así que una serie puede volverse lenta sin crecer. ~6x de margen sobre el peor caso.
         subprocess.run([x13bin, base], cwd=workdir, capture_output=True,
-                       text=True, timeout=120)
+                       text=True, timeout=200)
     except Exception as e:
         return _result(tag, "error", mode=mode, reason=f"x13as no se pudo ejecutar: {e}")
 
