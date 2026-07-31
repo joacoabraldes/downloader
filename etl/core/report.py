@@ -30,8 +30,12 @@ _STATUS_KEY = {
 _ALWAYS = ["leidos", "nuevos", "actualizados", "sin_cambios"]
 _OPTIONAL = ["saltados", "no_publicado"]
 
-# Fallas acumuladas de la corrida (proceso-global: un `python -m etl <ds>` corre un solo ETL).
+# Estado acumulado de la corrida (proceso-global: un `python -m etl <ds>` corre un solo ETL).
+# Además del exit code, lo consume `etl.core.control` para dejar la fila de
+# etl_control_ejecucion con los mismos números que la línea `resumen [...]` del log.
 _FAILURES: list[str] = []
+_COUNTS: dict[str, int] = {}
+_DESEST: dict[str, int] = {}
 
 
 def record_failure(detail: str) -> None:
@@ -44,9 +48,21 @@ def failures() -> list[str]:
     return list(_FAILURES)
 
 
+def counts() -> dict[str, int]:
+    """Contadores acumulados de los `Report` que ya imprimieron su resumen."""
+    return dict(_COUNTS)
+
+
+def desest_counts() -> dict[str, int]:
+    """Contadores acumulados de los `DesestReport` que ya imprimieron su resumen."""
+    return dict(_DESEST)
+
+
 def reset_failures() -> None:
-    """Limpia el registro (para tests o para correr varios ETLs en un mismo proceso)."""
+    """Limpia el estado acumulado (tests, o varios ETLs en un mismo proceso)."""
     _FAILURES.clear()
+    _COUNTS.clear()
+    _DESEST.clear()
 
 
 def _fmt(v) -> str:
@@ -113,6 +129,8 @@ class Report:
         print(f"  {_period(period)}  -> {text}")
 
     def summary(self) -> None:
+        for k, v in self.counts.items():
+            _COUNTS[k] = _COUNTS.get(k, 0) + v
         keys = list(_ALWAYS) + [k for k in _OPTIONAL if self.counts[k]]
         body = "  ".join(f"{k}={self.counts[k]}" for k in keys)
         print(f"resumen [{self.title}]  {body}")
@@ -147,6 +165,9 @@ class DesestReport:
             print(f"  {tag:14} -> {result['status']}: {result['reason']}")
 
     def summary(self) -> None:
+        for k, v in (("series", self.series), ("upserts", self.upserts),
+                     ("saltadas", self.saltadas)):
+            _DESEST[k] = _DESEST.get(k, 0) + v
         body = f"series={self.series}  upserts={self.upserts}"
         if self.saltadas:
             body += f"  saltadas={self.saltadas}"

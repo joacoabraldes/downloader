@@ -13,6 +13,7 @@ from etl.core import db
 DATASETS_DIR = Path(__file__).parent / "datasets"
 UNIFIED_SCHEMA = Path(__file__).parent / "schema_unified.sql"
 DAILY_SCHEMA = Path(__file__).parent / "schema_daily.sql"
+CONTROL_SCHEMA = Path(__file__).parent / "schema_control.sql"
 # Datasets mensuales: gatean las vistas unificadas series_actual / series_desest.
 MONTHLY = ["granos", "cemento", "automotriz", "patentamientos", "acero", "aves", "leche",
            "bovinos", "demanda_energia"]
@@ -70,6 +71,8 @@ def main(argv=None) -> None:
     conn = db.get_conn()
     aplicados = 0
     try:
+        # Control de ejecución: no depende de ningún dataset, se aplica siempre.
+        apply_sql_file(conn, CONTROL_SCHEMA, "control     -> etl_control_ejecucion / etl_control_ultima")
         for name in names:
             aplicados += apply_schema(conn, name)
         # Cada carril tiene su unificada: se aplican sólo cuando se inicializa el carril completo

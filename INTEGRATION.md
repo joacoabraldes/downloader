@@ -138,3 +138,29 @@ order by orden;
 > Las series que **no** están en `_desest` (p.ej. `lino`/`algodon`/`cartamo`/`canola` de granos, o
 > las componentes de `demanda_energia`) quedan solo como observadas: X-13 no las ajusta (molienda
 > intermitente, o son insumos de una serie derivada). Ver `etl/series_desest.toml`.
+
+## ¿El ETL está vivo? (`etl_control_salud`)
+
+Las tablas de arriba dicen **hasta dónde llega el dato**. No dicen si el ETL sigue corriendo:
+son append-only y una corrida sin cambios no escribe nada, así que `max(ingested_at)` significa
+"último día que un valor cambió", no "último día que el ETL corrió".
+
+Para eso está **`etl_control_ejecucion`**, con una fila por corrida (ande o no), y su vista:
+
+```sql
+-- Chequeo rápido desde la app: si vuelve vacío, está todo bien.
+select * from etl_control_salud where estado <> 'ok';
+```
+
+| Columna | Significado |
+|---|---|
+| `dataset` | los 10, hayan corrido o no |
+| `estado` | `ok` · `FALLA` · `SIN_CORRER` · `NUNCA_CORRIO` |
+| `estado_ultima_corrida` | `ok` / `falla` de la última ejecución |
+| `ultima_corrida` · `horas_desde` | cuándo terminó y hace cuánto |
+| `horas_max` | hueco legítimo máximo según la ventana del cron |
+| `ultimo_dato` | `max(date)` del dataset tras esa corrida |
+| `fallas` | array con el detalle; `NULL` si anduvo |
+
+`SIN_CORRER` significa que el cron dejó de disparar. `FALLA` significa que corrió y no pudo
+traer el dato: ahí sí conviene ir al log, `/home/jmt/data/etls/<dataset>.log`.

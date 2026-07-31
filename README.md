@@ -217,6 +217,39 @@ Lo que **no** es falla: un mes que la fuente todavía no publicó (`-> no public
 > estaba caída le reportaba éxito al cron. Se detectó con MAGyP caído (aves/bovinos) y con
 > `granos/lino` congelada 10 días tras un timeout de X-13, sin que nadie se enterara.
 
+### Control de ejecución: ¿el ETL está vivo?
+
+Cada corrida deja una fila en **`etl_control_ejecucion`** (`etl/schema_control.sql`), ande o no
+—y también si revienta con una excepción no capturada—: dataset, comando, inicio/fin, duración,
+`estado` (`ok`/`falla`), el array de `fallas`, los contadores del `resumen [...]` y el
+`ultimo_dato` del dataset después de correr.
+
+**Por qué hace falta una tabla aparte**: las tablas de datos son append-only con
+`insert_if_changed`, así que una corrida sin cambios **no escribe nada**. `max(ingested_at)` es
+"último día que un valor cambió", no "último día que el ETL corrió": un ETL muerto hace tres
+meses se ve idéntico a uno que corre a diario sin novedad. Mirando los datos se ve si el **dato**
+está viejo (`scripts/frescura.sql`); esta tabla dice si el **proceso** está vivo.
+
+Para consumir desde una app, dos vistas:
+
+| Vista | Para qué |
+|---|---|
+| `etl_control_ultima` | última corrida de cada dataset que alguna vez corrió |
+| **`etl_control_salud`** | los 10 datasets **siempre**, con un `estado` único |
+
+```sql
+-- Chequeo rápido: si esto vuelve vacío, está todo bien.
+select * from etl_control_salud where estado <> 'ok';
+```
+
+`estado` es `ok` · `FALLA` (la última corrida falló) · `SIN_CORRER` (pasó más de `horas_max` sin
+correr → el cron dejó de disparar) · `NUNCA_CORRIO` (sin ninguna fila). `horas_max` es el hueco
+legítimo más largo según la ventana del cron: cemento corre los días 1-10, así que ~21 días sin
+correr es normal para él y no para `demanda_energia`, que corre diario.
+
+> La escritura del control **nunca** rompe ni cambia el resultado de la corrida: si falla (base
+> caída, tabla sin crear), avisa por stderr y sigue. Se crea con `python -m etl init-db`.
+
 Para **recalcular la desestacionalización sin bajar de la web** (p.ej. después de cambiar el
 cuadro `etl/series_desest.toml`), ver la sección *Recalcular la desest* más abajo (`redesest`).
 

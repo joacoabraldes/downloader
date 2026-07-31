@@ -15,10 +15,11 @@ Ejemplos:
 """
 from __future__ import annotations
 
+import datetime as dt
 import importlib
 import sys
 
-from etl.core import report
+from etl.core import control, report
 
 DATASETS = ["granos", "cemento", "automotriz", "patentamientos", "acero", "aves", "leche",
             "bovinos", "demanda_energia", "reservas_pasivos"]
@@ -30,6 +31,23 @@ USAGE = (
     "     python -m etl redesest [datasets...] [--clean] [--x13-out DIR]\n"
     f"     datasets: {', '.join(DATASETS)}"
 )
+
+
+def _correr(modulo: str, rest, *, dataset: str, comando: str) -> None:
+    """Corre un comando dejando SIEMPRE su huella en etl_control_ejecucion.
+
+    El `finally` cubre los tres finales posibles: corrida normal, corrida con fallas
+    registradas, y excepción no capturada. Si no se registrara en el último caso, un ETL que
+    revienta seria justo el que no deja rastro, que es el que mas importa ver.
+    """
+    inicio = dt.datetime.now(dt.timezone.utc)
+    try:
+        importlib.import_module(modulo).main(rest)
+    except BaseException as e:  # incluye SystemExit y KeyboardInterrupt
+        report.record_failure(f"{dataset} / {comando}: excepción no capturada: {e!r}")
+        raise
+    finally:
+        control.registrar(dataset=dataset, comando=comando, inicio=inicio)
 
 
 def _exit_on_failures() -> None:
@@ -64,7 +82,7 @@ def main(argv=None) -> None:
         return
 
     if cmd == "redesest":
-        importlib.import_module("etl.redesest").main(rest)
+        _correr("etl.redesest", rest, dataset="redesest", comando="redesest")
         _exit_on_failures()
         return
 
@@ -76,7 +94,7 @@ def main(argv=None) -> None:
     if rest and rest[0] in SUBCOMMANDS:
         sub, rest = rest[0], rest[1:]
     module = "load_history" if sub == "load-history" else "run"
-    importlib.import_module(f"etl.datasets.{cmd}.{module}").main(rest)
+    _correr(f"etl.datasets.{cmd}.{module}", rest, dataset=cmd, comando=sub)
     _exit_on_failures()
 
 
