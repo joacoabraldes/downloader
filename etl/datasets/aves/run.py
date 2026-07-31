@@ -7,12 +7,18 @@ insert_if_changed absorbe las revisiones de los últimos meses y se pone al día
 sólo si hubo datos nuevos o actualizados, desestacionaliza (X-13).
 
 **Fallback en PDF**: el xlsx se actualiza más tarde que el PDF `Faena Avícola <año>.pdf` de la
-misma página (jul-2026: el PDF ya traía junio y el xlsx llegaba hasta mayo). Después de cargar
-el xlsx se miran los meses del PDF **posteriores al último del xlsx** y se insertan con
-estado='provisorio', porque el PDF viene redondeado a la unidad (67.120) contra los 3 decimales
-del xlsx (67119.556). Cuando el xlsx publique ese mes entra como 'definitivo' y la vista
-`etl_aves_actual` lo prioriza sola (ordena definitivo > provisorio > histórico): no hay que
-borrar nada. El PDF nunca pisa un mes que el xlsx ya tenga.
+misma página (jul-2026: el PDF ya traía junio y el xlsx llegaba hasta mayo). Se insertan con
+estado='provisorio' los meses del PDF posteriores a lo que ya tenemos, porque el PDF viene
+redondeado a la unidad (67.120) contra los 3 decimales del xlsx (67119.556). Cuando el xlsx
+publique ese mes entra como 'definitivo' y la vista `etl_aves_actual` lo prioriza sola (ordena
+definitivo > provisorio > histórico): no hay que borrar nada. El PDF nunca pisa un mes que el
+xlsx ya tenga, ni rellena huecos viejos (sólo cubre dos años, y redondeado).
+
+Cubre **dos** escenarios distintos:
+  - xlsx desactualizado -> la referencia es el último mes del xlsx.
+  - xlsx caído (404, layout roto) -> la corrida NO se corta: la referencia pasa a ser el último
+    mes observado en la base y el PDF salva el mes igual. La falla del xlsx se registra igual y
+    el proceso sale != 0: que la fuente primaria esté rota es noticia aunque haya rescate.
 
 El histórico profundo (1981→) se carga aparte del Excel de referencia:
 `python -m etl aves load-history`.
@@ -33,15 +39,18 @@ from etl.core import db, desest_params, report, seasonal
 from . import config, source
 
 
-def _completar_con_pdf(conn, rep, *, ultimo_xlsx, force: bool) -> None:
-    """Inserta como 'provisorio' los meses del PDF posteriores al último mes del xlsx.
+def _completar_con_pdf(conn, rep, *, ultimo, force: bool) -> None:
+    """Inserta como 'provisorio' los meses del PDF posteriores a `ultimo`.
 
-    Sólo completa hacia adelante (`> ultimo_xlsx`), nunca rellena huecos viejos: el PDF cubre
-    dos años y trae valores redondeados, así que no es fuente para backfill.
+    `ultimo` es hasta dónde ya tenemos cubierta la serie: el último mes del xlsx si anduvo, o
+    el último mes observado en la base si el xlsx falló. Sólo completa hacia adelante, nunca
+    rellena huecos viejos: el PDF cubre dos años y trae valores redondeados, así que no es
+    fuente para backfill.
 
-    Si el PDF falla NO se marca la corrida como fallida: la fuente primaria (el xlsx) ya trajo
-    su dato y esto es un extra. Marcarlo como falla mandaría mail cada día por un ETL que en
-    realidad cumplió. Queda como AVISO en el log y la corrida siguiente reintenta.
+    Si el PDF falla NO se marca la corrida como fallida: es una fuente de respaldo, y cuando el
+    xlsx anduvo la corrida ya cumplió. Si el xlsx TAMBIÉN falló, la falla ya quedó registrada
+    por su propio camino, así que el exit code sale != 0 igual. Queda como AVISO en el log y la
+    corrida siguiente reintenta.
     """
     try:
         res = source.get_latest_pdf()
@@ -52,9 +61,10 @@ def _completar_con_pdf(conn, rep, *, ultimo_xlsx, force: bool) -> None:
         rep.info("AVISO fallback PDF: no se encontró el PDF de faena o no se parseó nada")
         return
     pdf, pdf_url = res
-    faltantes = sorted(f for f in pdf if f > ultimo_xlsx)
+    # `ultimo=None` sólo con la tabla vacía (base nueva sin load-history): ahí entra todo el PDF.
+    faltantes = sorted(f for f in pdf if ultimo is None or f > ultimo)
     if not faltantes:
-        rep.info(f"fallback PDF: sin meses nuevos (el xlsx ya llega a {ultimo_xlsx:%Y-%m})")
+        rep.info(f"fallback PDF: sin meses nuevos (ya cubiertos hasta {ultimo:%Y-%m})")
         return
     rep.info(f"fallback PDF: {pdf_url}")
     for fecha in faltantes:
@@ -83,30 +93,42 @@ def main(argv=None) -> None:
     rep = report.Report("aves", "run")
     conn = db.get_conn()
     try:
+        # El xlsx es la fuente primaria, pero que falle NO corta la corrida: el PDF puede
+        # salvar el mes igual (son dos archivos distintos y puede romperse uno solo, p.ej. si
+        # cambia el link del xlsx o su layout). La falla queda registrada igual: que la fuente
+        # primaria este rota es noticia aunque el fallback rescate el dato.
+        data = url = None
         try:
             res = source.get_latest()
+            if res and res[0]:
+                data, url = res
+            else:
+                rep.error("no se encontró el xlsx de indicadores o no se parseó ninguna fila")
         except Exception as e:
-            rep.error(f"bajando/parseando: {e}")
-            rep.summary()
-            return
-        if not res or not res[0]:
-            rep.info("no se encontró el xlsx de indicadores o no se parseó ninguna fila")
-            rep.summary()
-            return
-        data, url = res
-        rep.info(f"fuente: {url} | meses: {min(data):%Y-%m}..{max(data):%Y-%m}")
-        for fecha in sorted(data):
-            valor = data[fecha]
-            status = db.insert_if_changed(
-                conn, table=config.TABLE, key_cols=config.KEY_COLS,
-                key_vals=[config.MAIN_SERIE, fecha], value_cols=config.VALUE_COLS,
-                row={"valor": None if valor is None else float(valor)},
-                estado="definitivo", fuente=url, force=args.force,
-            )
-            rep.tally(status)  # 125+ meses: se cuentan, no se imprime línea por mes
+            rep.error(f"bajando/parseando el xlsx: {e}")
+
+        if data:
+            rep.info(f"fuente: {url} | meses: {min(data):%Y-%m}..{max(data):%Y-%m}")
+            for fecha in sorted(data):
+                valor = data[fecha]
+                status = db.insert_if_changed(
+                    conn, table=config.TABLE, key_cols=config.KEY_COLS,
+                    key_vals=[config.MAIN_SERIE, fecha], value_cols=config.VALUE_COLS,
+                    row={"valor": None if valor is None else float(valor)},
+                    estado="definitivo", fuente=url, force=args.force,
+                )
+                rep.tally(status)  # 125+ meses: se cuentan, no se imprime línea por mes
 
         if not args.no_pdf_fallback:
-            _completar_con_pdf(conn, rep, ultimo_xlsx=max(data), force=args.force)
+            # Referencia de "hasta donde ya tenemos": el xlsx recien cargado si anduvo, y si no
+            # el ultimo mes observado en la base. Sin esto, con el xlsx caido el PDF reinsertaria
+            # sus 2 años completos como provisorio todos los dias (insert_if_changed compara
+            # contra el ultimo snapshot del MISMO estado, y no hay provisorios previos).
+            ultimo = max(data) if data else db.last_date(
+                conn, table=config.TABLE,
+                where="serie = %s and estado is distinct from 'desestacionalizado'",
+                where_params=(config.MAIN_SERIE,))
+            _completar_con_pdf(conn, rep, ultimo=ultimo, force=args.force)
         rep.summary()
 
         if args.no_desest:

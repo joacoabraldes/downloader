@@ -46,7 +46,7 @@ def main(argv=None) -> None:
             rep.summary()
             return
         if not res or not res[0]:
-            rep.info("no se encontró PDF de Cifras o no se parseó ninguna fila")
+            rep.error("no se encontró PDF de Cifras o no se parseó ninguna fila")
             rep.summary()
             return
         data, url = res
