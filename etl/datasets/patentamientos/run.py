@@ -40,9 +40,17 @@ def main(argv=None) -> None:
     rep = report.Report("patentamientos", "run")
     conn = db.get_conn()
     try:
-        latest = source.get_latest_report()
+        try:
+            latest = source.get_latest_report()
+        except Exception as e:
+            rep.error(f"listando informes de SIOMAA: {e}")
+            rep.summary()
+            return
         if not latest:
-            rep.info("SIOMAA no devolvió ningún informe 4W gratuito")
+            # Sin informe no hay dato: es falla, no un "todavía no publicaron". El listado de
+            # SIOMAA siempre trae informes viejos, así que venir vacío significa que el scraping
+            # se rompió (login, layout, filtro de gratuitos), no que el mes no salió.
+            rep.error("SIOMAA no devolvió ningún informe 4W gratuito")
             rep.summary()
             return
         rep.info(f"fuente: SIOMAA | informe: {latest['name']}")

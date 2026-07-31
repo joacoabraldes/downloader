@@ -61,7 +61,10 @@ def main(argv=None) -> None:
 
         fechas_todas = sorted({f for serie in data.values() for f in serie})
         if not fechas_todas:
-            rep.info("el archivo no trae fechas")
+            # El diar_bas.xls bajó pero no se parseó ni una fecha: el archivo cambió de formato
+            # o el parser se rompió. No es "el BCRA no publicó todavía" (eso son filas nuevas
+            # ausentes, no cero fechas en 30 años de histórico).
+            rep.error("el archivo no trae fechas")
             rep.summary()
             return
 

@@ -64,18 +64,26 @@ def main(argv=None) -> None:
     args = ap.parse_args(argv)
 
     urllib3.disable_warnings()
-    html = source.fetch_html()
-    parsed = source.parse_molienda(html)
+    # El reporte se abre antes de bajar para que un fallo de la fuente salga por el mismo camino
+    # que en el resto de los datasets (rep.error -> registro de fallas -> exit != 0) y no como un
+    # traceback pelado. Era el único que reportaba la falla por excepción sin capturar.
+    rep = report.Report("granos", "run")
+    try:
+        parsed = source.parse_molienda(source.fetch_html())
+    except Exception as e:
+        rep.error(f"bajando/parseando: {e}")
+        rep.summary()
+        return
     # Piso histórico: X-13 no puede con la serie desde 1965 (ver config.START_DATE).
     parsed = {d: r for d, r in parsed.items() if d >= config.START_DATE}
     if not parsed:
-        print("No se parseó ningún mes del HTML.", file=sys.stderr)
-        sys.exit(1)
+        rep.error("no se parseó ningún mes del HTML")
+        rep.summary()
+        return
 
     conn = db.get_conn()
     try:
         dates = target_dates(conn, parsed, args.month, args.months_back)
-        rep = report.Report("granos", "run")
         rep.info(f"fuente: MAGyP HTML ({len(parsed)} meses {min(parsed):%Y-%m}.."
                  f"{max(parsed):%Y-%m}) | a procesar: {len(dates)}")
         for d in dates:
