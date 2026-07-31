@@ -14,7 +14,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `automotriz` | `etl_automotriz` | `ind_automotriz.xlsx` | **PDF ADEFA** (pdfplumber) |
 | `patentamientos` | `etl_patentamientos` | PDFs SIOMAA (backfill) | **PDF SIOMAA** (pdfplumber) |
 | `acero` | `etl_acero` | `Acero.xlsx` (1993→) | **PDF CAA** (scrape + pdfplumber) |
-| `aves` | `etl_aves` | `Aves.xlsx` (1981→) | **xlsx MAGyP** (scrape) |
+| `aves` | `etl_aves` | `Aves.xlsx` (1981→) | **xlsx MAGyP** (scrape) + **PDF** de faena (fallback) |
 | `leche` | `etl_leche` | `leche.xlsx` (2015→) | **xlsx MAGyP** (URL fija) |
 | `bovinos` | `etl_bovinos` | `Bovinos.xlsx` (1998→) | **.xls MAGyP** (link dentro de un PDF) |
 | `demanda_energia` | `etl_demanda_energia` | `energia.xlsx` (2005→) | **xlsx CAMMESA** (URL fija) |
@@ -36,6 +36,12 @@ dataset:
   crudo, que es la única con histórico (1993→) y referencia de calibración.
 - **aves**: `faena` avícola (MAGyP, datos SENASA), en miles de cabezas. Histórico 1981→. La
   fuente de indicadores trae además producción/comercio/consumo, que podrían sumarse.
+  El xlsx de indicadores se actualiza **más tarde** que el PDF `Faena Avícola <año>.pdf` de la
+  misma página, así que los meses que el xlsx todavía no tiene se completan desde el PDF con
+  estado `provisorio` (viene redondeado a la unidad: 67.120 vs 67119.556 del xlsx). Cuando el
+  xlsx publica el mes entra como `definitivo` y la vista `_actual` lo prioriza sola. El PDF
+  nunca pisa un mes que el xlsx ya tenga, ni rellena huecos viejos. Se desactiva con
+  `--no-pdf-fallback`.
 - **leche**: `produccion` nacional de leche (MAGyP, Dir. Nacional de Lechería), en litros por
   mes. Histórico 2015→.
 - **bovinos**: `produccion` de carne bovina (MAGyP, base SENASA), en miles de toneladas res

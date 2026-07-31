@@ -1,15 +1,18 @@
 -- Sector avícola (MAGyP), formato LONG. Hoy una sola serie: faena (miles de cabezas).
 -- Modelo append-only: cada corrida inserta un snapshot nuevo con su ingested_at; nunca se
--- pisa un dato. Conviven el histórico profundo (Excel de referencia, 1981→, estado NULL) y
--- el definitivo del Excel de indicadores mensual de MAGyP (que revisa los últimos meses).
+-- pisa un dato. Conviven el histórico profundo (Excel de referencia, 1981→, estado NULL), el
+-- definitivo del Excel de indicadores mensual de MAGyP (que revisa los últimos meses) y el
+-- provisorio del PDF de faena, que adelanta el mes cuando el xlsx todavía no lo publicó (ver
+-- el fallback en run.py). El provisorio viene redondeado a la unidad; la vista _actual le da
+-- prioridad al definitivo, así que el PDF queda tapado en cuanto MAGyP actualiza el xlsx.
 
 create table if not exists etl_aves (
   id          bigint generated always as identity primary key,
   serie       text   not null check (serie in ('faena')),
   date        date   not null,                 -- primer día del mes
   valor       double precision,                -- miles de cabezas
-  estado      text,                            -- NULL=histórico (Excel) / definitivo (indicadores MAGyP) / desestacionalizado (X-13)
-  fuente      text,                            -- 'excel historico' / URL del xlsx de indicadores / 'census x13'
+  estado      text,                            -- NULL=histórico (Excel) / definitivo (xlsx indicadores MAGyP) / provisorio (PDF de faena) / desestacionalizado (X-13)
+  fuente      text,                            -- 'excel historico' / URL del xlsx de indicadores / URL del PDF de faena / 'census x13'
   parametros  jsonb,                           -- solo en desest: parámetros de la corrida X-13
   ingested_at timestamptz not null default now()
 );
