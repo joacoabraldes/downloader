@@ -57,7 +57,7 @@ from etl_control_ejecucion
 where comando <> 'load-history'   -- carga manual one-off, no es señal de que el cron viva
 order by dataset, inicio desc;
 
--- LA vista para la app: los 10 datasets SIEMPRE, hayan corrido o no.
+-- LA vista para la app: los 11 datasets SIEMPRE, hayan corrido o no.
 --
 --   select * from etl_control_salud where estado <> 'ok';
 --
@@ -75,7 +75,8 @@ with esperado(dataset, horas_max) as (values
     ('bovinos',         500),   -- cron 20-31
     ('leche',           260),   -- cron 20-31,1-10 -> hueco max ~10 dias
     ('demanda_energia',  26),   -- cron diario
-    ('reservas_pasivos', 80)    -- cron L-V -> fin de semana ~71 h
+    ('reservas_pasivos', 80),   -- cron L-V -> fin de semana ~71 h
+    ('compras_granos',   80)    -- cron L-V -> fin de semana ~71 h (ver nota de la ventana abajo)
 )
 select e.dataset,
        u.estado          as estado_ultima_corrida,

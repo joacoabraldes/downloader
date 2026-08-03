@@ -105,7 +105,8 @@ def _changed(prev: dict | None, row: dict, value_cols: list[str], tol: float) ->
 
 
 def insert_if_changed(conn, *, table, key_cols, key_vals, value_cols, row,
-                      estado, fuente, force: bool = False, tol: float = 1e-6) -> str:
+                      estado, fuente, force: bool = False, tol: float = 1e-6,
+                      extra: dict | None = None) -> str:
     """Inserta un snapshot de (clave, estado) sólo si es nuevo o cambió algún valor.
 
     `row` viene keyeado por los nombres de columna de la tabla. Idempotente salvo `force`.
@@ -114,6 +115,10 @@ def insert_if_changed(conn, *, table, key_cols, key_vals, value_cols, row,
       - "sin_cambios" ya existía y no cambió (y sin force).
       - "nuevo"       no existía snapshot previo de (clave, estado) → se insertó.
       - "actualizado" existía pero cambió (o force) → se insertó snapshot nuevo.
+
+    `extra` son columnas de contexto que se ESCRIBEN pero no se comparan para el dedup (no son
+    valores de la serie). Lo usa `compras_granos` para la fecha de corte propia de cada bloque:
+    si se comparara, un cambio sólo en esa fecha insertaría un snapshot con los mismos números.
     """
     if row.get(value_cols[0]) is None:
         return "saltado"
@@ -121,8 +126,9 @@ def insert_if_changed(conn, *, table, key_cols, key_vals, value_cols, row,
                          value_cols=value_cols, estado=estado)
     if not force and not _changed(prev, row, value_cols, tol):
         return "sin_cambios"
-    cols = list(key_cols) + list(value_cols) + ["estado", "fuente"]
-    vals = list(key_vals) + [row.get(c) for c in value_cols] + [estado, fuente]
+    extra = extra or {}
+    cols = list(key_cols) + list(value_cols) + ["estado", "fuente"] + list(extra)
+    vals = list(key_vals) + [row.get(c) for c in value_cols] + [estado, fuente] + list(extra.values())
     placeholders = ", ".join(["%s"] * len(cols))
     sql = f"insert into {table} ({', '.join(cols)}) values ({placeholders})"
     with conn.cursor() as cur:

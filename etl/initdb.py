@@ -19,7 +19,10 @@ MONTHLY = ["granos", "cemento", "automotriz", "patentamientos", "acero", "aves",
            "bovinos", "demanda_energia"]
 # Datasets diarios: gatean la vista unificada series_diarias_actual (carril separado).
 DAILY = ["reservas_pasivos"]
-ALL = MONTHLY + DAILY
+# Datasets semanales: sin vista unificada propia (por ahora es uno solo y su grano no es
+# comparable con el de las otras series: mezcla flujo semanal con acumulados de campaña).
+WEEKLY = ["compras_granos"]
+ALL = MONTHLY + DAILY + WEEKLY
 
 
 def apply_schema(conn, name: str) -> bool:
