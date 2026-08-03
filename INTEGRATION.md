@@ -27,6 +27,7 @@ filas por `(serie, mes)`. Para consumir hay **dos vistas por dataset** que ya re
 | `leche` | `etl_leche` | `etl_leche_actual` | `etl_leche_desest` |
 | `bovinos` | `etl_bovinos` | `etl_bovinos_actual` | `etl_bovinos_desest` |
 | `demanda_energia` | `etl_demanda_energia` | `etl_demanda_energia_actual` | `etl_demanda_energia_desest` |
+| `compras_granos` | `etl_compras_granos` | `etl_compras_granos_actual` | — (semanal, no se desestacionaliza) |
 
 > Todas las tablas llevan prefijo **`etl_`**. El nombre de la tabla no siempre deriva directo
 > del dataset (comando): `granos` → `etl_molienda_granos`, `cemento` → `etl_cemento_despacho`;
@@ -93,6 +94,165 @@ order by orden;
 > Regla igual que en las mensuales: consumí las **vistas** (`etl_reservas_pasivos_actual` /
 > `series_diarias_actual`), nunca `etl_reservas_pasivos` cruda (append-only, varias filas por `serie/día`).
 
+## Series semanales (MAGyP) — carril separado
+
+`compras_granos` son las **compras de granos del sector exportador y de la industria, más las
+DJVE** (declaraciones juradas de venta al exterior), tal como las publica MAGyP cada semana. Es
+**semanal** y vive en un carril aparte: `date` es la **fecha de corte del informe** y no aparece
+en `series_actual` / `series_diarias_actual`.
+
+| Tabla (hechos) | Vista observada | Cobertura |
+|---|---|---|
+| `etl_compras_granos` | `etl_compras_granos_actual` | **1.109 semanas, 2005-03-02 → 2026-07-22** |
+
+### Cómo se identifica una fila
+
+No hay columna `serie`: la fila se identifica por **cuatro dimensiones** más la fecha.
+
+| Columna | Valores |
+|---|---|
+| `cultivo` | `trigo`, `maiz`, `sorgo`, `cebada_cervecera`, `cebada_forrajera`, `soja`, `girasol` |
+| `cosecha` | campaña comercial tal como la publica la fuente: `25/26`, `24/25`, … |
+| `sector` | `exportador`, `industria`, `total` |
+| `metrica` | ver la tabla de abajo |
+| `date` | fecha de corte del informe semanal |
+| `valor` | **miles de toneladas** |
+| `corte` | fecha de corte **propia del bloque** cuando difiere de `date` |
+
+Qué significa cada métrica:
+
+| Métrica | Qué es |
+|---|---|
+| `semanal` | compras de esa semana |
+| `total_comprado` | compras acumuladas de la campaña, bajo cualquier modalidad |
+| `precio_hecho` | del acumulado, lo que ya tiene precio pactado |
+| `a_fijar` | del acumulado, lo comprometido sin precio pactado |
+| `fijado` | de lo "a fijar", lo que ya fijó precio |
+| `saldo_a_fijar` | `a_fijar` − `fijado` |
+| `djve_acum` | DJVE acumuladas de la campaña |
+| `embarque_estimado` | embarque estimado acumulado del año comercial (**formato viejo**; NO es lo mismo que DJVE) |
+| `compras_estimadas` / `compras_declaradas` | bloque industria del formato viejo |
+| `ventas_potenciales` / `ventas_efectivas` | primeros años del formato viejo |
+
+### Las tres trampas (leer antes de escribir la primera query)
+
+**1. Filtrá SIEMPRE por `cosecha`.** En cada semana conviven **2 o 3 campañas por cultivo**: la que
+está terminando, la que está en curso y la que se empieza a vender por adelantado. Al 22/07/2026,
+maíz tiene tres:
+
+| cosecha | `total_comprado` (sector `total`) |
+|---|---|
+| `26/27` | 823,4 |
+| `25/26` | 33.875,7 |
+| `24/25` | 36.972,3 |
+
+Filtrar por cultivo sin filtrar campaña te da **series superpuestas**, no una serie.
+
+**2. `sector = 'total'` ya es la suma.** `total` = `exportador` + `industria`, y lo publica la
+propia fuente. Si sumás los tres, contás todo dos veces.
+
+**3. `corte` ≠ `date` en el bloque industria.** El bloque de industria suele venir **atrasado**
+respecto del encabezado del informe: en el informe del 01/07/2026 la industria está "AL
+27/05/2026". Pasa en **941 de las 1.109 semanas** (~28.900 filas, casi todas de `industria`). Si
+comparás semana contra semana sin mirar `corte`, la industria parece repetir valores sin motivo —
+y no es un bug, es que el dato no se actualizó. Cuando el bloque no declara fecha propia,
+`corte` = `date`.
+
+### Qué métricas hay en cada época
+
+La fuente cambió de formato dos veces, así que **no todas las métricas existen en todas las
+fechas**. Rangos reales, medidos sobre la base cargada:
+
+| Métrica | Desde | Hasta |
+|---|---|---|
+| `semanal`, `total_comprado`, `a_fijar`, `fijado` | 2005-03-02 | vigente |
+| `ventas_potenciales` | 2005-03-02 | 2007-03-07 |
+| `ventas_efectivas` | 2005-03-02 | 2008-10-15 |
+| `compras_estimadas`, `compras_declaradas` | 2005-03-02 | 2017-04-26 |
+| `embarque_estimado` | 2005-03-02 | 2017-11-08 |
+| `djve_acum` | 2017-11-15 | vigente |
+| `precio_hecho`, `saldo_a_fijar` | 2019-04-03 | vigente |
+
+> El cambio de formato es **limpio y datable**: `embarque_estimado` muere el **2017-11-08** y
+> `djve_acum` nace el **2017-11-15**, la semana siguiente. No hay solapamiento, así que **no
+> intentes empalmarlas**: miden cosas distintas (embarques efectivos vs. declaraciones de venta).
+>
+> La fuente sigue mostrando el encabezado "VENTAS" hasta 2015, pero con "SIN DATOS" debajo: por
+> eso los valores de `ventas_*` terminan mucho antes de lo que sugiere el HTML.
+
+También hay **un hueco legítimo** en la serie: entre el **2013-12-18 y el 2014-01-03** no hay
+semana, porque la fuente declaró que la del 26/12/2013 se acumuló en la del 03/01/2014.
+
+### Queries
+
+Todas probadas contra la base.
+
+```sql
+-- Foto de la última semana publicada: soja, campaña 25/26, por sector
+select sector, metrica, valor, corte
+from etl_compras_granos_actual
+where cultivo = 'soja' and cosecha = '25/26'
+  and date = (select max(date) from etl_compras_granos_actual)
+order by sector, metrica;
+
+-- Qué campañas están activas hoy y con cuánto volumen (para elegir cuál graficar)
+select cultivo, cosecha, valor as total_comprado
+from etl_compras_granos_actual
+where metrica = 'total_comprado' and sector = 'total'
+  and date = (select max(date) from etl_compras_granos_actual)
+order by cultivo, cosecha desc;
+
+-- Serie semanal para graficar: DJVE acumulada de trigo, campaña 25/26
+select date, valor
+from etl_compras_granos_actual
+where cultivo = 'trigo' and cosecha = '25/26'
+  and sector = 'exportador' and metrica = 'djve_acum'
+order by date;
+
+-- Ritmo de compra: semana a semana + media móvil de 4 semanas
+select date, valor,
+       round(avg(valor) over (order by date rows between 3 preceding and current row)::numeric, 1) as mm4
+from etl_compras_granos_actual
+where cultivo = 'maiz' and cosecha = '25/26'
+  and sector = 'exportador' and metrica = 'semanal'
+order by date;
+```
+
+**Comparar campañas entre sí** merece su propia nota. No uses `extract(week from date)`: una
+campaña abarca **dos años calendario**, así que una misma semana del año aparece dos veces dentro
+de la misma campaña y te duplica las filas. Alineá cada campaña por **su propia semana**:
+
+```sql
+-- Compras acumuladas de soja en las primeras 6 semanas de cada campaña, comparables
+with base as (
+  select cosecha, date, valor,
+         dense_rank() over (partition by cosecha order by date) as semana_campania
+  from etl_compras_granos_actual
+  where cultivo = 'soja' and sector = 'total' and metrica = 'total_comprado'
+)
+select semana_campania,
+       max(valor) filter (where cosecha = '25/26') as c_25_26,
+       max(valor) filter (where cosecha = '24/25') as c_24_25,
+       max(valor) filter (where cosecha = '23/24') as c_23_24
+from base
+where semana_campania <= 6
+group by 1 order by 1;
+```
+
+### Frescura
+
+```sql
+select max(date) as ultima_semana, current_date - max(date) as dias_desde
+from etl_compras_granos_actual;
+```
+
+La fuente publica con rezago: es normal ver **7 a 14 días** desde la última semana cargada. Para
+saber si el problema es el ETL o la fuente, mirá `etl_control_salud` (sección de más abajo): si el
+ETL corrió `ok` y `ultimo_dato` no se movió, es que MAGyP todavía no publicó.
+
+> Misma regla que en el resto: consumí `etl_compras_granos_actual`, nunca `etl_compras_granos`
+> cruda (es append-only y tiene varias filas por clave).
+
 ## Columnas de las vistas
 
 **`<tabla>_actual` / `series_actual`**
@@ -138,6 +298,11 @@ order by orden;
 > Las series que **no** están en `_desest` (p.ej. `lino`/`algodon`/`cartamo`/`canola` de granos, o
 > las componentes de `demanda_energia`) quedan solo como observadas: X-13 no las ajusta (molienda
 > intermitente, o son insumos de una serie derivada). Ver `etl/series_desest.toml`.
+
+**Los dos datasets fuera de este cuadro** no tienen columna `serie` con la forma de arriba:
+`reservas_pasivos` usa el `cd_serie` del BCRA (ver *Series diarias*) y `compras_granos` se
+identifica por cuatro dimensiones (`cultivo`, `cosecha`, `sector`, `metrica`; ver *Series
+semanales*). Ninguno de los dos se desestacionaliza.
 
 ## ¿El ETL está vivo? (`etl_control_salud`)
 

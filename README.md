@@ -74,6 +74,32 @@ siendo 100% mensual). Ver `INTEGRATION.md`, sección *Series diarias*.
 > 0): usa las reservas totales (`cd 246`, nunca 0 en 30 años) como ancla. Los ceros legítimos de
 > las demás series (p.ej. un monto de vencimiento sin vencimiento ese día) se conservan.
 
+### Series semanales (MAGyP)
+
+Tercer carril: **semanal**. Hoy tiene un solo dataset.
+
+| Comando | Tabla | Vista | Fuente |
+|---|---|---|---|
+| `compras_granos` | `etl_compras_granos` | `etl_compras_granos_actual` | **HTML MAGyP**, una página por semana |
+
+`compras_granos` trae el informe semanal de **compras de granos y DJVE**: por cultivo (trigo, maíz,
+sorgo, cebada cervecera, cebada forrajera, soja, girasol), campaña, **sector** (exportador /
+industria / total) y métrica (semanal, total comprado, precio hecho, a fijar, fijado, saldo a
+fijar, DJVE acumulada). En **miles de toneladas**, desde **marzo de 2005**. `date` es la fecha de
+corte del informe (miércoles), **no** el primer día del mes, y **no se desestacionaliza**: mezcla
+flujo semanal con acumulados de campaña. Por eso no entra en `series_actual`.
+
+La fuente **no publica ningún archivo descargable**: el histórico son ~1.100 páginas HTML, una por
+semana, y se navega índice de años → índice de semanas → página semanal. Los links semanales van
+por `javascript:window.open(...)`, así que se extraen del HTML crudo. Se scrapea el índice en vez
+de generar los miércoles: la fuente saltea semanas y algún link apunta a una página inexistente.
+
+> El HTML cambió de formato **dos veces** (2005-2016, 2017-2018, 2019→) y `source.py` tiene un
+> parser por familia. Los tres difieren en qué métricas publican: antes de 2017 no hay DJVE (sí
+> "embarque estimado acumulado", que es otro concepto) y en los primeros años hay ventas
+> potenciales/efectivas. Por eso la tabla es **long por métrica**: cada formato emite su
+> subconjunto sin columnas fantasma ni `ALTER TABLE` en el próximo cambio de la fuente.
+
 **Qué series se desestacionalizan y con qué parámetros lo define el cuadro central
 `etl/series_desest.toml`** (ver la sección *Desestacionalización*): granos **4** series
 (`total`, `soja`, `girasol`, `mani`), automotriz las 3 (`produccion`, `ventas`,
@@ -196,6 +222,12 @@ y el 10; demanda_energia (CAMMESA) publica con ~1 mes de rezago y **sin fecha pr
 0  11 20-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh bovinos
 0  12 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh demanda_energia
 0  19 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh reservas_pasivos
+# Semanal (compras y DJVE de granos). Corre todos los dias habiles porque TODAVIA NO SABEMOS
+# el dia real de publicacion: la pagina dice "se actualiza los miercoles" pero no esta verificado.
+# Es idempotente y barato (baja ~4 paginas y re-lee las ultimas 3 semanas, con lo que ademas
+# capta las revisiones), asi que correr de mas no cuesta nada. Cuando se confirme el dia, acotar
+# la ventana y bajar `horas_max` en etl/schema_control.sql en el mismo cambio.
+0  10 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh compras_granos
 ```
 > Los jobs pasan por **`scripts/run_etl.sh`**, que hace el `cd` al repo, escribe
 > `/home/jmt/data/etls/<dataset>.log` y —sólo si la corrida falla— repite el final por stderr
@@ -236,7 +268,7 @@ Para consumir desde una app, dos vistas:
 | Vista | Para qué |
 |---|---|
 | `etl_control_ultima` | última corrida de cada dataset que alguna vez corrió |
-| **`etl_control_salud`** | los 10 datasets **siempre**, con un `estado` único |
+| **`etl_control_salud`** | los 11 datasets **siempre**, con un `estado` único |
 
 ```sql
 -- Chequeo rápido: si esto vuelve vacío, está todo bien.

@@ -37,7 +37,7 @@ y la fuente falló; en el segundo el proceso directamente no se ejecutó.
 
 | Columna | Significado |
 |---|---|
-| `dataset` | Nombre del ETL. Aparecen los 10 siempre, hayan corrido o no. |
+| `dataset` | Nombre del ETL. Aparecen los 11 siempre, hayan corrido o no. |
 | `estado` | El resumen: `ok`, `FALLA`, `SIN_CORRER` o `NUNCA_CORRIO`. |
 | `estado_ultima_corrida` | Resultado de la última ejecución: `ok` o `falla`. Vacío si nunca corrió. |
 | `ultima_corrida` | Fecha y hora en que terminó la última ejecución. |
@@ -55,6 +55,7 @@ Cada ETL corre en la ventana del mes en que su fuente publica, no todos los día
 |---|---|---|
 | `demanda_energia` | todos los días | 26 h (~1 día) |
 | `reservas_pasivos` | lunes a viernes | 80 h (cubre el fin de semana) |
+| `compras_granos` | lunes a viernes | 80 h (cubre el fin de semana) |
 | `leche` | días 20 al 10 del mes siguiente | 260 h (~11 días) |
 | `granos` | días 18 al 31 | 450 h (~19 días) |
 | `acero`, `aves`, `bovinos` | ventanas de fin de mes | 500 h (~21 días) |
