@@ -206,8 +206,8 @@ Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`.
 
 **Cron en el servidor** (idempotente: corre todos los días de la ventana hasta que la fuente
 publica; cuando el dato ya está, es un no-op barato). Publican: cemento, automotriz y
-patentamientos (SIOMAA) entre el 1 y el 10; granos cerca del 20; acero (CAA) entre el 25 y
-el 5 del mes siguiente; aves y bovinos (MAGyP) entre el 20 y el 31; leche (MAGyP) entre el 20
+patentamientos (SIOMAA) entre el 1 y el 10; granos cerca del 20; acero (CAA) **sin día
+confirmado** (ver nota abajo); aves y bovinos (MAGyP) entre el 20 y el 31; leche (MAGyP) entre el 20
 y el 10; demanda_energia (CAMMESA) publica con ~1 mes de rezago y **sin fecha previsible**
 (actualiza el mismo archivo, `wpdmdl` fijo), así que corre todos los días.
 ```cron
@@ -216,7 +216,12 @@ y el 10; demanda_energia (CAMMESA) publica con ~1 mes de rezago y **sin fecha pr
 10 12 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh automotriz
 0  12 18-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh granos
 0  13 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh patentamientos
-0  10 25-31,1-5 * * /home/jmt/dev/downloader/scripts/run_etl.sh acero
+# acero: ventana ancha a proposito. NO sabemos el dia real de publicacion de la CAA: la unica
+# publicacion observada es junio/2026, que aparecio el 31-jul (al 4-jul lo ultimo publicado era
+# mayo). Con un solo dato no se puede acotar, y la corrida es un no-op de segundos. Cuando haya
+# 2-3 fechas observadas, cerrar la ventana y bajar `horas_max` en etl/schema_control.sql en el
+# mismo cambio.
+0  10 15-31,1-10 * * /home/jmt/dev/downloader/scripts/run_etl.sh acero
 0  11 20-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh aves
 0  14 20-31,1-10 * * /home/jmt/dev/downloader/scripts/run_etl.sh leche
 0  11 20-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh bovinos

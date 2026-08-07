@@ -56,9 +56,10 @@ Cada ETL corre en la ventana del mes en que su fuente publica, no todos los día
 | `demanda_energia` | todos los días | 26 h (~1 día) |
 | `reservas_pasivos` | lunes a viernes | 80 h (cubre el fin de semana) |
 | `compras_granos` | lunes a viernes | 80 h (cubre el fin de semana) |
+| `acero` | días 15 al 10 del mes siguiente | 130 h (~5 días) |
 | `leche` | días 20 al 10 del mes siguiente | 260 h (~11 días) |
 | `granos` | días 18 al 31 | 450 h (~19 días) |
-| `acero`, `aves`, `bovinos` | ventanas de fin de mes | 500 h (~21 días) |
+| `aves`, `bovinos` | ventanas de fin de mes | 500 h (~21 días) |
 | `cemento`, `automotriz`, `patentamientos` | días 1 al 10 | 530 h (~22 días) |
 
 Es decir: que `cemento` lleve 20 días sin correr es normal, porque su ventana es del 1 al 10.

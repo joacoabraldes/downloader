@@ -69,7 +69,7 @@ with esperado(dataset, horas_max) as (values
     ('cemento',         530),   -- cron 1-10   -> hueco max ~22 dias
     ('automotriz',      530),   -- cron 1-10
     ('patentamientos',  530),   -- cron 1-10
-    ('acero',           500),   -- cron 25-31,1-5 -> hueco max ~20 dias
+    ('acero',           130),   -- cron 15-31,1-10 -> hueco max 5 dias (del 10 al 15)
     ('granos',          450),   -- cron 18-31  -> hueco max ~18 dias
     ('aves',            500),   -- cron 20-31  -> hueco max ~20 dias
     ('bovinos',         500),   -- cron 20-31
