@@ -29,6 +29,7 @@ filas por `(serie, mes)`. Para consumir hay **dos vistas por dataset** que ya re
 | `demanda_energia` | `etl_demanda_energia` | `etl_demanda_energia_actual` | `etl_demanda_energia_desest` |
 | `icc` | `etl_icc` | `etl_icc_actual` | `etl_icc_desest` (vacía: no se desestacionaliza) |
 | `icg` | `etl_icg` | `etl_icg_actual` | `etl_icg_desest` (vacía: no se desestacionaliza) |
+| `datos_gob` | `etl_datos_gob` + dimensión `etl_datos_gob_series` | `etl_datos_gob_actual` (+ `_real` y `_completo`) | `etl_datos_gob_desest` (sólo las 2 de ventas) |
 | `compras_granos` | `etl_compras_granos` | `etl_compras_granos_actual` | — (semanal, no se desestacionaliza) |
 
 > Todas las tablas llevan prefijo **`etl_`**. El nombre de la tabla no siempre deriva directo
@@ -42,8 +43,8 @@ Unen todos los datasets en una sola forma, agregando una columna `dataset`:
 
 | Vista | Contenido |
 |---|---|
-| `series_actual` | serie **observada** de los 11 datasets mensuales (`dataset, serie, date, valor, estado, fuente, ingested_at`) |
-| `series_desest` | serie **desestacionalizada** (`dataset, serie, date, valor, fuente, ingested_at, parametros`). `icc` e `icg` no aportan filas: se publican sin ajuste estacional |
+| `series_actual` | serie **observada** de los 12 datasets mensuales (`dataset, serie, date, valor, estado, fuente, ingested_at`) |
+| `series_desest` | serie **desestacionalizada** (`dataset, serie, date, valor, fuente, ingested_at, parametros`). `icc` e `icg` no aportan filas: se publican sin ajuste estacional. De `datos_gob` sólo se ajustan las dos series de ventas |
 
 ```sql
 -- Ejemplo: última demanda no residencial desestacionalizada
@@ -298,6 +299,7 @@ ETL corrió `ok` y `ultimo_dato` no se movió, es que MAGyP todavía no publicó
 | `demanda_energia` | `estacionalizada`, `residencial`, `no_res_estacionalizada`, `no_estacionalizada`, `gudi`, `gume`, `guma`, `mate_distribuidor`, `local`, `no_residencial` | `no_residencial` |
 | `icc` | `nacional`, `capital`, `gba`, `interior`, `situacion_personal`, `situacion_macro`, `bienes_durables` | *(ninguna)* |
 | `icg` | `icg` | *(ninguna)* |
+| `datos_gob` | las 14: `isac`, `ipi_manufacturero`, `ipc_nacional`, `expo_total`, `impo_total`, `ventas_supermercados`, `ventas_centros_compras`, `ripte`, `smvm`, `indice_salarios_total`, `indice_salarios_registrado`, `indice_salarios_priv_registrado`, `indice_salarios_publico`, `indice_salarios_priv_no_registrado` | `ventas_supermercados`, `ventas_centros_compras` *(sobre la serie real)* |
 
 > Las series que **no** están en `_desest` (p.ej. `lino`/`algodon`/`cartamo`/`canola` de granos, o
 > las componentes de `demanda_energia`) quedan solo como observadas: X-13 no las ajusta (molienda
@@ -327,7 +329,7 @@ select * from etl_control_salud where estado <> 'ok';
 
 | Columna | Significado |
 |---|---|
-| `dataset` | los 13, hayan corrido o no |
+| `dataset` | los 14, hayan corrido o no |
 | `estado` | `ok` · `FALLA` · `SIN_CORRER` · `NUNCA_CORRIO` |
 | `estado_ultima_corrida` | `ok` / `falla` de la última ejecución |
 | `ultima_corrida` · `horas_desde` | cuándo terminó y hace cuánto |
@@ -384,3 +386,97 @@ nunca las tablas `etl_icc` / `etl_icg`: son append-only y guardan un snapshot po
 > 305. Un `join` por `date` sin cuidado se come el tramo 1998-2001.
 
 
+## `datos_gob` (API oficial del Estado) — cómo consumirlo
+
+14 series de `apis.datos.gob.ar/series` (INDEC y Secretaría de Trabajo). Es el único dataset
+mensual con **star-schema**, porque sus series **no comparten unidad**: conviven índices,
+dólares y pesos. La vista trae el nombre y la unidad ya unidos.
+
+### La vista que probablemente querés
+
+`etl_datos_gob_completo` da **los tres valores en una sola fila**:
+
+```sql
+select serie, nombre, unidad, date, valor_nominal, valor_real, valor_desest
+from etl_datos_gob_completo
+where serie = 'ventas_supermercados' order by date;
+```
+
+| Columna | Qué es | Cuándo es NULL |
+|---|---|---|
+| `valor_nominal` | Tal como lo publica el organismo | nunca |
+| `valor_real` | A **precios de junio-2026** | si la serie no es deflactable, o el mes no tiene IPC |
+| `valor_desest` | X-13 sobre la serie **real** | si esa serie no se desestacionaliza |
+
+Cada una tiene además su vista suelta: `etl_datos_gob_actual` (nominal),
+`etl_datos_gob_real`, `etl_datos_gob_desest`.
+
+### Las 14 series
+
+| `serie` | Unidad | Desde | ¿real? | ¿desest? |
+|---|---|---|---|---|
+| `isac` | índice 2004=100 | 2012-01 | — | — |
+| `ipi_manufacturero` | índice 2004=100 | 2016-01 | — | — |
+| `ipc_nacional` | índice dic-2016=100 | 2016-12 | — | — |
+| `expo_total` | USD millones | 1992-01 | — | — |
+| `impo_total` | USD millones | 1992-01 | — | — |
+| `ventas_supermercados` | **miles** de pesos | 2017-01 | sí | **sí** |
+| `ventas_centros_compras` | pesos | 2017-01 | sí | **sí** |
+| `ripte` | pesos corrientes | 1994-07 | sí | — |
+| `smvm` | pesos corrientes | 1965-01 | sí | — |
+| `indice_salarios_total` | índice oct-2016=100 | 2016-10 | sí | — |
+| `indice_salarios_registrado` | índice oct-2016=100 | 2015-10 | sí | — |
+| `indice_salarios_priv_registrado` | índice oct-2016=100 | 2015-10 | sí | — |
+| `indice_salarios_publico` | índice oct-2016=100 | 2015-10 | sí | — |
+| `indice_salarios_priv_no_registrado` | índice oct-2016=100 | 2016-10 | sí | — |
+
+### Cuatro cosas que hay que saber
+
+**1. `ventas_supermercados` está en MILES de pesos y `ventas_centros_compras` en pesos.** Es así
+en la fuente y se guarda como la fuente lo publica. Compararlas sin normalizar da un error de
+1000x. Por eso la vista trae `unidad`:
+
+```sql
+select date,
+       max(valor_real) filter (where serie = 'ventas_supermercados')   / 1e3 as super_mm,
+       max(valor_real) filter (where serie = 'ventas_centros_compras') / 1e6 as shopping_mm
+from etl_datos_gob_completo
+where serie in ('ventas_supermercados','ventas_centros_compras')
+group by date order by date;
+```
+
+**2. La serie real empieza en 2016-12, no antes.** El deflactor es `ipc_nacional`, que arranca
+ahí. `smvm` tiene datos desde 1965 y `ripte` desde 1994, pero su `valor_real` es NULL antes de
+2016-12. Empalmar un IPC más largo es una decisión metodológica que no se tomó.
+
+**3. El mes base es fijo (junio-2026), no "pesos de hoy".** Con un base móvil, toda la serie
+real se recalcularía cada mes y los valores dejarían de ser reproducibles. En el mes base,
+`valor_real = valor_nominal` exactamente. Para cambiarlo se edita la vista `etl_datos_gob_real`.
+
+**4. El desestacionalizado se calcula sobre la serie REAL, no sobre la nominal.** Bajo inflación
+argentina la estacionalidad de una serie en pesos corrientes queda tapada por la deriva de
+precios. El factor estacional que sale para supermercados es el esperable:
+
+| mes | 01 | 02 | 03 | ... | 09 | ... | 12 |
+|---|---|---|---|---|---|---|---|
+| factor | 0,99 | 0,94 | 1,01 | | 0,93 | | **1,22** |
+
+> **Sin referencia de calibración.** A diferencia de `acero` o `cemento`, INDEC no publica una
+> versión desestacionalizada de estas series contra la cual verificar que reproducimos su
+> número. Los parámetros de X-13 (`mult` + `td` + `s3x5`) son los razonables para ventas
+> minoristas, no los que reproducen un resultado oficial.
+
+### Salario real
+
+`ripte` y `smvm` son montos en pesos corrientes; los `indice_salarios_*` son índices nominales.
+Los nueve deflactables ya vienen resueltos en `valor_real`, así que el salario real sale directo:
+
+```sql
+select date, valor_nominal, valor_real
+from etl_datos_gob_completo where serie = 'ripte' and valor_real is not null
+order by date desc limit 12;
+```
+
+> Sumar una serie nueva **no requiere escribir código**: se agrega su id a `SERIES_META` en
+> `etl/datasets/datos_gob/config.py` (con su flag `deflactable`) y la dimensión se re-sincroniza
+> sola en la próxima corrida. Las trampas de la API están en `docs/datos_gob_ar.md`.

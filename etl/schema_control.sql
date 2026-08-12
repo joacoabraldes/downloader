@@ -57,7 +57,7 @@ from etl_control_ejecucion
 where comando <> 'load-history'   -- carga manual one-off, no es señal de que el cron viva
 order by dataset, inicio desc;
 
--- LA vista para la app: los 13 datasets SIEMPRE, hayan corrido o no.
+-- LA vista para la app: los 14 datasets SIEMPRE, hayan corrido o no.
 --
 --   select * from etl_control_salud where estado <> 'ok';
 --
@@ -79,6 +79,8 @@ with esperado(dataset, horas_max) as (values
                                 --   la VM esta apagada el finde (con 26 h daba SIN_CORRER los lunes)
     ('icc',             470),   -- cron 17-31 -> hueco max ~17 dias (del 31 al 17) + finde
     ('icg',             580),   -- cron 22-31 -> hueco max ~22 dias (del 31 al 22) + finde
+    ('datos_gob',        80),   -- cron diario: son 9 series de organismos distintos, cada una
+                                --   con su propio calendario. Hueco max viernes a lunes ~72 h.
     ('reservas_pasivos', 80),   -- cron L-V -> fin de semana ~71 h
     ('compras_granos',   80)    -- cron L-V -> fin de semana ~71 h (ver nota de la ventana abajo)
 )

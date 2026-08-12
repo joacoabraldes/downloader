@@ -144,3 +144,28 @@ start = 2022-12-01
 # un bloque [icc] / [icg] con table/desest/mode/td/seasonalma. Las tablas y las vistas
 # etl_icc_desest / etl_icg_desest ya existen y hoy devuelven 0 filas.
 
+# datos_gob: se desestacionalizan SOLO las dos series de ventas, y sobre su serie REAL.
+#
+# Por qué sólo esas dos: los índices de INDEC (isac, ipi, índices de salarios) ya vienen
+# ajustados de origen o son índices de precios; correrles X-13 encima sería ajustar dos veces.
+# expo/impo están en dólares y quedan fuera de este pedido.
+#
+# Por qué sobre la REAL y no sobre la nominal: bajo inflación argentina la estacionalidad de una
+# serie en pesos corrientes queda tapada por la deriva de precios, así que desestacionalizar el
+# nominal no dice nada útil. De ahí el `view` de abajo, que apunta a la serie deflactada.
+[datos_gob]
+table = "etl_datos_gob"
+view = "etl_datos_gob_real"      # insumo: la serie deflactada, NO la nominal
+desest = ["ventas_supermercados", "ventas_centros_compras"]
+# mult: son ventas, estrictamente positivas y con estacionalidad proporcional al nivel (el pico
+# de diciembre escala con la serie). Además el modo multiplicativo es invariante a la escala, así
+# que cambiar el mes base del deflactor no altera la descomposición: sólo reescala el d11.
+mode = "mult"
+# td (6 coef): en comercio minorista la composición del calendario del mes pesa (cuántos sábados
+# y domingos caen), más que en una serie de producción.
+td = "td"
+seasonalma = "s3x5"
+# SIN REFERENCIA DE CALIBRACIÓN: a diferencia de acero/leche/cemento, INDEC no publica una versión
+# desestacionalizada de estas dos series contra la cual verificar que reproducimos su número. Los
+# parámetros de arriba son los razonables para una serie de ventas minoristas, no los que
+# reproducen un resultado oficial. Si algún día aparece esa referencia, recalibrar.

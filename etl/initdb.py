@@ -16,7 +16,7 @@ DAILY_SCHEMA = Path(__file__).parent / "schema_daily.sql"
 CONTROL_SCHEMA = Path(__file__).parent / "schema_control.sql"
 # Datasets mensuales: gatean las vistas unificadas series_actual / series_desest.
 MONTHLY = ["granos", "cemento", "automotriz", "patentamientos", "acero", "aves", "leche",
-           "bovinos", "demanda_energia", "icc", "icg"]
+           "bovinos", "demanda_energia", "icc", "icg", "datos_gob"]
 # Datasets diarios: gatean la vista unificada series_diarias_actual (carril separado).
 DAILY = ["reservas_pasivos"]
 # Datasets semanales: sin vista unificada propia (por ahora es uno solo y su grano no es

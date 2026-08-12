@@ -1,4 +1,4 @@
-# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia · icc · icg)
+# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia · icc · icg · datos_gob)
 
 Monorepo de ETLs de series mensuales argentinas. Un **núcleo compartido** + un paquete por
 serie, todo detrás de un solo CLI (`python -m etl ...`). Modelo de datos **append-only**
@@ -20,6 +20,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `demanda_energia` | `etl_demanda_energia` | `energia.xlsx` (2005→) | **xlsx CAMMESA** (URL fija) |
 | `icc` | `etl_icc` | — (la planilla trae 1998→) | **.xls UTDT** (link resuelto por scrape) |
 | `icg` | `etl_icg` | — (la planilla trae 2001→) | **.xls UTDT** (link resuelto por scrape) |
+| `datos_gob` | `etl_datos_gob` | — (la API trae 1965→) | **API oficial** `apis.datos.gob.ar/series` |
 
 Las tablas están en formato **long** (una fila por `serie, date, estado`). Series por
 dataset:
@@ -64,10 +65,26 @@ dataset:
 - **icg**: Índice de Confianza en el Gobierno (UTDT), escala 0-5. Una serie (`icg`), continua
   desde 2001-11. La planilla está **traspuesta** (meses en columnas) y partida en dos hojas
   (2001-2022 y 2023→) que empalman sin solaparse.
+- **datos_gob**: 14 series de la **API oficial de Series de Tiempo del Estado**
+  (`apis.datos.gob.ar/series`): `isac` (construcción), `ipi_manufacturero`, `ipc_nacional`,
+  `expo_total` / `impo_total` (comercio exterior en USD), `ventas_supermercados`,
+  `ventas_centros_compras`, `ripte`, `smvm` y las 5 aperturas del **índice de salarios** de INDEC
+  (`total`, `registrado`, `priv_registrado`, `publico`, `priv_no_registrado`). Es el único
+  dataset **star-schema mensual**: sus series no comparten unidad (conviven índices, dólares y
+  pesos), así que el nombre y la unidad viven en `etl_datos_gob_series`.
+  Las 9 series en pesos corrientes tienen además **valor real** (a precios de junio-2026,
+  deflactadas por `ipc_nacional`) en la vista `etl_datos_gob_real`, y las 2 de ventas se
+  **desestacionalizan sobre esa serie real**. `etl_datos_gob_completo` devuelve los tres valores
+  —nominal, real y desestacionalizado— en una sola fila.
 
 > Los dos índices de UTDT son la excepción del repo en dos cosas. **(1)** Se publican *dentro*
 > del mes de referencia, no al mes siguiente. **(2)** No se desestacionalizan: UTDT los publica
 > crudos, así que no hay referencia contra la cual calibrar X-13 (ver `etl/series_desest.toml`).
+
+> **datos_gob es el único ETL que no scrapea nada.** Es una API, así que sumar una serie es
+> agregar una fila a `SERIES_META` en su `config.py` — no se escribe código. La evaluación de la
+> fuente, incluido **por qué NO reemplaza a ninguno de los otros scrapers**, está en
+> `docs/datos_gob_ar.md`.
 
 ### Series diarias (BCRA)
 
@@ -221,7 +238,8 @@ Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`.
 > `estado='definitivo'` (no `provisorio`); el histórico del backfill va con `NULL`.
 
 **Cron en el servidor** (idempotente: corre todos los días de la ventana hasta que la fuente
-publica; cuando el dato ya está, es un no-op barato). Publican: cemento y patentamientos (SIOMAA) entre el 1 y el 10; granos cerca del 20; acero (CAA) **sin día
+publica; cuando el dato ya está, es un no-op barato). Publican: cemento y patentamientos
+(SIOMAA) entre el 1 y el 10; granos cerca del 20; acero (CAA) **sin día
 confirmado** (ver nota abajo); aves y bovinos (MAGyP) entre el 20 y el 31; leche (MAGyP) entre el 20
 y el 10; demanda_energia (CAMMESA) publica con ~1 mes de rezago y **sin fecha previsible**
 (actualiza el mismo archivo, `wpdmdl` fijo), así que corre todos los días. **automotriz** está en
@@ -253,6 +271,9 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # de mes; la corrida es idempotente y repite hasta que la planilla trae el mes nuevo.
 30 13 17-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh icc
 0  19 22-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh icg
+# datos_gob: 9 series de organismos distintos, cada uno con su calendario. Sin ventana; la
+# corrida son 9 requests a una API y es idempotente.
+45 15 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh datos_gob
 # reservas_pasivos: dos pasadas por dia habil. La corrida es idempotente, asi que la segunda
 # no cuesta nada y cubre el caso de que el BCRA todavia no hubiera publicado a las 19:15.
 15 19 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh reservas_pasivos
@@ -303,7 +324,7 @@ Para consumir desde una app, dos vistas:
 | Vista | Para qué |
 |---|---|
 | `etl_control_ultima` | última corrida de cada dataset que alguna vez corrió |
-| **`etl_control_salud`** | los 13 datasets **siempre**, con un `estado` único |
+| **`etl_control_salud`** | los 14 datasets **siempre**, con un `estado` único |
 
 ```sql
 -- Chequeo rápido: si esto vuelve vacío, está todo bien.
@@ -344,7 +365,7 @@ solo si el valor es nuevo o cambió respecto del último de ese `(clave, estado)
 
 Y dos vistas que **homogeneízan el consumo** de todos los datasets en una sola forma (agregan
 una columna `dataset`):
-- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves + leche + bovinos + demanda_energia + icc + icg.
+- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves + leche + bovinos + demanda_energia + icc + icg + datos_gob.
 - `series_desest`: serie desestacionalizada de los nueve.
 
 Y para el **carril diario** (BCRA), una vista aparte que NO se mezcla con las mensuales:

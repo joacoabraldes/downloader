@@ -39,7 +39,12 @@ create or replace view series_actual as
     from etl_icc_actual
   union all
   select 'icg'::text as dataset, serie, date, valor, estado, fuente, ingested_at
-    from etl_icg_actual;
+    from etl_icg_actual
+  union all
+  -- datos_gob mezcla unidades entre sus series (indices, USD, pesos). El nombre y la unidad de
+  -- cada una salen de etl_datos_gob_actual, que ya trae la dimension.
+  select 'datos_gob'::text as dataset, serie, date, valor, estado, fuente, ingested_at
+    from etl_datos_gob_actual;
 
 -- Serie desestacionalizada (X-13) de todos los datasets, un valor por serie/mes.
 -- `parametros` (jsonb) trae lo que se usó en la corrida X-13 (modo mult/add, metodo, etc.).
@@ -71,10 +76,14 @@ create or replace view series_desest as
   select 'demanda_energia'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
     from etl_demanda_energia_desest
   union all
-  -- icc / icg no se desestacionalizan hoy: estas dos ramas devuelven 0 filas. Se dejan para
-  -- que sumar X-13 más adelante sea sólo agregar el bloque en etl/series_desest.toml.
+  -- icc / icg no se desestacionalizan: estas dos ramas devuelven 0 filas. Se dejan para que
+  -- sumar X-13 más adelante sea sólo agregar el bloque en etl/series_desest.toml.
+  -- datos_gob SÍ aporta: las dos series de ventas, ajustadas sobre su serie real.
   select 'icc'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
     from etl_icc_desest
   union all
   select 'icg'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
-    from etl_icg_desest;
+    from etl_icg_desest
+  union all
+  select 'datos_gob'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
+    from etl_datos_gob_desest;
