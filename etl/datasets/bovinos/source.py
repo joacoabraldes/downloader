@@ -27,6 +27,11 @@ PAGE = "https://www.magyp.gob.ar/sitio/areas/bovinos/informacion_sectorial/"
 HEADERS = {"User-Agent": "Mozilla/5.0 (bovinos ETL)"}
 TIMEOUT = 90
 
+# Carpeta donde MAGyP publica el xls de faena. Hace falta porque el hipervínculo del PDF pasó a
+# ser RELATIVO (ago-2026): trae sólo "Faena_Bovina_2019-2026_mensual.xls", y resolverlo contra la
+# URL del propio PDF da 404 — el PDF vive bajo /bovinos/ y el xls bajo /ss_ganaderia/.
+ARCHIVO_BASE = "http://www.magyp.gob.ar/sitio/areas/ss_ganaderia/archivos/"
+
 
 def _find_tablero_pdf() -> str:
     """URL del PDF 'Tablero de Faena Bovina' (linkeado en la página de info sectorial)."""
@@ -40,8 +45,8 @@ def _find_tablero_pdf() -> str:
     raise RuntimeError("no se encontró el link al Tablero de Faena Bovina en la página")
 
 
-def _find_xls_url(pdf_bytes: bytes) -> str:
-    """URL del xls de faena, extraída del hipervínculo embebido en el Tablero PDF."""
+def _find_xls_uri(pdf_bytes: bytes) -> str:
+    """Hipervínculo al xls embebido en el Tablero PDF, TAL CUAL viene (absoluto o relativo)."""
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page in pdf.pages:
             for h in (page.hyperlinks or []):
@@ -49,6 +54,32 @@ def _find_xls_url(pdf_bytes: bytes) -> str:
                 if "faena_bovina" in uri.lower() and ".xls" in uri.lower():
                     return uri
     raise RuntimeError("el Tablero PDF no tiene el hipervínculo al xls de faena")
+
+
+def _resolver_xls(uri: str, pdf_url: str) -> str:
+    """URL absoluta y viva del xls a partir del hipervínculo del PDF.
+
+    El link venía absoluto y en ago-2026 pasó a ser relativo, lo que rompía la descarga. Y
+    resolverlo contra la URL del PDF no alcanza: el PDF está bajo /bovinos/ y el xls bajo
+    /ss_ganaderia/archivos/, así que ese urljoin da 404. Por eso se prueban los candidatos por
+    orden de plausibilidad y se devuelve el primero que responde, en vez de asumir una forma.
+    """
+    candidatos = []
+    if uri.lower().startswith(("http://", "https://")):
+        candidatos.append(uri)
+    else:
+        candidatos.append(requests.compat.urljoin(pdf_url, uri))
+        candidatos.append(ARCHIVO_BASE + uri.lstrip("/"))
+    for url in candidatos:
+        try:
+            r = requests.head(url, headers=HEADERS, timeout=TIMEOUT, verify=False,
+                              allow_redirects=True)
+        except requests.RequestException:
+            continue
+        if r.status_code == 200:
+            return url
+    raise RuntimeError(
+        f"el hipervínculo del PDF ({uri!r}) no resolvió a ninguna URL viva. Probados: {candidatos}")
 
 
 def download(url: str) -> bytes:
@@ -118,7 +149,8 @@ def parse_produccion(blob: bytes) -> dict[dt.date, float]:
 
 def get_latest() -> tuple[dict[dt.date, float], str] | None:
     """({date: produccion}, url_xls) siguiendo la cadena página → PDF → xls, o None."""
-    xls_url = _find_xls_url(download(_find_tablero_pdf()))
+    pdf_url = _find_tablero_pdf()
+    xls_url = _resolver_xls(_find_xls_uri(download(pdf_url)), pdf_url)
     data = parse_produccion(download(xls_url))
     return (data, xls_url) if data else None
 

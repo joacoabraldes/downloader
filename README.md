@@ -240,7 +240,7 @@ Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`.
 **Cron en el servidor** (idempotente: corre todos los días de la ventana hasta que la fuente
 publica; cuando el dato ya está, es un no-op barato). Publican: cemento y patentamientos
 (SIOMAA) entre el 1 y el 10; granos cerca del 20; acero (CAA) **sin día
-confirmado** (ver nota abajo); aves y bovinos (MAGyP) entre el 20 y el 31; leche (MAGyP) entre el 20
+confirmado** (ver nota abajo); aves (MAGyP) entre el 20 y el 31; leche (MAGyP) entre el 20
 y el 10; demanda_energia (CAMMESA) publica con ~1 mes de rezago y **sin fecha previsible**
 (actualiza el mismo archivo, `wpdmdl` fijo), así que corre todos los días. **automotriz** está en
 el mismo caso: ADEFA no tiene fecha de publicación previsible y julio-2026 salió después del día
@@ -264,7 +264,9 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 0  10 15-31,1-10 * * /home/jmt/dev/downloader/scripts/run_etl.sh acero
 0  11 20-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh aves
 0  14 20-31,1-10 * * /home/jmt/dev/downloader/scripts/run_etl.sh leche
-0  11 20-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh bovinos
+# bovinos: sin ventana. MAGyP movio la fecha de publicacion (junio salio el 20-jul y julio el
+# 7-ago), con lo que la ventana 20-31 lo perdia.
+0  11 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh bovinos
 0  12 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh demanda_energia
 # UTDT publica DENTRO del mes de referencia, con cronograma anual: ICC un jueves (dia 17 al 24),
 # ICG un lunes (dia 22 al 28). Las ventanas arrancan antes del primer dia posible y llegan a fin

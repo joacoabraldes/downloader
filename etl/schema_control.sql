@@ -73,7 +73,8 @@ with esperado(dataset, horas_max) as (values
     ('acero',           130),   -- cron 15-31,1-10 -> hueco max 5 dias (del 10 al 15)
     ('granos',          450),   -- cron 18-31  -> hueco max ~18 dias
     ('aves',            500),   -- cron 20-31  -> hueco max ~20 dias
-    ('bovinos',         500),   -- cron 20-31
+    ('bovinos',          80),   -- cron diario: MAGyP movio la fecha (jun salio el 20-jul y
+                                --   jul el 7-ago), la ventana 20-31 lo perdia. ~72 h por el finde
     ('leche',           260),   -- cron 20-31,1-10 -> hueco max ~10 dias
     ('demanda_energia',  80),   -- cron diario -> hueco max viernes 12:00 a lunes 12:00 ~72 h:
                                 --   la VM esta apagada el finde (con 26 h daba SIN_CORRER los lunes)
