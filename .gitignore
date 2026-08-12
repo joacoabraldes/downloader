@@ -19,8 +19,13 @@ venv/
 *.webp
 *.heic
 
-# Notas y docs sueltos (markdown), salvo los docs versionados (README, INTEGRATION, help_etl)
+# Notas y docs sueltos (markdown), salvo los docs versionados (README, INTEGRATION, help_etl),
+# todo lo que viva bajo docs/ (documentacion deliberada) y las skills de .claude/, que SON
+# markdown: sin esta excepcion `git add .claude/` saltea el SKILL.md en silencio y deja una
+# skill rota en el repo.
 *.md
 !README.md
 !INTEGRATION.md
 !help_etl.md
+!docs/*.md
+!.claude/skills/**/*.md
