@@ -67,14 +67,16 @@ order by dataset, inicio desc;
 create or replace view etl_control_salud as
 with esperado(dataset, horas_max) as (values
     ('cemento',         530),   -- cron 1-10   -> hueco max ~22 dias
-    ('automotriz',      530),   -- cron 1-10
+    ('automotriz',       80),   -- cron diario (ADEFA no tiene fecha previsible) -> hueco max
+                                --   viernes 12:10 a lunes 12:10 ~72 h: la VM esta apagada el finde
     ('patentamientos',  530),   -- cron 1-10
     ('acero',           130),   -- cron 15-31,1-10 -> hueco max 5 dias (del 10 al 15)
     ('granos',          450),   -- cron 18-31  -> hueco max ~18 dias
     ('aves',            500),   -- cron 20-31  -> hueco max ~20 dias
     ('bovinos',         500),   -- cron 20-31
     ('leche',           260),   -- cron 20-31,1-10 -> hueco max ~10 dias
-    ('demanda_energia',  26),   -- cron diario
+    ('demanda_energia',  80),   -- cron diario -> hueco max viernes 12:00 a lunes 12:00 ~72 h:
+                                --   la VM esta apagada el finde (con 26 h daba SIN_CORRER los lunes)
     ('icc',             470),   -- cron 17-31 -> hueco max ~17 dias (del 31 al 17) + finde
     ('icg',             580),   -- cron 22-31 -> hueco max ~22 dias (del 31 al 22) + finde
     ('reservas_pasivos', 80),   -- cron L-V -> fin de semana ~71 h

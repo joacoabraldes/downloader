@@ -53,7 +53,7 @@ Cada ETL corre en la ventana del mes en que su fuente publica, no todos los día
 
 | Dataset | Corre | `horas_max` |
 |---|---|---|
-| `demanda_energia` | todos los días | 26 h (~1 día) |
+| `demanda_energia`, `automotriz` | todos los días | 80 h (cubre el fin de semana) |
 | `reservas_pasivos` | lunes a viernes | 80 h (cubre el fin de semana) |
 | `compras_granos` | lunes a viernes | 80 h (cubre el fin de semana) |
 | `acero` | días 15 al 10 del mes siguiente | 130 h (~5 días) |
@@ -61,11 +61,21 @@ Cada ETL corre en la ventana del mes en que su fuente publica, no todos los día
 | `granos` | días 18 al 31 | 450 h (~19 días) |
 | `icc` | días 17 al 31 | 470 h (~20 días) |
 | `aves`, `bovinos` | ventanas de fin de mes | 500 h (~21 días) |
-| `cemento`, `automotriz`, `patentamientos` | días 1 al 10 | 530 h (~22 días) |
+| `cemento`, `patentamientos` | días 1 al 10 | 530 h (~22 días) |
 | `icg` | días 22 al 31 | 580 h (~24 días) |
 
 Es decir: que `cemento` lleve 20 días sin correr es normal, porque su ventana es del 1 al 10.
-Que `demanda_energia` lleve 2 días sin correr no lo es.
+Que `demanda_energia` lleve cinco días sin correr no lo es.
+
+**Por qué los "diarios" tienen 80 h y no 26.** La VM del servidor está apagada de 22:00 a 04:45 y
+todo el fin de semana (viernes 22:00 a lunes 04:45), así que un cron diario en la práctica corre
+de lunes a viernes. Entre la corrida del viernes y la del lunes pasan ~72 h sin que nada esté
+roto: con un umbral de 26 h, `demanda_energia` daba un `SIN_CORRER` falso todos los lunes a la
+mañana. Las 80 h dejan margen sobre ese hueco de fin de semana.
+
+`automotriz` está en ese grupo desde agosto-2026: ADEFA no tiene fecha de publicación previsible
+y julio-2026 salió después del día 10, con lo que la ventana 1-10 lo perdió y el dato hubiera
+entrado recién tres semanas más tarde. Ahora corre todos los días, igual que `demanda_energia`.
 
 Los dos índices de UTDT (`icc`, `icg`) son la excepción del cuadro: se publican **dentro del
 mes de referencia**, no al mes siguiente. UTDT difunde el ICC un jueves (entre el 17 y el 24) y

@@ -221,17 +221,21 @@ Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`.
 > `estado='definitivo'` (no `provisorio`); el histórico del backfill va con `NULL`.
 
 **Cron en el servidor** (idempotente: corre todos los días de la ventana hasta que la fuente
-publica; cuando el dato ya está, es un no-op barato). Publican: cemento, automotriz y
-patentamientos (SIOMAA) entre el 1 y el 10; granos cerca del 20; acero (CAA) **sin día
+publica; cuando el dato ya está, es un no-op barato). Publican: cemento y patentamientos (SIOMAA) entre el 1 y el 10; granos cerca del 20; acero (CAA) **sin día
 confirmado** (ver nota abajo); aves y bovinos (MAGyP) entre el 20 y el 31; leche (MAGyP) entre el 20
 y el 10; demanda_energia (CAMMESA) publica con ~1 mes de rezago y **sin fecha previsible**
-(actualiza el mismo archivo, `wpdmdl` fijo), así que corre todos los días. Los dos de UTDT son
+(actualiza el mismo archivo, `wpdmdl` fijo), así que corre todos los días. **automotriz** está en
+el mismo caso: ADEFA no tiene fecha de publicación previsible y julio-2026 salió después del día
+10, así que la ventana 1-10 lo perdió y el dato hubiera entrado recién el 1 de septiembre; por eso
+ahora corre todos los días, sin ventana. Los dos de UTDT son
 la excepción: publican **dentro del mes de referencia** según un cronograma anual — el ICC un
 jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 ```cron
 # ETLs mensuales downloader (idempotentes: corren diario en la ventana hasta que publican)
-0  12 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh cemento
-10 12 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh automotriz
+15  9 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh cemento
+# automotriz: sin ventana. ADEFA publica sin fecha previsible y julio-2026 salio despues del
+# dia 10, con lo que la ventana 1-10 lo perdio. Mismo criterio que demanda_energia.
+10 12 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh automotriz
 0  12 18-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh granos
 0  13 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh patentamientos
 # acero: ventana ancha a proposito. NO sabemos el dia real de publicacion de la CAA: la unica
@@ -249,7 +253,10 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # de mes; la corrida es idempotente y repite hasta que la planilla trae el mes nuevo.
 30 13 17-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh icc
 0  19 22-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh icg
-0  19 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh reservas_pasivos
+# reservas_pasivos: dos pasadas por dia habil. La corrida es idempotente, asi que la segunda
+# no cuesta nada y cubre el caso de que el BCRA todavia no hubiera publicado a las 19:15.
+15 19 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh reservas_pasivos
+30 20 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh reservas_pasivos
 # Semanal (compras y DJVE de granos). Corre todos los dias habiles porque TODAVIA NO SABEMOS
 # el dia real de publicacion: la pagina dice "se actualiza los miercoles" pero no esta verificado.
 # Es idempotente y barato (baja ~4 paginas y re-lee las ultimas 3 semanas, con lo que ademas
