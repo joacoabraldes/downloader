@@ -33,7 +33,13 @@ create or replace view series_actual as
     from etl_bovinos_actual
   union all
   select 'demanda_energia'::text as dataset, serie, date, valor, estado, fuente, ingested_at
-    from etl_demanda_energia_actual;
+    from etl_demanda_energia_actual
+  union all
+  select 'icc'::text as dataset, serie, date, valor, estado, fuente, ingested_at
+    from etl_icc_actual
+  union all
+  select 'icg'::text as dataset, serie, date, valor, estado, fuente, ingested_at
+    from etl_icg_actual;
 
 -- Serie desestacionalizada (X-13) de todos los datasets, un valor por serie/mes.
 -- `parametros` (jsonb) trae lo que se usó en la corrida X-13 (modo mult/add, metodo, etc.).
@@ -63,4 +69,12 @@ create or replace view series_desest as
     from etl_bovinos_desest
   union all
   select 'demanda_energia'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
-    from etl_demanda_energia_desest;
+    from etl_demanda_energia_desest
+  union all
+  -- icc / icg no se desestacionalizan hoy: estas dos ramas devuelven 0 filas. Se dejan para
+  -- que sumar X-13 más adelante sea sólo agregar el bloque en etl/series_desest.toml.
+  select 'icc'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
+    from etl_icc_desest
+  union all
+  select 'icg'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
+    from etl_icg_desest;

@@ -129,3 +129,18 @@ seasonalma = "s3x5"
 # meses contiguos, así que la desest arranca en la corrida contigua más larga: 2022-12 en
 # adelante (43 meses). Los meses ene..oct-2022 quedan guardados como observados, sin ajustar.
 start = 2022-12-01
+
+# icc / icg (UTDT): NO se desestacionalizan, a propósito. No es un olvido.
+#
+# 1. No hay contra qué calibrar. Todas las series de este archivo se ajustaron contra una
+#    columna "desest" de una planilla de referencia hasta reproducirla. UTDT publica el ICC y
+#    el ICG SIN ajuste estacional, así que no existe esa referencia: cualquier receta que
+#    eligiéramos sería un número inventado por nosotros, no "el ICC desestacionalizado".
+# 2. Son índices de opinión, no series de flujo. El resto de este archivo ajusta producción,
+#    despachos y faena, donde la estacionalidad es de calendario. La convención para los
+#    índices de confianza es publicarlos crudos.
+#
+# Si en algún momento aparece una referencia contra la cual calibrar, sumarlos es agregar acá
+# un bloque [icc] / [icg] con table/desest/mode/td/seasonalma. Las tablas y las vistas
+# etl_icc_desest / etl_icg_desest ya existen y hoy devuelven 0 filas.
+

@@ -37,7 +37,7 @@ y la fuente falló; en el segundo el proceso directamente no se ejecutó.
 
 | Columna | Significado |
 |---|---|
-| `dataset` | Nombre del ETL. Aparecen los 11 siempre, hayan corrido o no. |
+| `dataset` | Nombre del ETL. Aparecen los 13 siempre, hayan corrido o no. |
 | `estado` | El resumen: `ok`, `FALLA`, `SIN_CORRER` o `NUNCA_CORRIO`. |
 | `estado_ultima_corrida` | Resultado de la última ejecución: `ok` o `falla`. Vacío si nunca corrió. |
 | `ultima_corrida` | Fecha y hora en que terminó la última ejecución. |
@@ -59,11 +59,18 @@ Cada ETL corre en la ventana del mes en que su fuente publica, no todos los día
 | `acero` | días 15 al 10 del mes siguiente | 130 h (~5 días) |
 | `leche` | días 20 al 10 del mes siguiente | 260 h (~11 días) |
 | `granos` | días 18 al 31 | 450 h (~19 días) |
+| `icc` | días 17 al 31 | 470 h (~20 días) |
 | `aves`, `bovinos` | ventanas de fin de mes | 500 h (~21 días) |
 | `cemento`, `automotriz`, `patentamientos` | días 1 al 10 | 530 h (~22 días) |
+| `icg` | días 22 al 31 | 580 h (~24 días) |
 
 Es decir: que `cemento` lleve 20 días sin correr es normal, porque su ventana es del 1 al 10.
 Que `demanda_energia` lleve 2 días sin correr no lo es.
+
+Los dos índices de UTDT (`icc`, `icg`) son la excepción del cuadro: se publican **dentro del
+mes de referencia**, no al mes siguiente. UTDT difunde el ICC un jueves (entre el 17 y el 24) y
+el ICG un lunes (entre el 22 y el 28), según el cronograma que publica cada año. Por eso sus
+ventanas caen en la segunda mitad del mes y no arrancan el día 1.
 
 ## Detalle de una ejecución
 

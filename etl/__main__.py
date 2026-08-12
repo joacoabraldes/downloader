@@ -1,6 +1,6 @@
 """CLI del monorepo de ETLs.
 
-  python -m etl <dataset> [run|load-history] [flags]   # dataset: granos|cemento|automotriz|patentamientos|acero|aves|leche|bovinos|demanda_energia|reservas_pasivos|compras_granos
+  python -m etl <dataset> [run|load-history] [flags]   # dataset: granos|cemento|automotriz|patentamientos|acero|aves|leche|bovinos|demanda_energia|icc|icg|reservas_pasivos|compras_granos
   python -m etl init-db  [datasets...]                  # aplica los schema.sql
   python -m etl redesest [datasets...] [--clean]        # recalcula la desest desde la base
 
@@ -22,7 +22,7 @@ import sys
 from etl.core import control, report
 
 DATASETS = ["granos", "cemento", "automotriz", "patentamientos", "acero", "aves", "leche",
-            "bovinos", "demanda_energia", "reservas_pasivos", "compras_granos"]
+            "bovinos", "demanda_energia", "icc", "icg", "reservas_pasivos", "compras_granos"]
 SUBCOMMANDS = {"run", "load-history"}
 USAGE = (
     "uso: python -m etl <dataset> [run|load-history] [flags]\n"

@@ -27,6 +27,8 @@ filas por `(serie, mes)`. Para consumir hay **dos vistas por dataset** que ya re
 | `leche` | `etl_leche` | `etl_leche_actual` | `etl_leche_desest` |
 | `bovinos` | `etl_bovinos` | `etl_bovinos_actual` | `etl_bovinos_desest` |
 | `demanda_energia` | `etl_demanda_energia` | `etl_demanda_energia_actual` | `etl_demanda_energia_desest` |
+| `icc` | `etl_icc` | `etl_icc_actual` | `etl_icc_desest` (vacía: no se desestacionaliza) |
+| `icg` | `etl_icg` | `etl_icg_actual` | `etl_icg_desest` (vacía: no se desestacionaliza) |
 | `compras_granos` | `etl_compras_granos` | `etl_compras_granos_actual` | — (semanal, no se desestacionaliza) |
 
 > Todas las tablas llevan prefijo **`etl_`**. El nombre de la tabla no siempre deriva directo
@@ -40,8 +42,8 @@ Unen todos los datasets en una sola forma, agregando una columna `dataset`:
 
 | Vista | Contenido |
 |---|---|
-| `series_actual` | serie **observada** de los 9 datasets (`dataset, serie, date, valor, estado, fuente, ingested_at`) |
-| `series_desest` | serie **desestacionalizada** de los 9 (`dataset, serie, date, valor, fuente, ingested_at, parametros`) |
+| `series_actual` | serie **observada** de los 11 datasets mensuales (`dataset, serie, date, valor, estado, fuente, ingested_at`) |
+| `series_desest` | serie **desestacionalizada** (`dataset, serie, date, valor, fuente, ingested_at, parametros`). `icc` e `icg` no aportan filas: se publican sin ajuste estacional |
 
 ```sql
 -- Ejemplo: última demanda no residencial desestacionalizada
@@ -294,10 +296,16 @@ ETL corrió `ok` y `ultimo_dato` no se movió, es que MAGyP todavía no publicó
 | `leche` | `produccion` | `produccion` |
 | `bovinos` | `produccion` | `produccion` |
 | `demanda_energia` | `estacionalizada`, `residencial`, `no_res_estacionalizada`, `no_estacionalizada`, `gudi`, `gume`, `guma`, `mate_distribuidor`, `local`, `no_residencial` | `no_residencial` |
+| `icc` | `nacional`, `capital`, `gba`, `interior`, `situacion_personal`, `situacion_macro`, `bienes_durables` | *(ninguna)* |
+| `icg` | `icg` | *(ninguna)* |
 
 > Las series que **no** están en `_desest` (p.ej. `lino`/`algodon`/`cartamo`/`canola` de granos, o
 > las componentes de `demanda_energia`) quedan solo como observadas: X-13 no las ajusta (molienda
 > intermitente, o son insumos de una serie derivada). Ver `etl/series_desest.toml`.
+>
+> `icc` e `icg` no tienen **ninguna** serie desestacionalizada, y es a propósito: UTDT los publica
+> crudos, así que no existe una referencia contra la cual calibrar el ajuste. Sus vistas `_desest`
+> existen y devuelven 0 filas.
 
 **Los dos datasets fuera de este cuadro** no tienen columna `serie` con la forma de arriba:
 `reservas_pasivos` usa el `cd_serie` del BCRA (ver *Series diarias*) y `compras_granos` se
@@ -319,7 +327,7 @@ select * from etl_control_salud where estado <> 'ok';
 
 | Columna | Significado |
 |---|---|
-| `dataset` | los 10, hayan corrido o no |
+| `dataset` | los 13, hayan corrido o no |
 | `estado` | `ok` · `FALLA` · `SIN_CORRER` · `NUNCA_CORRIO` |
 | `estado_ultima_corrida` | `ok` / `falla` de la última ejecución |
 | `ultima_corrida` · `horas_desde` | cuándo terminó y hace cuánto |
@@ -329,3 +337,50 @@ select * from etl_control_salud where estado <> 'ok';
 
 `SIN_CORRER` significa que el cron dejó de disparar. `FALLA` significa que corrió y no pudo
 traer el dato: ahí sí conviene ir al log, `/home/jmt/data/etls/<dataset>.log`.
+
+## ICC e ICG (UTDT) — cómo consumirlos
+
+Los dos índices de confianza de UTDT se consumen como cualquier otro dataset mensual, pero
+tienen tres particularidades que conviene tener a mano.
+
+```sql
+-- ICC: las 7 series
+select serie, date, valor from etl_icc_actual order by serie, date;
+
+-- ICG: la única serie
+select date, valor from etl_icg_actual order by date;
+
+-- Transversal, junto al resto de los datasets
+select serie, date, valor from series_actual where dataset = 'icc';
+```
+
+| Dataset | Series | Escala | Desde |
+|---|---|---|---|
+| `icc` | `nacional`, `capital`, `gba`, `interior`, `situacion_personal`, `situacion_macro`, `bienes_durables` | **0-100** | `capital` 1998-07; las otras 6, 2001-03 |
+| `icg` | `icg` | **0-5** | 2001-11 |
+
+**1. Las escalas son distintas.** El ICC va de 0 a 100 y el ICG de 0 a 5. No van en el mismo eje.
+
+**2. La variación mensual no está guardada**, y es a propósito: se deriva del nivel, y
+guardarla sería duplicar un estado que se puede desincronizar.
+
+```sql
+select date, valor,
+       valor / lag(valor) over (order by date) - 1 as var_mensual
+from etl_icc_actual where serie = 'nacional' order by date;
+```
+
+Eso reproduce el titular que publica UTDT (julio-2026: -4,8%).
+
+**3. No hay serie desestacionalizada.** `series_desest` no devuelve filas para `icc` ni `icg`:
+UTDT los publica crudos y no existe una referencia contra la cual calibrar X-13, así que un
+ajuste propio sería un número inventado y no "el ICC desestacionalizado". Las vistas
+`etl_icc_desest` / `etl_icg_desest` existen y devuelven 0 filas (ver `etl/series_desest.toml`).
+
+Como en el resto del repo, `date` es el primer día del mes y hay que consultar **las vistas**,
+nunca las tablas `etl_icc` / `etl_icg`: son append-only y guardan un snapshot por revisión.
+
+> Al graficar el ICC, ojo con el arranque desparejo: `capital` tiene 337 meses y las otras seis
+> 305. Un `join` por `date` sin cuidado se come el tramo 1998-2001.
+
+

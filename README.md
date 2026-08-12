@@ -1,4 +1,4 @@
-# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia)
+# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia · icc · icg)
 
 Monorepo de ETLs de series mensuales argentinas. Un **núcleo compartido** + un paquete por
 serie, todo detrás de un solo CLI (`python -m etl ...`). Modelo de datos **append-only**
@@ -18,6 +18,8 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `leche` | `etl_leche` | `leche.xlsx` (2015→) | **xlsx MAGyP** (URL fija) |
 | `bovinos` | `etl_bovinos` | `Bovinos.xlsx` (1998→) | **.xls MAGyP** (link dentro de un PDF) |
 | `demanda_energia` | `etl_demanda_energia` | `energia.xlsx` (2005→) | **xlsx CAMMESA** (URL fija) |
+| `icc` | `etl_icc` | — (la planilla trae 1998→) | **.xls UTDT** (link resuelto por scrape) |
+| `icg` | `etl_icg` | — (la planilla trae 2001→) | **.xls UTDT** (link resuelto por scrape) |
 
 Las tablas están en formato **long** (una fila por `serie, date, estado`). Series por
 dataset:
@@ -52,6 +54,20 @@ dataset:
   2023→. Se guardan además todas las filas del cuadro como series: `estacionalizada`,
   `residencial`, `gudi`, `gume`, `guma`, `mate_distribuidor`, `local`. La fuente está en MWh;
   se convierte a GWh (÷1000). Se parsea **por etiqueta**, no por fila (CAMMESA agrega filas).
+- **icc**: Índice de Confianza del Consumidor (UTDT), escala 0-100. 7 series: `nacional`, sus
+  3 aperturas geográficas (`capital`, `gba`, `interior`) y sus 3 subíndices
+  (`situacion_personal`, `situacion_macro`, `bienes_durables`). `capital` arranca en 1998-07 y
+  las otras 6 en 2001-03, cuando el índice pasó a relevarse a nivel nacional. Sin huecos.
+  La planilla repite la columna "ICC Nacional" en sus dos hojas y **no coinciden** en 24 meses
+  viejos (casi todo redondeo, pero 2009-06 difiere en 0,2): `nacional` se toma siempre de la
+  hoja de regiones.
+- **icg**: Índice de Confianza en el Gobierno (UTDT), escala 0-5. Una serie (`icg`), continua
+  desde 2001-11. La planilla está **traspuesta** (meses en columnas) y partida en dos hojas
+  (2001-2022 y 2023→) que empalman sin solaparse.
+
+> Los dos índices de UTDT son la excepción del repo en dos cosas. **(1)** Se publican *dentro*
+> del mes de referencia, no al mes siguiente. **(2)** No se desestacionalizan: UTDT los publica
+> crudos, así que no hay referencia contra la cual calibrar X-13 (ver `etl/series_desest.toml`).
 
 ### Series diarias (BCRA)
 
@@ -209,7 +225,9 @@ publica; cuando el dato ya está, es un no-op barato). Publican: cemento, automo
 patentamientos (SIOMAA) entre el 1 y el 10; granos cerca del 20; acero (CAA) **sin día
 confirmado** (ver nota abajo); aves y bovinos (MAGyP) entre el 20 y el 31; leche (MAGyP) entre el 20
 y el 10; demanda_energia (CAMMESA) publica con ~1 mes de rezago y **sin fecha previsible**
-(actualiza el mismo archivo, `wpdmdl` fijo), así que corre todos los días.
+(actualiza el mismo archivo, `wpdmdl` fijo), así que corre todos los días. Los dos de UTDT son
+la excepción: publican **dentro del mes de referencia** según un cronograma anual — el ICC un
+jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 ```cron
 # ETLs mensuales downloader (idempotentes: corren diario en la ventana hasta que publican)
 0  12 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh cemento
@@ -226,6 +244,11 @@ y el 10; demanda_energia (CAMMESA) publica con ~1 mes de rezago y **sin fecha pr
 0  14 20-31,1-10 * * /home/jmt/dev/downloader/scripts/run_etl.sh leche
 0  11 20-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh bovinos
 0  12 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh demanda_energia
+# UTDT publica DENTRO del mes de referencia, con cronograma anual: ICC un jueves (dia 17 al 24),
+# ICG un lunes (dia 22 al 28). Las ventanas arrancan antes del primer dia posible y llegan a fin
+# de mes; la corrida es idempotente y repite hasta que la planilla trae el mes nuevo.
+30 13 17-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh icc
+0  19 22-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh icg
 0  19 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh reservas_pasivos
 # Semanal (compras y DJVE de granos). Corre todos los dias habiles porque TODAVIA NO SABEMOS
 # el dia real de publicacion: la pagina dice "se actualiza los miercoles" pero no esta verificado.
@@ -273,7 +296,7 @@ Para consumir desde una app, dos vistas:
 | Vista | Para qué |
 |---|---|
 | `etl_control_ultima` | última corrida de cada dataset que alguna vez corrió |
-| **`etl_control_salud`** | los 11 datasets **siempre**, con un `estado` único |
+| **`etl_control_salud`** | los 13 datasets **siempre**, con un `estado` único |
 
 ```sql
 -- Chequeo rápido: si esto vuelve vacío, está todo bien.
@@ -314,7 +337,7 @@ solo si el valor es nuevo o cambió respecto del último de ese `(clave, estado)
 
 Y dos vistas que **homogeneízan el consumo** de todos los datasets en una sola forma (agregan
 una columna `dataset`):
-- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves + leche + bovinos + demanda_energia.
+- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves + leche + bovinos + demanda_energia + icc + icg.
 - `series_desest`: serie desestacionalizada de los nueve.
 
 Y para el **carril diario** (BCRA), una vista aparte que NO se mezcla con las mensuales:
