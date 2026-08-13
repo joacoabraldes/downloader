@@ -17,13 +17,39 @@ KEY_COLS = ["serie", "date"]
 VALUE_COLS = ["valor"]
 ACTUAL_VIEW = "etl_datos_gob_actual"
 
-# Deflactor: serie que se usa para pasar de pesos corrientes a pesos constantes, y mes base en
-# el que quedan expresados los valores reales. El mes base es FIJO a propósito: con un base
-# móvil ("pesos de hoy") toda la serie real se recalcularía cada mes y los valores dejarían de
-# ser reproducibles, que es justo lo que este repo cuida (por algo guarda los parámetros de
-# X-13 para poder auditar un número). Cambiarlo es editar la vista etl_datos_gob_real.
-SERIE_DEFLACTOR = "ipc_nacional"
+# Deflactor: de dónde sale el índice de precios que pasa de pesos corrientes a constantes, y
+# mes base en el que quedan expresados los valores reales. El mes base es FIJO a propósito: con
+# un base móvil ("pesos de hoy") toda la serie real se recalcularía cada mes y los valores
+# dejarían de ser reproducibles, que es justo lo que este repo cuida (por algo guarda los
+# parámetros de X-13 para poder auditar un número).
+#
+# NO es el `ipc_nacional` de este dataset: ese arranca en 2016-12 y dejaba a `ripte` (nominal
+# desde 1994) y `smvm` (desde 1965) sin valor real en casi toda su historia. Se usa
+# `public.deflactores` con deflactor='ipc_largo', que cubre desde 1990-01 y lo mantiene otro
+# repo (/home/jmt/dev/downloaders_viejos/downloader). Los detalles —dependencia externa,
+# columna `origen`, precisión del tramo pre-2016— están en el comentario de la vista.
+#
+# Estas dos constantes son DOCUMENTACIÓN: ningún código las lee, la lógica vive en la vista
+# etl_datos_gob_real. Cambiar el deflactor o la base es editar la vista, y actualizar acá.
+SERIE_DEFLACTOR = "public.deflactores (deflactor='ipc_largo')"
 MES_BASE_REAL = "2026-06-01"   # los valores reales quedan en pesos de junio-2026
+
+# Piso del valor REAL, por serie. Excepción, no regla: sólo va acá la serie cuya serie nominal
+# NO es homogénea hacia atrás, y por eso deflactarla daría un número sin sentido.
+#
+# `smvm` publica el monto en la moneda de curso legal de cada época, y esa moneda cambió tres
+# veces dentro de la serie: 1983-06 (peso ley -> peso argentino, /10.000), 1985-07 (peso
+# argentino -> austral, /1.000) y 1992-01 (austral -> peso convertible, /10.000). En diciembre
+# de 1991 el monto es 970.000 y en enero de 1992 es 97: no bajó el salario, cambió la unidad.
+# El deflactor, en cambio, es un índice de poder adquisitivo y atraviesa esas reformas sin
+# saltos. Deflactar australes contra él da un valor 10.000 veces más grande que el correcto.
+#
+# Se recorta y NO se convierte a propósito: reescalar los tramos viejos sería reescribir el
+# valor que publica el organismo, y el `valor_nominal` de este repo tiene que seguir siendo lo
+# que publica el organismo. Quien necesite 1965-1991 hace la conversión del lado del análisis.
+REAL_DESDE = {
+    "smvm": "1992-01-01",   # última reforma monetaria; antes el nominal está en otra moneda
+}
 
 # serie -> (id en la API, nombre legible, unidad, organismo, deflactable)
 #

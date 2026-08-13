@@ -146,9 +146,10 @@ start = 2022-12-01
 
 # datos_gob: se desestacionalizan SOLO las dos series de ventas, y sobre su serie REAL.
 #
-# Por qué sólo esas dos: los índices de INDEC (isac, ipi, índices de salarios) ya vienen
-# ajustados de origen o son índices de precios; correrles X-13 encima sería ajustar dos veces.
-# expo/impo están en dólares y quedan fuera de este pedido.
+# Por qué sólo esas dos: ipc_nacional es un índice de precios, expo/impo están en dólares y
+# quedan fuera de este pedido, y para isac/ipi la desestacionalizada la publica el propio INDEC
+# como serie aparte (p. ej. IPI: 453.1_SERIE_DESEADA_0_0_24_58). Para esas, lo correcto es bajar
+# la serie oficial —una fila más en SERIES_META— y no correrles X-13 nosotros encima.
 #
 # Por qué sobre la REAL y no sobre la nominal: bajo inflación argentina la estacionalidad de una
 # serie en pesos corrientes queda tapada por la deriva de precios, así que desestacionalizar el

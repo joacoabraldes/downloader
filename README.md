@@ -73,7 +73,8 @@ dataset:
   dataset **star-schema mensual**: sus series no comparten unidad (conviven índices, dólares y
   pesos), así que el nombre y la unidad viven en `etl_datos_gob_series`.
   Las 9 series en pesos corrientes tienen además **valor real** (a precios de junio-2026,
-  deflactadas por `ipc_nacional`) en la vista `etl_datos_gob_real`, y las 2 de ventas se
+  deflactadas por `public.deflactores` / `ipc_largo`, que cubre desde 1990-01) en la vista
+  `etl_datos_gob_real`, y las 2 de ventas se
   **desestacionalizan sobre esa serie real**. `etl_datos_gob_completo` devuelve los tres valores
   —nominal, real y desestacionalizado— en una sola fila.
 

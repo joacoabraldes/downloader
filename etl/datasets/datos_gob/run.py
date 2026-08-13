@@ -6,8 +6,9 @@ estado='definitivo'. `insert_if_changed` absorbe las revisiones de los organismo
 No hay `load_history`: la API devuelve la serie completa, así que la primera corrida carga todo
 el histórico y las siguientes sólo agregan el período nuevo.
 
-Estas series no se desestacionalizan: se guardan tal como las publica el organismo (ver la nota
-en etl/series_desest.toml).
+Las series se guardan tal como las publica el organismo. Sobre eso, la corrida agrega X-13 para
+las dos series de ventas, y sobre su serie REAL, no la nominal (ver la nota en
+etl/series_desest.toml).
 
 Sumar una serie = agregar una fila a `SERIES_META` en config.py. No hay que tocar este archivo.
 
@@ -32,17 +33,18 @@ def _mes(texto: str) -> dt.date:
 
 def sincronizar_dimension(conn) -> None:
     """Upsert de `etl_datos_gob_series` desde config.SERIES_META (única fuente de verdad)."""
-    filas = [(serie, meta[0], meta[1], meta[2], meta[3], meta[4], i)
+    filas = [(serie, meta[0], meta[1], meta[2], meta[3], meta[4], i,
+              config.REAL_DESDE.get(serie))
              for i, (serie, meta) in enumerate(config.SERIES_META.items(), start=1)]
     with conn.cursor() as cur:
         cur.executemany(
             """insert into etl_datos_gob_series
-                 (serie, id_api, nombre, unidad, organismo, deflactable, orden)
-               values (%s, %s, %s, %s, %s, %s, %s)
+                 (serie, id_api, nombre, unidad, organismo, deflactable, orden, real_desde)
+               values (%s, %s, %s, %s, %s, %s, %s, %s)
                on conflict (serie) do update set
                  id_api = excluded.id_api, nombre = excluded.nombre, unidad = excluded.unidad,
                  organismo = excluded.organismo, deflactable = excluded.deflactable,
-                 orden = excluded.orden""",
+                 orden = excluded.orden, real_desde = excluded.real_desde""",
             filas)
     conn.commit()
 

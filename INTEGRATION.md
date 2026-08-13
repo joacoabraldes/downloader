@@ -407,6 +407,7 @@ where serie = 'ventas_supermercados' order by date;
 | `valor_nominal` | Tal como lo publica el organismo | nunca |
 | `valor_real` | A **precios de junio-2026** | si la serie no es deflactable, o el mes no tiene IPC |
 | `valor_desest` | X-13 sobre la serie **real** | si esa serie no se desestacionaliza |
+| `deflactor_origen` | `publicado` o `proyectado`: procedencia del IPC de ese mes | si `valor_real` es NULL |
 
 Cada una tiene además su vista suelta: `etl_datos_gob_actual` (nominal),
 `etl_datos_gob_real`, `etl_datos_gob_desest`.
@@ -445,9 +446,23 @@ where serie in ('ventas_supermercados','ventas_centros_compras')
 group by date order by date;
 ```
 
-**2. La serie real empieza en 2016-12, no antes.** El deflactor es `ipc_nacional`, que arranca
-ahí. `smvm` tiene datos desde 1965 y `ripte` desde 1994, pero su `valor_real` es NULL antes de
-2016-12. Empalmar un IPC más largo es una decisión metodológica que no se tomó.
+**2. El deflactor cubre desde 1990-01, y hay que mirar `deflactor_origen`.** Es
+`public.deflactores` con `deflactor='ipc_largo'`: IPC de INDEC desde 2016-12 y, hacia atrás,
+`inflaempalmada` reescalada. Así `ripte` tiene real desde 1994-07 (383 meses) y `smvm` desde
+1992-01 (416). Tres advertencias:
+
+- `deflactor_origen = 'proyectado'` marca los meses cuyo IPC todavía no salió y se estimó. Hoy
+  es sólo `smvm`, que publica antes que el IPC. **Esos valores se revisan** cuando INDEC
+  publica: no presentarlos como firmes.
+- **`smvm` no tiene valor real antes de 1992-01** aunque el nominal llegue a 1965. Su monto está
+  en la moneda de curso legal de cada época, y esa moneda cambió tres veces (1983-06, 1985-07 y
+  1992-01). En dic-1991 el nominal dice 970.000 y en ene-1992 dice 97: no bajó el salario,
+  cambió la unidad. El deflactor no ve esas reformas, así que deflactar australes daría un valor
+  10.000 veces más grande. El corte vive en `real_desde` de `etl_datos_gob_series`.
+- El tramo anterior a 2016-12 arrastra el redondeo a entero de `inflaempalmada`: ~0,2% en 2010 y
+  ~0,66% en 1995-2002. Tolerable para niveles; para leer variaciones mes a mes de los 90, no.
+
+`deflactores` e `ipc_largo` los mantiene otro repo (`downloaders_viejos/downloader`), no este.
 
 **3. El mes base es fijo (junio-2026), no "pesos de hoy".** Con un base móvil, toda la serie
 real se recalcularía cada mes y los valores dejarían de ser reproducibles. En el mes base,
@@ -461,21 +476,82 @@ precios. El factor estacional que sale para supermercados es el esperable:
 |---|---|---|---|---|---|---|---|
 | factor | 0,99 | 0,94 | 1,01 | | 0,93 | | **1,22** |
 
-> **Sin referencia de calibración.** A diferencia de `acero` o `cemento`, INDEC no publica una
-> versión desestacionalizada de estas series contra la cual verificar que reproducimos su
-> número. Los parámetros de X-13 (`mult` + `td` + `s3x5`) son los razonables para ventas
-> minoristas, no los que reproducen un resultado oficial.
+> **Todavía sin calibrar, pero la referencia EXISTE.** A diferencia de `acero` o `cemento`,
+> estos parámetros de X-13 (`mult` + `td` + `s3x5`) son los razonables para ventas minoristas,
+> no los que reproducen un resultado oficial. La diferencia con `acero`/`cemento` es que ahí ya
+> se calibró contra la planilla del organismo y acá no: INDEC **sí** publica su propia serie
+> desestacionalizada a precios constantes, en la misma API, con ids
+> `455.1_VENTAS_PREADA_0_M_44_44` (supermercados) y `458.1_VENTAS_TOTADA_0_M_52_56` (centros de
+> compras), ambas índice 2017=100. Mientras no se calibre contra ellas, `valor_desest` es
+> **nuestro** número, no el de INDEC: no citarlo como oficial.
 
-### Salario real
+### Salario real (`ripte`, `smvm`, `indice_salarios_*`)
 
 `ripte` y `smvm` son montos en pesos corrientes; los `indice_salarios_*` son índices nominales.
-Los nueve deflactables ya vienen resueltos en `valor_real`, así que el salario real sale directo:
+Los nueve deflactables ya vienen resueltos en `valor_real`, a **pesos de junio-2026**, así que
+el salario real sale directo:
 
 ```sql
-select date, valor_nominal, valor_real
-from etl_datos_gob_completo where serie = 'ripte' and valor_real is not null
+select date, valor_nominal, valor_real, deflactor_origen
+from etl_datos_gob_completo
+where serie = 'ripte' and valor_real is not null
 order by date desc limit 12;
 ```
+
+**Hasta dónde llega cada una.** El deflactor (`ipc_largo`) arranca en 1990-01, y ése es el
+límite real, no el de la serie nominal:
+
+| serie | nominal | con `valor_real` | qué queda afuera |
+|---|---|---|---|
+| `ripte` | 1994-07 → | **1994-07 →** (383 meses) | nada |
+| `smvm` | 1965-01 → | **1992-01 →** (416 meses) | 1965-1991: `valor_real` es NULL (otra moneda) |
+| `indice_salarios_*` | 2015-10 / 2016-10 → | igual que el nominal | nada |
+
+**Las tres reglas para consumirlas.**
+
+**1. Filtrá siempre por `deflactor_origen`.** `'proyectado'` marca los meses cuyo IPC todavía no
+publicó INDEC: el `valor_real` se calculó con una estimación cargada a mano y **se va a mover**.
+Hoy pasa sólo con `smvm`, que publica su monto antes que el IPC del mes.
+
+```sql
+-- salario real firme: sólo meses con IPC ya publicado
+select date, valor_real
+from etl_datos_gob_completo
+where serie = 'smvm' and deflactor_origen = 'publicado'
+order by date;
+```
+
+Para un gráfico donde igual querés mostrar el último mes, traelo pero distinguilo (línea
+punteada, marcador hueco, lo que sea). Nunca lo mezcles en silencio con los publicados.
+
+**2. No busques `smvm` real antes de 1992: no existe, y es correcto que no exista.** El nominal
+llega a 1965, pero está expresado en la moneda de cada época y la moneda cambió tres veces
+(peso ley → peso argentino en 1983-06, → austral en 1985-07, → peso convertible en 1992-01). El
+deflactor es un índice de poder adquisitivo y atraviesa esas reformas sin saltos, así que
+deflactar el tramo viejo daría números inflados por el factor de conversión. El corte está en
+`etl_datos_gob_series.real_desde` y la vista lo aplica sola.
+
+Si necesitás el tramo 1965-1991, la conversión la hacés vos sobre `valor_nominal`, que sigue
+intacto y es lo que publica el organismo.
+
+```sql
+-- qué series tienen piso de valor real, y desde cuándo
+select serie, real_desde from etl_datos_gob_series where real_desde is not null;
+```
+
+Ojo también con las variaciones mes a mes en los 90: el deflactor de ese tramo viene de
+`inflaempalmada`, con el índice redondeado a entero (~0,66% de error en 1995-2002). Para
+niveles va bien; para variaciones mensuales de esos años, no.
+
+**3. Compará contra el mes base, no contra "hoy".** Todos los `valor_real` están en pesos de
+junio-2026 y ese base es FIJO: un valor publicado no cambia nunca. Si necesitás la serie en
+pesos de otro mes, reescalá vos multiplicando por `IPC(mes_nuevo)/IPC(2026-06)`; no edites la
+vista salvo que quieras mover el base para todos los consumidores a la vez.
+
+> El deflactor es `public.deflactores` con `deflactor='ipc_largo'`, que **mantiene otro repo**
+> (`downloaders_viejos/downloader`, vía `IPCDownload.py`). Si ese ETL se cae, estas vistas
+> devuelven datos viejos sin avisar. Para chequear frescura del deflactor:
+> `select max(fecha) from deflactores where deflactor='ipc_largo' and origen='publicado';`
 
 > Sumar una serie nueva **no requiere escribir código**: se agrega su id a `SERIES_META` en
 > `etl/datasets/datos_gob/config.py` (con su flag `deflactable`) y la dimensión se re-sincroniza

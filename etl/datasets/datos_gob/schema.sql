@@ -46,10 +46,14 @@ create table if not exists etl_datos_gob_series (
   unidad      text,
   organismo   text,
   deflactable boolean not null default false,  -- serie en pesos corrientes: tiene versión real
-  orden       int
+  orden       int,
+  -- Piso del valor real. NULL = sin piso (el caso normal). Sólo lo lleva `smvm`, cuya serie
+  -- nominal cambia de moneda tres veces hacia atrás; ver REAL_DESDE en config.py.
+  real_desde  date
 );
--- Upgrade idempotente para bases ya creadas sin esta columna.
+-- Upgrades idempotentes para bases ya creadas sin estas columnas.
 alter table etl_datos_gob_series add column if not exists deflactable boolean not null default false;
+alter table etl_datos_gob_series add column if not exists real_desde date;
 
 -- Serie observada "actual" por (serie, mes): último snapshot, enriquecida con la dimensión.
 create or replace view etl_datos_gob_actual as
@@ -76,25 +80,59 @@ order by d.serie, d.date, d.ingested_at desc;
 -- El mes base es FIJO (junio-2026). Con un base móvil ("pesos de hoy") toda la serie real se
 -- recalcularía cada mes y los valores dejarían de ser reproducibles. Para cambiarlo, editar la
 -- fecha de acá y `MES_BASE_REAL` en config.py, que la documenta.
+-- (Nota: `prestamos_pm_real`, en el repo viejo, usa base MÓVIL sobre el último mes publicado.
+-- Es una decisión distinta a propósito, no una inconsistencia: allá se prioriza tener siempre
+-- la serie en pesos de hoy, acá se prioriza que un valor publicado no cambie nunca.)
 --
--- COBERTURA: el deflactor es el IPC nacional del propio dataset, que arranca en 2016-12. Los
--- meses anteriores NO tienen valor real: `ripte` (desde 1994) y `smvm` (desde 1965) quedan
--- deflactados sólo de 2016-12 en adelante. Empalmar un IPC más largo es una decisión
--- metodológica que todavía no se tomó (ver docs/datos_gob_ar.md).
+-- DEFLACTOR: `public.deflactores` con deflactor = 'ipc_largo'. NO se usa el `ipc_nacional` de
+-- este mismo dataset, que arranca en 2016-12 y dejaba a `ripte` (nominal desde 1994) y `smvm`
+-- (desde 1965) sin valor real en casi toda su historia. `ipc_largo` cubre desde 1990-01.
+--
+-- DEPENDENCIA EXTERNA, y hay que saberla: `deflactores` e `ipc_largo` viven en esta misma base
+-- pero los mantiene OTRO repo (/home/jmt/dev/downloaders_viejos/downloader). El matview
+-- `ipc_largo` lo refresca `IPCDownload.py` al final de cada corrida del ETL del IPC. Dos
+-- consecuencias: (1) si ese ETL se muere, esta vista devuelve datos viejos sin avisar;
+-- (2) igual que pasó con "IPCIndec", un DROP de `ipc_largo` sin CASCADE ahora falla, porque
+-- esta vista pasó a ser dependiente.
+--
+-- COLUMNA `origen`: procedencia del deflactor de ESE mes, tal como la publica `deflactores`.
+--   'publicado'   el IPC de ese mes ya salió.
+--   'proyectado'  el IPC todavía no salió y el índice se encadenó desde una proyección
+--                 cargada a mano en `inflacion_proyectada`. Hoy afecta sólo a `smvm`, que
+--                 publica antes que el IPC.
+-- Mirarla SIEMPRE antes de presentar un valor como firme: un mes proyectado se revisa cuando
+-- INDEC publica.
+--
+-- PRECISIÓN DEL TRAMO VIEJO: antes de 2016-12 `ipc_largo` se apoya en `inflaempalmada`, cuyo
+-- índice es float4 y está redondeado a entero hasta 2023-09. El error de ±1 en el índice pesa
+-- ~0,04% en 2016, ~0,2% en 2010 y ~0,66% en 1995-2002. Tolerable para niveles; para leer
+-- variaciones mes a mes de los años 90, no.
+--
+-- `real_desde`: piso del valor real para las series cuyo NOMINAL no es homogéneo hacia atrás.
+-- Hoy sólo `smvm` (1992-01), porque su monto viene en la moneda de cada época y esa moneda
+-- cambió tres veces. Ver REAL_DESDE en config.py, que explica el porqué y por qué se recorta en
+-- vez de convertir. Sin este filtro, 1990-1991 salía 10.000 veces más grande.
 create or replace view etl_datos_gob_real as
 with ipc as (
-    select date, valor from etl_datos_gob_actual where serie = 'ipc_nacional'
+    select fecha as date, indice as valor, origen
+    from public.deflactores
+    where deflactor = 'ipc_largo'
 ), base as (
     select valor from ipc where date = date '2026-06-01'
 )
 select d.serie, d.nombre, d.unidad, d.date,
        d.valor * (select valor from base) / i.valor as valor,
        d.valor as valor_nominal,
-       date '2026-06-01' as mes_base
+       date '2026-06-01' as mes_base,
+       -- `origen` va AL FINAL por lo mismo que `deflactable` en la vista de arriba:
+       -- `create or replace view` sólo admite agregar columnas al final.
+       i.origen
 from etl_datos_gob_actual d
 join ipc i on i.date = d.date
+join etl_datos_gob_series c on c.serie = d.serie
 where d.deflactable
-  and d.valor is not null and i.valor > 0;
+  and d.valor is not null and i.valor > 0
+  and (c.real_desde is null or d.date >= c.real_desde);
 
 -- Serie desestacionalizada (X-13), un valor por (serie, mes).
 --
@@ -103,8 +141,10 @@ where d.deflactable
 -- deriva de precios, así que desestacionalizar el nominal no dice nada. La vista insumo de
 -- X-13 es etl_datos_gob_real (ver la clave `view` en etl/series_desest.toml).
 --
--- El resto de las series no se ajusta: los índices de INDEC ya vienen ajustados de origen y
--- correrles X-13 encima sería ajustar dos veces.
+-- El resto de las series no se ajusta acá. OJO: no es porque vengan ajustadas de origen. Los ids
+-- que bajamos son las series ORIGINALES (el del IPI se llama literalmente "Serie Original"); para
+-- varias de ellas INDEC publica la desestacionalizada como una serie APARTE, con su propio id.
+-- Sumarla es agregar una fila a SERIES_META, no correr X-13. Ver etl/series_desest.toml.
 create or replace view etl_datos_gob_desest as
 select distinct on (serie, date)
     serie, date, valor, fuente, ingested_at, parametros
@@ -113,15 +153,19 @@ where estado = 'desestacionalizado'
 order by serie, date, ingested_at desc;
 
 -- Vista de consumo: los tres valores de cada serie/mes en una sola fila.
---   valor_nominal  como lo publica el organismo
---   valor_real     a precios de junio-2026 (NULL si la serie no es deflactable o falta IPC)
---   valor_desest   X-13 sobre la serie real (NULL si esa serie no se desestacionaliza)
+--   valor_nominal     como lo publica el organismo
+--   valor_real        a precios de junio-2026 (NULL si la serie no es deflactable o falta IPC)
+--   valor_desest      X-13 sobre la serie real (NULL si esa serie no se desestacionaliza)
+--   deflactor_origen  'publicado' | 'proyectado' para el mes de esa fila (NULL si no aplica).
+--                     Todo lo que no sea 'publicado' se va a revisar cuando INDEC publique:
+--                     no presentar esos meses como firmes.
 create or replace view etl_datos_gob_completo as
 select a.serie, a.nombre, a.unidad, a.organismo, a.date,
        a.valor as valor_nominal,
        r.valor as valor_real,
        s.valor as valor_desest,
-       r.mes_base
+       r.mes_base,
+       r.origen as deflactor_origen
 from etl_datos_gob_actual a
 left join etl_datos_gob_real   r on r.serie = a.serie and r.date = a.date
 left join etl_datos_gob_desest s on s.serie = a.serie and s.date = a.date
