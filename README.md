@@ -498,10 +498,43 @@ y el `serie.spc` usado. Ej.: `python -m etl redesest automotriz --x13-out ~/x13_
 
 ## La fuente de automotriz (ADEFA)
 
-`etl/datasets/automotriz/source.py` baja el informe mensual
-(`https://www.adefa.org.ar/upload/estadisticas/resumen-<YYYY>-<MM>-es.pdf`) y, con
-`pdfplumber`, lee las 3 cifras del mes (Producción Nacional / Exportaciones / Ventas a
-Concesionarios) de la tabla **"Comparativo"** del PDF.
+`etl/datasets/automotriz/source.py` baja el informe mensual y, con `pdfplumber`, lee las 3
+cifras del mes (Producción Nacional / Exportaciones / Ventas a Concesionarios) de la tabla
+**"Comparativo"**. Hay **dos canales con el mismo PDF**:
+
+| Canal | URL | Rol |
+|---|---|---|
+| Estadísticas | `.../upload/estadisticas/resumen-<YYYY>-<MM>-es.pdf` | primario; el mes está en la ruta, un mes no publicado da 404 |
+| Prensa | `.../es/prensa-archivo?id=<N>` | respaldo; ADEFA lo sube **antes**, adelanta el dato ~1 mes |
+
+Los dos traen los **mismos números**: verificado 9 de 9 valores idénticos en abril, mayo y
+junio de 2026. Por eso el respaldo entra con el mismo `estado='provisorio'` y, cuando
+estadísticas publica el mes, el valor coincide y queda `sin_cambios`. La procedencia se
+distingue en `fuente`, que guarda la URL usada. Se desactiva con `--no-prensa-fallback`.
+
+**El `id` de la gacetilla es un contador, no un mes.** Entre el informe de octubre (288) y el
+de noviembre (294) de 2025 hay cinco ids que son otra cosa, y varios devuelven
+`application/octet-stream` sin ser PDF. Se descubre por `HEAD` leyendo el `Content-Disposition`
+y matcheando el nombre del mes; nunca por aritmética. El `HEAD` importa: cada informe pesa
+~3,7 MB y el barrido mira decenas de ids sin bajar un byte de cuerpo.
+
+### La columna del mes se lee del encabezado, no por posición
+
+El comparativo declara arriba el orden de sus columnas:
+
+```
+Jun 2026  Jul 2026  Var. %  Jul 2025  Var. %  Acumulado Acumulado Var. %
+Producción Nacional  37.029  31.189  -15,8%  37.112  -16,0%  287.590  235.847  -18,0%
+```
+
+Antes se tomaba el 2º entero de la fila. Funcionaba **por accidente del layout**: si ADEFA saca
+la columna del mes anterior, ese 2º entero pasa a ser `Jul 2025` — el mismo mes del año
+anterior, un número plausible que se guardaría como si fuera del año en curso, sin excepción ni
+aviso. Ahora se busca la columna rotulada con el (mes, año) pedido y, si no está, se corta con
+`FormatoInesperado` en vez de adivinar. Es la doble guarda del canal de prensa: el nombre del
+archivo tiene que nombrar el mes **y** el encabezado tiene que declararlo.
+
+> Septiembre se abrevia **`Sept`** en ese encabezado, no `Sep` ni `Set`.
 
 ## La fuente de patentamientos (SIOMAA)
 

@@ -107,26 +107,31 @@ order by dataset, inicio desc;
 create or replace view etl_control_salud as
 with esperado(dataset, horas_max, dias_max_dato) as (values
     ('cemento',         530,  80),   -- cron 1-10   -> hueco max ~22 dias
-                                     --   dato: edad del label al publicar32-37 d (jun visto 03-jul, jul visto 07-ago)
+                                     --   dato: edad del label al publicar 32-37 d (jun visto 03-jul, jul visto 07-ago)
     ('automotriz',       80,  80),   -- cron diario (ADEFA no tiene fecha previsible) -> hueco max
                                      --   viernes 12:10 a lunes 12:10 ~72 h: la VM esta apagada el finde
-                                     --   dato: edad del label al publicar33 d (jun visto 04-jul)
+                                     --   dato: edad del label al publicar 33 d (jun visto 04-jul).
+                                     --   Desde 14/08/2026 hay respaldo por las gacetillas de prensa,
+                                     --   que salen antes: el umbral de 80 quedo holgado y se puede
+                                     --   bajar cuando haya 2-3 meses medidos por ese canal. Mientras
+                                     --   tanto, un DATO_VIEJO aca ya no es "ADEFA se atraso" sino
+                                     --   "fallaron LOS DOS canales": mirarlo en serio.
     ('patentamientos',  530,  80),   -- cron 1-10
-                                     --   dato: edad del label al publicar31 d (jul visto 01-ago)
+                                     --   dato: edad del label al publicar 31 d (jul visto 01-ago)
     ('acero',           130, 105),   -- cron 15-31,1-10 -> hueco max 5 dias (del 10 al 15)
-                                     --   dato: edad del label al publicar60 d (jun visto 31-jul) -> 60+31 = 91 + margen
+                                     --   dato: edad del label al publicar 60 d (jun visto 31-jul) -> 60+31 = 91 + margen
     ('granos',          450,  95),   -- cron 18-31  -> hueco max ~18 dias
-                                     --   dato: edad del label al publicar50 d (jun visto 21-jul)
+                                     --   dato: edad del label al publicar 50 d (jun visto 21-jul)
     ('aves',            500, 105),   -- cron 20-31  -> hueco max ~20 dias
-                                     --   dato: edad del label al publicar60 d (jun visto 31-jul)
+                                     --   dato: edad del label al publicar 60 d (jun visto 31-jul)
     ('bovinos',          80,  95),   -- cron diario: MAGyP movio la fecha (jun salio el 20-jul y
                                      --   jul el 7-ago), la ventana 20-31 lo perdia. ~72 h por el finde
-                                     --   dato: edad del label al publicar42-49 d, y la fecha se mueve -> margen ancho
+                                     --   dato: edad del label al publicar 42-49 d, y la fecha se mueve -> margen ancho
     ('leche',           260,  95),   -- cron 20-31,1-10 -> hueco max ~10 dias
-                                     --   dato: edad del label al publicar49 d (jun visto 20-jul)
+                                     --   dato: edad del label al publicar 49 d (jun visto 20-jul)
     ('demanda_energia',  80, 105),   -- cron diario -> hueco max viernes 12:00 a lunes 12:00 ~72 h:
                                      --   la VM esta apagada el finde (con 26 h daba SIN_CORRER los lunes)
-                                     --   dato: edad del label al publicar60 d (jun visto 31-jul)
+                                     --   dato: edad del label al publicar 60 d (jun visto 31-jul)
     ('icc',             470,  70),   -- cron 17-31 -> hueco max ~17 dias (del 31 al 17) + finde
                                      --   dato: UTDT publica DENTRO del mes de referencia (ICC un
                                      --   jueves entre el 17 y el 24), no al mes siguiente: el label
@@ -141,9 +146,9 @@ with esperado(dataset, horas_max, dias_max_dato) as (values
                                      --   que avanza en cuanto publica la mas rapida. Ojo: este umbral
                                      --   NO detecta una serie individual congelada, solo el corte total.
     ('reservas_pasivos', 80,   8),   -- cron L-V -> fin de semana ~71 h
-                                     --   dato: edad del label al publicar2-4 d (dia habil anterior) + finde + feriado
+                                     --   dato: edad del label al publicar 2-4 d (dia habil anterior) + finde + feriado
     ('compras_granos',   80,  25)    -- cron L-V -> fin de semana ~71 h (ver nota de la ventana abajo)
-                                     --   dato: edad del label al publicar7-11 d medido sobre 3 semanas (el corte 05-ago
+                                     --   dato: edad del label al publicar 7-11 d medido sobre 3 semanas (el corte 05-ago
                                      --   entro el 12-ago) -> 11 + 7 de periodo + margen
 )
 select e.dataset,
