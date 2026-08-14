@@ -330,15 +330,39 @@ select * from etl_control_salud where estado <> 'ok';
 | Columna | Significado |
 |---|---|
 | `dataset` | los 14, hayan corrido o no |
-| `estado` | `ok` · `FALLA` · `SIN_CORRER` · `NUNCA_CORRIO` |
+| `estado` | **proceso**: `ok` · `FALLA` · `SIN_CORRER` · `NUNCA_CORRIO` |
 | `estado_ultima_corrida` | `ok` / `falla` de la última ejecución |
 | `ultima_corrida` · `horas_desde` | cuándo terminó y hace cuánto |
 | `horas_max` | hueco legítimo máximo según la ventana del cron |
 | `ultimo_dato` | `max(date)` del dataset tras esa corrida |
 | `fallas` | array con el detalle; `NULL` si anduvo |
+| `dias_dato` · `dias_max_dato` | edad de `ultimo_dato` y su máximo tolerado |
+| `estado_dato` | **dato**: `ok` · `DATO_VIEJO` · `SIN_DATO` |
 
 `SIN_CORRER` significa que el cron dejó de disparar. `FALLA` significa que corrió y no pudo
 traer el dato: ahí sí conviene ir al log, `/home/jmt/data/etls/<dataset>.log`.
+
+### Para la app: cuál de las dos columnas alertar
+
+Son dos preguntas distintas y conviene tratarlas distinto:
+
+```sql
+-- Alerta accionable: hay algo que arreglar de nuestro lado.
+select * from etl_control_salud where estado <> 'ok';
+
+-- Informativo: la fuente se atrasó. Sirve para explicarle al usuario por qué un
+-- gráfico "no avanza", sin que parezca que el sistema está roto.
+select dataset, ultimo_dato, dias_dato, dias_max_dato
+from etl_control_salud where estado_dato <> 'ok';
+```
+
+`DATO_VIEJO` **no** debería disparar un alerta de guardia: lo normal es que el organismo publique
+tarde. Sirve para dos cosas: mostrar en la UI que el dato está desactualizado por la fuente y no
+por el pipeline, y detectar el caso silencioso en que la fuente cambió de formato y el parser la
+ignora sin lanzar excepción (`estado = ok` + `estado_dato = DATO_VIEJO` sostenido varias semanas).
+
+Los umbrales de `dias_max_dato` salen de `rezago de publicación + un período + margen`, dataset por
+dataset. La derivación completa está en `help_etl.md`.
 
 ## ICC e ICG (UTDT) — cómo consumirlos
 

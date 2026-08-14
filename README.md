@@ -327,17 +327,28 @@ Para consumir desde una app, dos vistas:
 | Vista | Para qué |
 |---|---|
 | `etl_control_ultima` | última corrida de cada dataset que alguna vez corrió |
-| **`etl_control_salud`** | los 14 datasets **siempre**, con un `estado` único |
+| **`etl_control_salud`** | los 14 datasets **siempre**, con dos veredictos: proceso y dato |
 
 ```sql
--- Chequeo rápido: si esto vuelve vacío, está todo bien.
+-- ¿Hay algo roto de nuestro lado? Si vuelve vacío, está todo bien.
 select * from etl_control_salud where estado <> 'ok';
+
+-- ¿Alguna fuente dejó de publicar? No es accionable, pero explica un dato que no avanza.
+select dataset, ultimo_dato, dias_dato, dias_max_dato
+from etl_control_salud where estado_dato <> 'ok';
 ```
 
-`estado` es `ok` · `FALLA` (la última corrida falló) · `SIN_CORRER` (pasó más de `horas_max` sin
-correr → el cron dejó de disparar) · `NUNCA_CORRIO` (sin ninguna fila). `horas_max` es el hueco
-legítimo más largo según la ventana del cron: cemento corre los días 1-10, así que ~21 días sin
-correr es normal para él y no para `demanda_energia`, que corre diario.
+`estado` mide el **proceso**: `ok` · `FALLA` (la última corrida falló) · `SIN_CORRER` (pasó más de
+`horas_max` sin correr → el cron dejó de disparar) · `NUNCA_CORRIO` (sin ninguna fila). `horas_max`
+es el hueco legítimo más largo según la ventana del cron: cemento corre los días 1-10, así que ~21
+días sin correr es normal para él y no para `demanda_energia`, que corre diario.
+
+`estado_dato` mide el **dato**: `ok` · `DATO_VIEJO` (`ultimo_dato` superó `dias_max_dato`) ·
+`SIN_DATO` (dataset vacío). Van en columnas separadas porque son urgencias distintas: `estado`
+es accionable por nosotros (hay algo que arreglar acá), `estado_dato` casi nunca lo es (el
+organismo se atrasó). El caso que sí importa mirar es `estado = ok` con `estado_dato = DATO_VIEJO`
+sostenido: puede ser que la fuente cambió de formato y el parser la esté ignorando sin fallar.
+El detalle de cómo se derivan los umbrales está en `help_etl.md`.
 
 > La escritura del control **nunca** rompe ni cambia el resultado de la corrida: si falla (base
 > caída, tabla sin crear), avisa por stderr y sigue. Se crea con `python -m etl init-db`.

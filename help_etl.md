@@ -2,13 +2,19 @@
 
 ## Qué responde esta vista
 
-`etl_control_salud` responde **si el proceso corrió**, no si el dato está actualizado. Son dos
-preguntas distintas y conviene no mezclarlas:
+`etl_control_salud` responde **dos** preguntas, y las mantiene separadas a propósito:
 
-- **¿El dato está viejo?** Se responde mirando las tablas de datos.
-- **¿El ETL sigue vivo?** Se responde con esta vista.
+| Pregunta | Columna | Si se cae, ¿es problema nuestro? |
+|---|---|---|
+| ¿El ETL sigue vivo? | `estado` | **Sí.** El cron dejó de disparar o la corrida falló. |
+| ¿La fuente sigue publicando? | `estado_dato` | **No.** El ETL corre bien; el organismo no publicó. |
 
-La distinción importa porque las tablas de datos son *append-only*: cuando una corrida no
+Son dos urgencias distintas y por eso son dos columnas distintas. Un ETL puede correr impecable
+todos los días y devolver `sin_cambios` durante un mes porque el INDEC todavía no publicó: eso
+es `estado = ok` y `estado_dato = DATO_VIEJO`. Al revés también pasa: el cron muerto hace una
+semana da `SIN_CORRER` aunque el dato que ya está cargado sea el último que existe.
+
+La separación importa porque las tablas de datos son *append-only*: cuando una corrida no
 encuentra valores nuevos, no escribe nada. Por eso la fecha de última escritura de una tabla
 **no** indica cuándo corrió el ETL, sino cuándo cambió un valor por última vez. Un ETL detenido
 hace meses se ve igual que uno que corre todos los días sin novedades.
@@ -16,12 +22,17 @@ hace meses se ve igual que uno que corre todos los días sin novedades.
 ## Chequeo rápido
 
 ```sql
+-- ¿Hay algo roto de nuestro lado? Esto es lo que se mira primero.
 select * from etl_control_salud where estado <> 'ok';
+
+-- ¿Alguna fuente dejó de publicar? No es accionable, pero explica un dato que "no avanza".
+select dataset, ultimo_dato, dias_dato, dias_max_dato
+from etl_control_salud where estado_dato <> 'ok';
 ```
 
-**Si no devuelve filas, está todo en orden.** Cada fila devuelta es un problema a revisar.
+**Si no devuelven filas, está todo en orden.** Cada fila devuelta es algo a revisar.
 
-## Los cuatro estados
+## Los cuatro estados de `estado` (el proceso)
 
 | Estado | Qué significa | Qué hacer |
 |---|---|---|
@@ -33,18 +44,34 @@ select * from etl_control_salud where estado <> 'ok';
 `FALLA` y `SIN_CORRER` son problemas de naturaleza distinta: en el primero el proceso está vivo
 y la fuente falló; en el segundo el proceso directamente no se ejecutó.
 
+## Los tres estados de `estado_dato` (la frescura)
+
+| Estado | Qué significa | Qué hacer |
+|---|---|---|
+| `ok` | La fuente publicó dentro del plazo esperado para ese dataset. | Nada. |
+| `DATO_VIEJO` | `ultimo_dato` superó `dias_max_dato`: hace más de lo normal que la fuente no publica nada nuevo. | **No es un bug del ETL.** Verificar a mano si el organismo publicó y el parser no lo vio, o si directamente no publicó. |
+| `SIN_DATO` | El dataset no tiene ninguna fila cargada. | Dataset nuevo sin backfill, o la carga nunca escribió. |
+
+`DATO_VIEJO` **no implica** que haya algo que arreglar. Lo más común es que el organismo se haya
+atrasado. Lo que sí amerita mirarlo es el caso silencioso: la fuente publicó, pero cambió el
+formato y el parser lo está ignorando sin lanzar excepción. Ese caso da `estado = ok` con
+`estado_dato = DATO_VIEJO`, y es exactamente el que antes no se veía desde ninguna vista.
+
 ## Columnas
 
 | Columna | Significado |
 |---|---|
 | `dataset` | Nombre del ETL. Aparecen los 14 siempre, hayan corrido o no. |
-| `estado` | El resumen: `ok`, `FALLA`, `SIN_CORRER` o `NUNCA_CORRIO`. |
+| `estado` | Salud del **proceso**: `ok`, `FALLA`, `SIN_CORRER` o `NUNCA_CORRIO`. |
 | `estado_ultima_corrida` | Resultado de la última ejecución: `ok` o `falla`. Vacío si nunca corrió. |
 | `ultima_corrida` | Fecha y hora en que terminó la última ejecución. |
 | `horas_desde` | Horas transcurridas desde entonces. |
 | `horas_max` | Máximo de horas que puede pasar sin correr sin que sea un problema. |
 | `ultimo_dato` | Período más reciente cargado en ese dataset después de esa corrida. |
 | `fallas` | Detalle de los errores. Vacío cuando la corrida fue exitosa. |
+| `dias_dato` | Días transcurridos desde `ultimo_dato` hasta hoy. |
+| `dias_max_dato` | Edad máxima que puede tener `ultimo_dato` sin que sea un problema. |
+| `estado_dato` | Frescura del **dato**: `ok`, `DATO_VIEJO` o `SIN_DATO`. |
 
 ## Por qué `horas_max` cambia según el dataset
 
@@ -82,6 +109,43 @@ mes de referencia**, no al mes siguiente. UTDT difunde el ICC un jueves (entre e
 el ICG un lunes (entre el 22 y el 28), según el cronograma que publica cada año. Por eso sus
 ventanas caen en la segunda mitad del mes y no arrancan el día 1.
 
+## Por qué `dias_max_dato` no es el rezago de publicación
+
+Es el error fácil de cometer con este umbral. Si `aves` publica el mes de junio con 60 días de
+rezago, la tentación es poner 60. Estaría mal, y daría falsa alarma **todos los meses**.
+
+`ultimo_dato` no se queda quieto esperando: **envejece** hasta que aterriza el dato siguiente. El
+dato de junio de `aves` aparece a fines de julio y recién es reemplazado por el de julio a fines
+de agosto. En todo ese mes su edad sigue creciendo, y llega a ~91 días sin que pase nada malo.
+De ahí la cuenta:
+
+```
+dias_max_dato = rezago de publicación observado + un período de la serie + margen
+```
+
+| Dataset | Rezago observado | Período | `dias_max_dato` |
+|---|---|---|---|
+| `reservas_pasivos` | 2-4 días (día hábil anterior) | 1 día hábil | 8 |
+| `compras_granos` | 7-11 días | 7 días | 25 |
+| `datos_gob` | variable (14 series) | 1 mes | 75 |
+| `patentamientos`, `cemento`, `automotriz` | 31-37 días | 1 mes | 80 |
+| `icc`, `icg` | ~24 días (publican **dentro** del mes) | 1 mes | 70 |
+| `granos`, `leche`, `bovinos` | 42-50 días | 1 mes | 95 |
+| `acero`, `aves`, `demanda_energia` | 60 días | 1 mes | 105 |
+
+Los rezagos se midieron con `min(ingested_at)` por fecha en cada tabla, descartando los lotes del
+backfill inicial (se reconocen porque cientos de fechas comparten el mismo `ingested_at`; sin
+descartarlos, el rezago "observado" es la fecha del backfill y no significa nada).
+
+Dos límites que conviene tener presentes:
+
+- **`datos_gob` mide el corte total, no cada serie.** `ultimo_dato` es el máximo sobre las 14
+  series, así que avanza en cuanto publica la más rápida. Una serie individual congelada no se
+  ve acá.
+- **Los umbrales son deliberadamente generosos.** Una alerta que grita al pedo se termina
+  ignorando, y entonces no sirve para nada. Se pueden ajustar cuando haya varios meses de
+  observación incremental real.
+
 ## Detalle de una ejecución
 
 Para ver el historial completo, incluidas las corridas anteriores:
@@ -102,3 +166,18 @@ Los umbrales de `horas_max` se derivan de las ventanas del cron. Si se cambia la
 dataset, hay que actualizar su `horas_max` en `etl/schema_control.sql`; de lo contrario ese
 dataset queda con un umbral que ya no corresponde y puede dar un `SIN_CORRER` falso o, peor,
 dejar de avisar.
+
+Lo mismo vale para `dias_max_dato`, pero el disparador es otro: no cambia con el cron, cambia
+cuando **la fuente** mueve su calendario de publicación. Si un organismo empieza a publicar más
+tarde de forma sostenida, el umbral viejo va a dar `DATO_VIEJO` todos los meses hasta que se
+ajuste. Los dos umbrales se editan en el mismo bloque `esperado` de `etl/schema_control.sql`.
+
+Para aplicar cualquier cambio de umbrales:
+
+```bash
+python -m etl init-db          # la vista es `create or replace`, es idempotente
+```
+
+> Al agregar columnas nuevas a `etl_control_salud`, van **al final** del `select`. Postgres sólo
+> permite agregar columnas al final en un `create or replace view`; insertarlas en el medio
+> obliga a un `drop view` y a recrear todo lo que dependa de ella.

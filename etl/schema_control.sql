@@ -59,31 +59,81 @@ order by dataset, inicio desc;
 
 -- LA vista para la app: los 14 datasets SIEMPRE, hayan corrido o no.
 --
---   select * from etl_control_salud where estado <> 'ok';
+--   select * from etl_control_salud where estado <> 'ok';        -- el PROCESO esta roto
+--   select * from etl_control_salud where estado_dato <> 'ok';   -- la FUENTE dejo de publicar
+--
+-- Son dos preguntas distintas y por eso son dos columnas distintas, no un unico veredicto:
+--
+--   `estado`      mide el PROCESO. Se cae si el cron dejo de disparar o si la corrida fallo.
+--                 Accionable por nosotros: hay algo que arreglar en esta maquina o en el codigo.
+--   `estado_dato` mide el DATO. Se cae si la fuente no publico nada nuevo en el plazo esperado.
+--                 NO es accionable por nosotros: el ETL puede estar corriendo perfecto todos los
+--                 dias y devolver `sin_cambios` porque el organismo todavia no publico.
+--
+-- Meterlos en una sola columna haria que `where estado <> 'ok'` mezcle "se rompio mi codigo,
+-- arreglalo ahora" con "el INDEC viene tarde, espera" -- dos urgencias que no se parecen en nada.
+-- Ademas romperia a los consumidores actuales de `estado`, que hoy significa exactamente
+-- "el proceso esta vivo". Separadas, cada alerta va a quien la puede resolver.
 --
 -- `horas_max` es el hueco legítimo más largo que puede haber entre dos corridas según la
 -- ventana del cron (p.ej. cemento corre los días 1-10: del día 10 al 1 del mes siguiente pasan
 -- ~21 días sin correr, y está bien). Pasarse de ahí significa que el cron dejó de disparar.
+--
+-- `dias_max_dato` es la edad máxima legítima de `ultimo_dato`. Sale de una cuenta, no del ojo:
+--
+--     dias_max_dato = rezago de publicacion observado + un periodo de la serie + margen
+--
+-- El "+ un periodo" es la parte que se olvida: `ultimo_dato` no se queda quieto esperando, ENVEJECE
+-- hasta que aterriza el dato siguiente. Si aves publica el mes M con 60 dias de rezago, el dato de
+-- junio recien es reemplazado por el de julio a fines de agosto, y mientras tanto su edad llega a
+-- ~91 dias sin que pase absolutamente nada malo. Un umbral de 60 daria falsa alarma todos los meses.
+--
+-- El rezago observado se midio contra `min(ingested_at)` por fecha en cada tabla, descartando los
+-- lotes del backfill inicial (se reconocen porque cientos de fechas comparten el mismo
+-- `ingested_at`). Los umbrales son deliberadamente generosos: una alerta que grita al pedo se
+-- termina ignorando, y entonces no sirve para nada. Reajustar cuando haya varios meses de
+-- observacion incremental real.
 create or replace view etl_control_salud as
-with esperado(dataset, horas_max) as (values
-    ('cemento',         530),   -- cron 1-10   -> hueco max ~22 dias
-    ('automotriz',       80),   -- cron diario (ADEFA no tiene fecha previsible) -> hueco max
-                                --   viernes 12:10 a lunes 12:10 ~72 h: la VM esta apagada el finde
-    ('patentamientos',  530),   -- cron 1-10
-    ('acero',           130),   -- cron 15-31,1-10 -> hueco max 5 dias (del 10 al 15)
-    ('granos',          450),   -- cron 18-31  -> hueco max ~18 dias
-    ('aves',            500),   -- cron 20-31  -> hueco max ~20 dias
-    ('bovinos',          80),   -- cron diario: MAGyP movio la fecha (jun salio el 20-jul y
-                                --   jul el 7-ago), la ventana 20-31 lo perdia. ~72 h por el finde
-    ('leche',           260),   -- cron 20-31,1-10 -> hueco max ~10 dias
-    ('demanda_energia',  80),   -- cron diario -> hueco max viernes 12:00 a lunes 12:00 ~72 h:
-                                --   la VM esta apagada el finde (con 26 h daba SIN_CORRER los lunes)
-    ('icc',             470),   -- cron 17-31 -> hueco max ~17 dias (del 31 al 17) + finde
-    ('icg',             580),   -- cron 22-31 -> hueco max ~22 dias (del 31 al 22) + finde
-    ('datos_gob',        80),   -- cron diario: son 9 series de organismos distintos, cada una
-                                --   con su propio calendario. Hueco max viernes a lunes ~72 h.
-    ('reservas_pasivos', 80),   -- cron L-V -> fin de semana ~71 h
-    ('compras_granos',   80)    -- cron L-V -> fin de semana ~71 h (ver nota de la ventana abajo)
+with esperado(dataset, horas_max, dias_max_dato) as (values
+    ('cemento',         530,  80),   -- cron 1-10   -> hueco max ~22 dias
+                                     --   dato: rezago 32-37 d (jun visto 03-jul, jul visto 07-ago)
+    ('automotriz',       80,  80),   -- cron diario (ADEFA no tiene fecha previsible) -> hueco max
+                                     --   viernes 12:10 a lunes 12:10 ~72 h: la VM esta apagada el finde
+                                     --   dato: rezago 33 d (jun visto 04-jul)
+    ('patentamientos',  530,  80),   -- cron 1-10
+                                     --   dato: rezago 31 d (jul visto 01-ago)
+    ('acero',           130, 105),   -- cron 15-31,1-10 -> hueco max 5 dias (del 10 al 15)
+                                     --   dato: rezago 60 d (jun visto 31-jul) -> 60+31 = 91 + margen
+    ('granos',          450,  95),   -- cron 18-31  -> hueco max ~18 dias
+                                     --   dato: rezago 50 d (jun visto 21-jul)
+    ('aves',            500, 105),   -- cron 20-31  -> hueco max ~20 dias
+                                     --   dato: rezago 60 d (jun visto 31-jul)
+    ('bovinos',          80,  95),   -- cron diario: MAGyP movio la fecha (jun salio el 20-jul y
+                                     --   jul el 7-ago), la ventana 20-31 lo perdia. ~72 h por el finde
+                                     --   dato: rezago 42-49 d, y la fecha se mueve -> margen ancho
+    ('leche',           260,  95),   -- cron 20-31,1-10 -> hueco max ~10 dias
+                                     --   dato: rezago 49 d (jun visto 20-jul)
+    ('demanda_energia',  80, 105),   -- cron diario -> hueco max viernes 12:00 a lunes 12:00 ~72 h:
+                                     --   la VM esta apagada el finde (con 26 h daba SIN_CORRER los lunes)
+                                     --   dato: rezago 60 d (jun visto 31-jul)
+    ('icc',             470,  70),   -- cron 17-31 -> hueco max ~17 dias (del 31 al 17) + finde
+                                     --   dato: UTDT publica DENTRO del mes de referencia (ICC un
+                                     --   jueves entre el 17 y el 24), no al mes siguiente: rezago
+                                     --   ~24 d, no ~50 -> 24+31 = 55 + margen. Sin observacion
+                                     --   incremental todavia (el backfill del 12-ago trajo hasta
+                                     --   jul); si en oct-2026 no disparo falsos, dejarlo asi.
+    ('icg',             580,  70),   -- cron 22-31 -> hueco max ~22 dias (del 31 al 22) + finde
+                                     --   dato: idem icc, ICG sale un lunes entre el 22 y el 28.
+    ('datos_gob',        80,  75),   -- cron diario: son 14 series de organismos distintos, cada una
+                                     --   con su propio calendario. Hueco max viernes a lunes ~72 h.
+                                     --   dato: `ultimo_dato` es el MAX sobre todas las series, asi
+                                     --   que avanza en cuanto publica la mas rapida. Ojo: este umbral
+                                     --   NO detecta una serie individual congelada, solo el corte total.
+    ('reservas_pasivos', 80,   8),   -- cron L-V -> fin de semana ~71 h
+                                     --   dato: rezago 2-4 d (dia habil anterior) + finde + feriado
+    ('compras_granos',   80,  25)    -- cron L-V -> fin de semana ~71 h (ver nota de la ventana abajo)
+                                     --   dato: rezago 7-11 d medido sobre 3 semanas (el corte 05-ago
+                                     --   entro el 12-ago) -> 11 + 7 de periodo + margen
 )
 select e.dataset,
        u.estado          as estado_ultima_corrida,
@@ -96,10 +146,23 @@ select e.dataset,
             when u.estado = 'falla'             then 'FALLA'
             when u.horas_desde > e.horas_max    then 'SIN_CORRER'
             else 'ok'
-       end as estado
+       end as estado,
+       -- Columnas nuevas al FINAL a proposito: `create or replace view` en Postgres solo permite
+       -- AGREGAR columnas al final. Insertarlas en el medio obligaria a un `drop view` y a recrear
+       -- todo lo que dependa de esta vista.
+       (current_date - u.ultimo_dato)                     as dias_dato,
+       e.dias_max_dato,
+       case when u.ultimo_dato is null                    then 'SIN_DATO'
+            when (current_date - u.ultimo_dato) > e.dias_max_dato then 'DATO_VIEJO'
+            else 'ok'
+       end as estado_dato
 from esperado e
 left join etl_control_ultima u using (dataset)
 order by (case when u.dataset is null then 0
                when u.estado = 'falla' then 1
                when u.horas_desde > e.horas_max then 2
-               else 3 end), e.dataset;
+               -- El dato viejo ordena DESPUES de los problemas de proceso: si el cron esta caido,
+               -- el dato viejo es consecuencia, no causa. Primero se arregla lo que es nuestro.
+               when u.ultimo_dato is null then 3
+               when (current_date - u.ultimo_dato) > e.dias_max_dato then 4
+               else 5 end), e.dataset;
