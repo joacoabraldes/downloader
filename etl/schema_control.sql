@@ -108,14 +108,17 @@ create or replace view etl_control_salud as
 with esperado(dataset, horas_max, dias_max_dato) as (values
     ('cemento',         530,  80),   -- cron 1-10   -> hueco max ~22 dias
                                      --   dato: edad del label al publicar 32-37 d (jun visto 03-jul, jul visto 07-ago)
-    ('automotriz',       80,  80),   -- cron diario (ADEFA no tiene fecha previsible) -> hueco max
-                                     --   viernes 12:10 a lunes 12:10 ~72 h: la VM esta apagada el finde
-                                     --   dato: edad del label al publicar 33 d (jun visto 04-jul).
-                                     --   Desde 14/08/2026 hay respaldo por las gacetillas de prensa,
-                                     --   que salen antes: el umbral de 80 quedo holgado y se puede
-                                     --   bajar cuando haya 2-3 meses medidos por ese canal. Mientras
-                                     --   tanto, un DATO_VIEJO aca ya no es "ADEFA se atraso" sino
-                                     --   "fallaron LOS DOS canales": mirarlo en serio.
+    ('automotriz',      530, 105),   -- cron 1-10 desde el 14/08/2026 -> hueco max ~22 dias (del 10
+                                     --   al 1 del mes siguiente), igual que cemento y patentamientos
+                                     --   dato: edad del label al publicar 33 d (jun visto 04-jul) CON
+                                     --   cron diario. Con la ventana 1-10 el umbral tiene que ser
+                                     --   MAS grande, no mas chico: si ADEFA publica pasado el dia 10
+                                     --   -- que es lo que paso con julio-2026 -- el ETL recien lo ve
+                                     --   el 1 del mes siguiente, y `ultimo_dato` puede llegar a ~92 d
+                                     --   antes de que lo reemplace el mes que sigue. 105 cubre eso.
+                                     --   El respaldo por gacetillas NO ayuda a acortarlo: adelanta el
+                                     --   dato solo si el ETL corre, y con esta ventana no corre entre
+                                     --   el 11 y el 31.
     ('patentamientos',  530,  80),   -- cron 1-10
                                      --   dato: edad del label al publicar 31 d (jul visto 01-ago)
     ('acero',           130, 105),   -- cron 15-31,1-10 -> hueco max 5 dias (del 10 al 15)

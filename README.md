@@ -253,9 +253,12 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 ```cron
 # ETLs mensuales downloader (idempotentes: corren diario en la ventana hasta que publican)
 15  9 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh cemento
-# automotriz: sin ventana. ADEFA publica sin fecha previsible y julio-2026 salio despues del
-# dia 10, con lo que la ventana 1-10 lo perdio. Mismo criterio que demanda_energia.
-10 12 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh automotriz
+# automotriz: ventana 1-10 desde el 14-ago-2026. OJO con el historial: ADEFA publica sin fecha
+# previsible y julio-2026 salio DESPUES del dia 10, con lo que esta misma ventana lo perdio --
+# por eso habia pasado a diario. Con 1-10 ese caso entra recien el 1 del mes siguiente, ~3
+# semanas tarde, y el respaldo por gacetillas no lo salva: adelanta el dato solo si el ETL corre.
+# Si vuelve a pasar, revertir a `10 12 * * *` y volver horas_max a 80.
+10 12 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh automotriz
 0  12 18-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh granos
 0  13 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh patentamientos
 # acero: ventana ancha a proposito. NO sabemos el dia real de publicacion de la CAA: la unica

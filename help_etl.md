@@ -80,7 +80,7 @@ Cada ETL corre en la ventana del mes en que su fuente publica, no todos los día
 
 | Dataset | Corre | `horas_max` |
 |---|---|---|
-| `demanda_energia`, `automotriz`, `bovinos`, `datos_gob` | todos los días | 80 h (cubre el fin de semana) |
+| `demanda_energia`, `bovinos`, `datos_gob` | todos los días | 80 h (cubre el fin de semana) |
 | `reservas_pasivos` | lunes a viernes | 80 h (cubre el fin de semana) |
 | `compras_granos` | lunes a viernes | 80 h (cubre el fin de semana) |
 | `acero` | días 15 al 10 del mes siguiente | 130 h (~5 días) |
@@ -88,7 +88,7 @@ Cada ETL corre en la ventana del mes en que su fuente publica, no todos los día
 | `granos` | días 18 al 31 | 450 h (~19 días) |
 | `icc` | días 17 al 31 | 470 h (~20 días) |
 | `aves` | ventanas de fin de mes | 500 h (~21 días) |
-| `cemento`, `patentamientos` | días 1 al 10 | 530 h (~22 días) |
+| `cemento`, `patentamientos`, `automotriz` | días 1 al 10 | 530 h (~22 días) |
 | `icg` | días 22 al 31 | 580 h (~24 días) |
 
 Es decir: que `cemento` lleve 20 días sin correr es normal, porque su ventana es del 1 al 10.
@@ -100,9 +100,19 @@ de lunes a viernes. Entre la corrida del viernes y la del lunes pasan ~72 h sin 
 roto: con un umbral de 26 h, `demanda_energia` daba un `SIN_CORRER` falso todos los lunes a la
 mañana. Las 80 h dejan margen sobre ese hueco de fin de semana.
 
-`automotriz` está en ese grupo desde agosto-2026: ADEFA no tiene fecha de publicación previsible
-y julio-2026 salió después del día 10, con lo que la ventana 1-10 lo perdió y el dato hubiera
-entrado recién tres semanas más tarde. Ahora corre todos los días, igual que `demanda_energia`.
+**`automotriz` volvió a la ventana 1-10 el 14-ago-2026, contra su propio historial.** Había
+pasado a diario porque ADEFA no tiene fecha de publicación previsible y julio-2026 salió *después
+del día 10*: esa misma ventana lo perdió y el dato hubiera entrado tres semanas más tarde. Con
+1-10 ese escenario vuelve a estar sobre la mesa, y el respaldo por gacetillas de prensa **no lo
+cubre**: adelanta el dato sólo si el ETL corre, y entre el 11 y el 31 no corre.
+
+Por eso su `dias_max_dato` subió de 80 a 105 en el mismo cambio, no bajó: si ADEFA publica pasado
+el día 10, `ultimo_dato` puede llegar a ~92 días antes de que lo reemplace el mes siguiente. Un
+umbral de 80 daría `DATO_VIEJO` cada vez que ADEFA se atrasa, que es justamente el caso que esta
+ventana vuelve más probable.
+
+> Si vuelve a perderse un mes, la vuelta atrás es `10 12 * * *` en el cron **y** `horas_max` a 80
+> en `etl/schema_control.sql`, en el mismo movimiento.
 
 Los dos índices de UTDT (`icc`, `icg`) son la excepción del cuadro: se publican **dentro del
 mes de referencia**, no al mes siguiente. UTDT difunde el ICC un jueves (entre el 17 y el 24) y
@@ -139,7 +149,8 @@ daría falsa alarma **todos los meses**.
 | `reservas_pasivos` | 2-4 días (día hábil anterior) | 1 día hábil | 8 |
 | `compras_granos` | 7-11 días | 7 días | 25 |
 | `datos_gob` | variable (14 series) | 1 mes | 75 |
-| `patentamientos`, `cemento`, `automotriz` | 31-37 días | 1 mes | 80 |
+| `patentamientos`, `cemento` | 31-37 días | 1 mes | 80 |
+| `automotriz` | 33 días, pero la ventana 1-10 puede atrasar la captura un mes entero | 1 mes | 105 |
 | `icc`, `icg` | ~24 días (publican **dentro** del mes) | 1 mes | 70 |
 | `granos`, `leche`, `bovinos` | 42-50 días | 1 mes | 95 |
 | `acero`, `aves`, `demanda_energia` | 60 días | 1 mes | 105 |
