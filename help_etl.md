@@ -109,21 +109,32 @@ mes de referencia**, no al mes siguiente. UTDT difunde el ICC un jueves (entre e
 el ICG un lunes (entre el 22 y el 28), según el cronograma que publica cada año. Por eso sus
 ventanas caen en la segunda mitad del mes y no arrancan el día 1.
 
-## Por qué `dias_max_dato` no es el rezago de publicación
-
-Es el error fácil de cometer con este umbral. Si `aves` publica el mes de junio con 60 días de
-rezago, la tentación es poner 60. Estaría mal, y daría falsa alarma **todos los meses**.
-
-`ultimo_dato` no se queda quieto esperando: **envejece** hasta que aterriza el dato siguiente. El
-dato de junio de `aves` aparece a fines de julio y recién es reemplazado por el de julio a fines
-de agosto. En todo ese mes su edad sigue creciendo, y llega a ~91 días sin que pase nada malo.
-De ahí la cuenta:
+## De dónde sale `dias_max_dato`
 
 ```
-dias_max_dato = rezago de publicación observado + un período de la serie + margen
+dias_max_dato = edad del label al publicarse + un período de la serie + margen
 ```
 
-| Dataset | Rezago observado | Período | `dias_max_dato` |
+Los dos términos son fáciles de errar, cada uno a su manera.
+
+**Primer término: no es el rezago de la fuente.** `date` guarda el **primer día** del período, así
+que cuando el dato se publica su label ya viene con el período entero encima. Con `automotriz`:
+
+```
+ADEFA publica junio el 04/07   ->  rezago REAL de la fuente = 4 días (junio cierra el 30/06)
+pero ultimo_dato vale 06-01    ->  edad del label ese día   = 33 días (29 + 4)
+```
+
+Van los 33, no los 4, porque el umbral compara contra `ultimo_dato`. Confundirlos hace leer
+"`acero`: 60 días" como "el INDEC tarda dos meses en publicar", cuando en realidad tarda ~30 días
+desde que cierra el mes.
+
+**Segundo término: `ultimo_dato` envejece.** No se queda quieto esperando. El junio de `aves`
+aparece a fines de julio y recién lo reemplaza el julio a fines de agosto: en todo ese mes su edad
+sigue creciendo y llega a ~91 días sin que pase nada malo. Un umbral igual a la edad del label
+daría falsa alarma **todos los meses**.
+
+| Dataset | Edad del label al publicarse | Período | `dias_max_dato` |
 |---|---|---|---|
 | `reservas_pasivos` | 2-4 días (día hábil anterior) | 1 día hábil | 8 |
 | `compras_granos` | 7-11 días | 7 días | 25 |
@@ -133,9 +144,13 @@ dias_max_dato = rezago de publicación observado + un período de la serie + mar
 | `granos`, `leche`, `bovinos` | 42-50 días | 1 mes | 95 |
 | `acero`, `aves`, `demanda_energia` | 60 días | 1 mes | 105 |
 
-Los rezagos se midieron con `min(ingested_at)` por fecha en cada tabla, descartando los lotes del
-backfill inicial (se reconocen porque cientos de fechas comparten el mismo `ingested_at`; sin
-descartarlos, el rezago "observado" es la fecha del backfill y no significa nada).
+> En `reservas_pasivos` y `compras_granos` las dos lecturas coinciden, porque su `date` **no** es
+> el primer día de un período: es el día hábil y la fecha de corte respectivamente. La distinción
+> sólo muerde en las series mensuales.
+
+La columna del medio se midió con `min(ingested_at)` por fecha en cada tabla, descartando los lotes
+del backfill inicial (se reconocen porque cientos de fechas comparten el mismo `ingested_at`; sin
+descartarlos, lo "observado" es la fecha del backfill y no significa nada).
 
 Dos límites que conviene tener presentes:
 

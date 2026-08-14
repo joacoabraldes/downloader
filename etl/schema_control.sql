@@ -81,45 +81,56 @@ order by dataset, inicio desc;
 --
 -- `dias_max_dato` es la edad máxima legítima de `ultimo_dato`. Sale de una cuenta, no del ojo:
 --
---     dias_max_dato = rezago de publicacion observado + un periodo de la serie + margen
+--     dias_max_dato = EDAD DEL LABEL AL PUBLICARSE + un periodo de la serie + margen
 --
--- El "+ un periodo" es la parte que se olvida: `ultimo_dato` no se queda quieto esperando, ENVEJECE
--- hasta que aterriza el dato siguiente. Si aves publica el mes M con 60 dias de rezago, el dato de
--- junio recien es reemplazado por el de julio a fines de agosto, y mientras tanto su edad llega a
--- ~91 dias sin que pase absolutamente nada malo. Un umbral de 60 daria falsa alarma todos los meses.
+-- OJO CON EL PRIMER TERMINO: no es el rezago de publicacion de la fuente. Es la edad que tiene
+-- `ultimo_dato` el dia en que la fuente publica, y como `date` es el PRIMER dia del periodo, ya
+-- trae adentro el periodo entero transcurriendo. Ejemplo con automotriz:
 --
--- El rezago observado se midio contra `min(ingested_at)` por fecha en cada tabla, descartando los
--- lotes del backfill inicial (se reconocen porque cientos de fechas comparten el mismo
--- `ingested_at`). Los umbrales son deliberadamente generosos: una alerta que grita al pedo se
--- termina ignorando, y entonces no sirve para nada. Reajustar cuando haya varios meses de
+--     ADEFA publica junio el 04-jul  ->  rezago REAL de la fuente = 4 dias (junio cierra el 30-jun)
+--     pero `ultimo_dato` vale 2026-06-01  ->  edad del label ese dia = 33 dias (29 + 4)
+--
+-- Los 33 son el numero que va en la cuenta, porque el umbral compara contra `ultimo_dato`, no
+-- contra el cierre del periodo. Confundirlos hace leer "acero: 60 d" como "el INDEC tarda dos
+-- meses", cuando en realidad tarda ~30 dias desde que cierra el mes.
+--
+-- El "+ un periodo" es el otro termino que se olvida: `ultimo_dato` no se queda quieto esperando,
+-- ENVEJECE hasta que aterriza el dato siguiente. El junio de aves recien es reemplazado por el
+-- julio a fines de agosto, y mientras tanto su edad llega a ~91 dias sin que pase nada malo. Un
+-- umbral igual a la edad del label daria falsa alarma todos los meses.
+--
+-- La edad del label al publicarse se midio contra `min(ingested_at)` por fecha en cada tabla,
+-- descartando los lotes del backfill inicial (se reconocen porque cientos de fechas comparten el
+-- mismo `ingested_at`). Los umbrales son deliberadamente generosos: una alerta que grita al pedo
+-- se termina ignorando, y entonces no sirve para nada. Reajustar cuando haya varios meses de
 -- observacion incremental real.
 create or replace view etl_control_salud as
 with esperado(dataset, horas_max, dias_max_dato) as (values
     ('cemento',         530,  80),   -- cron 1-10   -> hueco max ~22 dias
-                                     --   dato: rezago 32-37 d (jun visto 03-jul, jul visto 07-ago)
+                                     --   dato: edad del label al publicar32-37 d (jun visto 03-jul, jul visto 07-ago)
     ('automotriz',       80,  80),   -- cron diario (ADEFA no tiene fecha previsible) -> hueco max
                                      --   viernes 12:10 a lunes 12:10 ~72 h: la VM esta apagada el finde
-                                     --   dato: rezago 33 d (jun visto 04-jul)
+                                     --   dato: edad del label al publicar33 d (jun visto 04-jul)
     ('patentamientos',  530,  80),   -- cron 1-10
-                                     --   dato: rezago 31 d (jul visto 01-ago)
+                                     --   dato: edad del label al publicar31 d (jul visto 01-ago)
     ('acero',           130, 105),   -- cron 15-31,1-10 -> hueco max 5 dias (del 10 al 15)
-                                     --   dato: rezago 60 d (jun visto 31-jul) -> 60+31 = 91 + margen
+                                     --   dato: edad del label al publicar60 d (jun visto 31-jul) -> 60+31 = 91 + margen
     ('granos',          450,  95),   -- cron 18-31  -> hueco max ~18 dias
-                                     --   dato: rezago 50 d (jun visto 21-jul)
+                                     --   dato: edad del label al publicar50 d (jun visto 21-jul)
     ('aves',            500, 105),   -- cron 20-31  -> hueco max ~20 dias
-                                     --   dato: rezago 60 d (jun visto 31-jul)
+                                     --   dato: edad del label al publicar60 d (jun visto 31-jul)
     ('bovinos',          80,  95),   -- cron diario: MAGyP movio la fecha (jun salio el 20-jul y
                                      --   jul el 7-ago), la ventana 20-31 lo perdia. ~72 h por el finde
-                                     --   dato: rezago 42-49 d, y la fecha se mueve -> margen ancho
+                                     --   dato: edad del label al publicar42-49 d, y la fecha se mueve -> margen ancho
     ('leche',           260,  95),   -- cron 20-31,1-10 -> hueco max ~10 dias
-                                     --   dato: rezago 49 d (jun visto 20-jul)
+                                     --   dato: edad del label al publicar49 d (jun visto 20-jul)
     ('demanda_energia',  80, 105),   -- cron diario -> hueco max viernes 12:00 a lunes 12:00 ~72 h:
                                      --   la VM esta apagada el finde (con 26 h daba SIN_CORRER los lunes)
-                                     --   dato: rezago 60 d (jun visto 31-jul)
+                                     --   dato: edad del label al publicar60 d (jun visto 31-jul)
     ('icc',             470,  70),   -- cron 17-31 -> hueco max ~17 dias (del 31 al 17) + finde
                                      --   dato: UTDT publica DENTRO del mes de referencia (ICC un
-                                     --   jueves entre el 17 y el 24), no al mes siguiente: rezago
-                                     --   ~24 d, no ~50 -> 24+31 = 55 + margen. Sin observacion
+                                     --   jueves entre el 17 y el 24), no al mes siguiente: el label
+                                     --   llega a ~24 d, no a ~50 -> 24+31 = 55 + margen. Sin observacion
                                      --   incremental todavia (el backfill del 12-ago trajo hasta
                                      --   jul); si en oct-2026 no disparo falsos, dejarlo asi.
     ('icg',             580,  70),   -- cron 22-31 -> hueco max ~22 dias (del 31 al 22) + finde
@@ -130,9 +141,9 @@ with esperado(dataset, horas_max, dias_max_dato) as (values
                                      --   que avanza en cuanto publica la mas rapida. Ojo: este umbral
                                      --   NO detecta una serie individual congelada, solo el corte total.
     ('reservas_pasivos', 80,   8),   -- cron L-V -> fin de semana ~71 h
-                                     --   dato: rezago 2-4 d (dia habil anterior) + finde + feriado
+                                     --   dato: edad del label al publicar2-4 d (dia habil anterior) + finde + feriado
     ('compras_granos',   80,  25)    -- cron L-V -> fin de semana ~71 h (ver nota de la ventana abajo)
-                                     --   dato: rezago 7-11 d medido sobre 3 semanas (el corte 05-ago
+                                     --   dato: edad del label al publicar7-11 d medido sobre 3 semanas (el corte 05-ago
                                      --   entro el 12-ago) -> 11 + 7 de periodo + margen
 )
 select e.dataset,

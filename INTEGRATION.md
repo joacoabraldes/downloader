@@ -361,8 +361,11 @@ tarde. Sirve para dos cosas: mostrar en la UI que el dato está desactualizado p
 por el pipeline, y detectar el caso silencioso en que la fuente cambió de formato y el parser la
 ignora sin lanzar excepción (`estado = ok` + `estado_dato = DATO_VIEJO` sostenido varias semanas).
 
-Los umbrales de `dias_max_dato` salen de `rezago de publicación + un período + margen`, dataset por
-dataset. La derivación completa está en `help_etl.md`.
+Los umbrales de `dias_max_dato` salen de `edad del label al publicarse + un período + margen`,
+dataset por dataset. Cuidado con el primer término: **no** es el rezago de la fuente. Como `date`
+es el primer día del período, el label ya viene con el período entero encima (ADEFA publica junio
+el 04/07 —rezago real de 4 días— pero `ultimo_dato` vale `2026-06-01`, o sea 33 días de edad).
+La derivación completa está en `help_etl.md`.
 
 ## ICC e ICG (UTDT) — cómo consumirlos
 
