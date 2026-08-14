@@ -152,6 +152,7 @@ etl/
   core/        db.py (conexión + insert/dedup genérico)  ·  seasonal.py (X-13)
                desest_params.py (lee el cuadro y arma los jobs de desest)
                window.py (ventana de meses del incremental)  ·  report.py (salida uniforme)
+               meses.py (nombres y abreviaturas de mes en español, con sus variantes)
   datasets/<dataset>/
        source.py       scraping/parsing de la fuente (HTML / PDF / xlsx / .xls, según el dataset)
        load_history.py carga histórica (one-off, desde el Excel de referencia)
@@ -495,6 +496,47 @@ cualquier `run` o a `redesest`. Guarda en `DIR/<serie>/` el corrido completo de 
 `serie.html` (modelo elegido, factores estacionales, diagnósticos M/Q), las tablas `serie.d10`
 (factores estacionales), `serie.d11` (desest), `serie.d12` (tendencia), `serie.d13` (irregular)
 y el `serie.spc` usado. Ej.: `python -m etl redesest automotriz --x13-out ~/x13_out`.
+
+## Parsear meses: usar `etl/core/meses.py`
+
+Las fuentes escriben los meses de todas las formas posibles y **septiembre es el problemático**:
+`septiembre`, `setiembre`, `sept`, `sep` y `set`, las cinco vistas en documentos reales del repo.
+
+Hasta agosto de 2026 cada dataset tenía su propio mapa —siete en total— y cada uno cubría un
+conjunto distinto. No era duplicación inofensiva: se estaban rompiendo en lugares diferentes.
+
+```
+patentamientos:  "Sep.2026" OK   "Set.2026" OK   "Sept.2026" NO MATCHEA
+utdt:            "sep-26"   OK   "set-26"   NO MATCHEA   "sept-26"  OK
+granos:          sólo "SEPTIEMBRE" (sin "SETIEMBRE")
+```
+
+Y el modo de falla es el peor: **no explota, no matchea**. El mes no aparece, la serie se queda
+quieta y nadie se entera hasta mirar el dato a mano.
+
+```python
+from etl.core import meses
+
+meses.numero("Sept")       # 9   (tolera mayúsculas, acentos y punto final)
+meses.numero("SETIEMBRE")  # 9
+meses.anio_2d(26)          # 2026
+
+# Para armar un regex, SIEMPRE con el helper y nunca con "|".join(...) a mano:
+rx = re.compile(meses.alternancia(formas="cortas") + r"\.?\s*(\d{4}|\d{2})", re.IGNORECASE)
+```
+
+**Por qué `alternancia()` y no un `"|".join(...)`.** En un alternador de regex gana la primera
+rama que matchea, no la más larga. Si `sep` va antes que `sept`, el texto "Sept.2026" matchea
+`sep`, deja un `t` colgado y el regex falla entero. `alternancia()` ordena de más larga a más
+corta, así que la regla queda escrita una sola vez y no se puede reintroducir el bug.
+
+`formas` separa nombres completos (`largas`) de abreviaturas (`cortas`) porque hay parsers que
+necesitan la distinción: `patentamientos` prueba primero el encabezado abreviado con año de dos
+dígitos (`JUN.26`) y sólo después el título con nombre completo y año de cuatro.
+
+> Migrados: `utdt` (icc/icg) y `patentamientos`. Faltan `acero`, `aves`, `cemento`, `granos` y
+> `automotriz`, que tienen su mapa propio y hoy funcionan; conviene migrarlos al tocar cada ETL
+> y verificando contra la base, no todos de una.
 
 ## La fuente de automotriz (ADEFA)
 

@@ -41,6 +41,8 @@ import requests
 import xlrd
 from bs4 import BeautifulSoup
 
+from etl.core import meses
+
 BASE = "https://www.utdt.edu"
 HEADERS = {"User-Agent": "Mozilla/5.0 (utdt ETL)"}
 TIMEOUT = 60
@@ -52,14 +54,16 @@ SESSION.headers.update(HEADERS)
 # Las celdas de fecha pueden venir como fecha formateada (3) o como serial crudo (2).
 CELDAS_FECHA = (xlrd.XL_CELL_NUMBER, xlrd.XL_CELL_DATE)
 
-# Abreviaturas de mes que usa Excel en español. 'sept' va antes que 'sep' para que el
-# alternador del regex no corte corto y deje un 't' colgado.
-MESES_ABREV = {
-    "ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6,
-    "jul": 7, "ago": 8, "sept": 9, "sep": 9, "oct": 10, "nov": 11, "dic": 12,
-}
+# Mes tipeado a mano en la planilla ("jul-26", "Jul-2026"). El `[a-z]*` después de la
+# abreviatura absorbe la cola de un nombre completo, así que "septiembre-26" también entra.
+#
+# Las variantes salen de `etl.core.meses`: acá vivía un mapa propio que tenía `sept` y `sep`
+# pero NO `set`, con lo que "set-26" no matcheaba y el mes se perdía en silencio. El helper
+# ordena además las ramas de más larga a más corta, que es la regla que este módulo había
+# descubierto por su cuenta ("'sept' va antes que 'sep' para que el alternador no corte corto
+# y deje un 't' colgado") y que ahora está codificada una sola vez para todos los ETL.
 _TEXTO_MES = re.compile(
-    r"^(" + "|".join(MESES_ABREV) + r")[a-z]*[\s./-]+(\d{2}|\d{4})$")
+    r"^" + meses.alternancia(formas="cortas") + r"[a-z]*[\s./-]+(\d{2}|\d{4})$")
 
 
 def normalizar(texto: str) -> str:
@@ -105,11 +109,8 @@ def _mes_desde_texto(texto: str) -> dt.date | None:
     m = _TEXTO_MES.match(normalizar(texto))
     if not m:
         return None
-    mes = MESES_ABREV[m.group(1)]
-    anio = int(m.group(2))
-    if anio < 100:                      # "26" -> 2026; el pivote sobra: la serie arranca en 1998
-        anio += 2000 if anio < 70 else 1900
-    return dt.date(anio, mes, 1)
+    # "26" -> 2026; el pivote de `anio_2d` sobra acá porque la serie arranca en 1998.
+    return dt.date(meses.anio_2d(int(m.group(2))), meses.numero(m.group(1)), 1)
 
 
 def celda_a_mes(celda, datemode: int) -> dt.date | None:

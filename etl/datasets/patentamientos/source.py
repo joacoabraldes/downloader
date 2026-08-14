@@ -28,6 +28,7 @@ from collections import defaultdict
 
 import requests
 
+from etl.core import meses
 from . import config
 
 BASE = "https://www.siomaa.com"
@@ -36,17 +37,19 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
 TIMEOUT = 30
 REPORT_NAME = "Informe de Patentamientos Mercado 4W"
 
-_MESES = {"enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
-          "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10,
-          "noviembre": 11, "diciembre": 12}
-_MES_RX = re.compile(r"(" + "|".join(_MESES) + r")\s*\.?\s*(\d{4})", re.IGNORECASE)
+# Nombre de mes completo + año de 4 dígitos (título del informe, nombre del archivo).
+_MES_RX = re.compile(meses.alternancia(formas="largas") + r"\s*\.?\s*(\d{4})", re.IGNORECASE)
 
 # Mes abreviado (como en el encabezado de columna de la Tabla 1, p.ej. 'Ene.2022' en los
 # LITE o 'JUN.26' en los full). El año puede venir en 4 dígitos (LITE) o 2 (full). Sin \b
 # final: en los full las columnas salen pegadas ('JUN.26MAY.26...').
-_MES_ABBR = {"ene": 1, "feb": 2, "mar": 3, "abr": 4, "may": 5, "jun": 6, "jul": 7,
-             "ago": 8, "sep": 9, "set": 9, "oct": 10, "nov": 11, "dic": 12}
-_ABBR_RX = re.compile(r"(" + "|".join(_MES_ABBR) + r")\.?\s*(\d{4}|\d{2})", re.IGNORECASE)
+#
+# Las variantes salen de `etl.core.meses`: este regex se armaba con un mapa propio que tenía
+# `sep` y `set` pero NO `sept`, así que un encabezado "Sept.2026" no matcheaba y el mes se
+# perdía en silencio. El helper además ordena las ramas de más larga a más corta, que es lo que
+# evita que `sep` le gane a `sept` y rompa el match.
+_ABBR_RX = re.compile(meses.alternancia(formas="cortas") + r"\.?\s*(\d{4}|\d{2})",
+                      re.IGNORECASE)
 
 
 # --------------------------------------------------------------------------- #
@@ -99,7 +102,7 @@ def _period_from_name(name: str) -> tuple[int | None, int | None]:
     """(año, mes) del displayName del informe (p.ej. '... - Junio 2026'). None si no matchea."""
     m = _MES_RX.search(name)
     if m:
-        return int(m.group(2)), _MESES[m.group(1).lower()]
+        return int(m.group(2)), meses.numero(m.group(1))
     return None, None
 
 
@@ -217,10 +220,10 @@ def _detect_period(rows: list[list]) -> tuple[int | None, int | None]:
         m = _ABBR_RX.search(line)
         if m:
             year = int(m.group(2))
-            return (year + 2000 if year < 100 else year), _MES_ABBR[m.group(1).lower()]
+            return meses.anio_2d(year), meses.numero(m.group(1))
         m = _MES_RX.search(line)
         if m:
-            return int(m.group(2)), _MESES[m.group(1).lower()]
+            return int(m.group(2)), meses.numero(m.group(1))
     return None, None
 
 
