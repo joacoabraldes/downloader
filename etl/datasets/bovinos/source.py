@@ -89,6 +89,72 @@ def download(url: str) -> bytes:
     return r.content
 
 
+# --------------------------------------------------------------------------------------
+# Planilla histórica (one-off): MAGyP publica DOS archivos distintos de la misma serie
+# --------------------------------------------------------------------------------------
+# De la misma página cuelgan dos PDFs, cada uno con su propio Excel embebido:
+#
+#   Tablero_Faena_Bovino.pdf   -> Faena_Bovina_2019-2026_mensual.xls   2019-04 .. 2026-07
+#   Indicadores bovinos.pdf    -> Planilla_indicadores_..._1990_...    1990-01 .. 2026-06
+#
+# El ETL diario usa el PRIMERO y así queda: tiene el mes más reciente, que es lo que importa
+# para el incremental. El segundo sirve sólo para el tramo viejo que el primero no cubre.
+#
+# **Los dos archivos se contradicen** en 4 de los 87 meses que comparten (peor caso 2019-06:
+# 241,273 vs 234,634, un 2,75%). Por eso la planilla de 1990 NO se puede usar para rellenar el
+# solapamiento: la corrida diaria volvería a pisar esos meses con los valores del Tablero al día
+# siguiente, y la serie quedaría flapeando entre dos versiones para siempre. Se usa sólo hacia
+# atrás, para lo que no tenemos.
+INDICADORES_TIMEOUT = 240  # el PDF de indicadores pesa ~480 KB y el host viene lento: con los
+                           # 90 s de TIMEOUT dio ReadTimeout de forma reproducible.
+
+
+def _find_indicadores_pdf() -> str:
+    """URL del PDF 'Indicadores bovinos' (el que lleva la planilla desde 1990)."""
+    r = requests.get(PAGE, headers=HEADERS, timeout=TIMEOUT, verify=False)
+    r.raise_for_status()
+    soup = BeautifulSoup(r.content, "lxml")
+    for a in soup.find_all("a", href=True):
+        name = a["href"].rsplit("/", 1)[-1].lower()
+        # "indicadores bovinos.pdf" y NO "indicadores bovinos anuales 1914-2025.pdf", que es la
+        # serie ANUAL y no sirve para una serie mensual.
+        if "indicadores bovinos.pdf" in name:
+            return requests.compat.urljoin(PAGE, a["href"])
+    raise RuntimeError("no se encontró el link al PDF 'Indicadores bovinos' en la página")
+
+
+def _find_xlsx_historico_uri(pdf_bytes: bytes) -> str:
+    """Hipervínculo a la planilla mensual desde 1990, embebida en el PDF de indicadores.
+
+    Ese PDF tiene 4 hipervínculos y tres son a INDEC (proyecciones de población), así que hay
+    que filtrar por nombre de archivo y no tomar el primero que aparezca.
+    """
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for page in pdf.pages:
+            for h in (page.hyperlinks or []):
+                uri = h.get("uri", "")
+                low = uri.lower()
+                if "indicadores_bovinos" in low and low.endswith(".xlsx"):
+                    return uri
+    raise RuntimeError("el PDF de indicadores no tiene el hipervínculo a la planilla .xlsx")
+
+
+def get_historico_magyp() -> tuple[dict[dt.date, float], str]:
+    """({fecha: producción}, url) de la planilla mensual desde 1990. Para el backfill one-off.
+
+    Reusa el mismo parser que el camino diario: la planilla tiene los mismos encabezados
+    ('Mes/Año' y 'Producción ... res con hueso'), así que `_find_cols` la ubica sin cambios.
+    """
+    pdf_url = _find_indicadores_pdf()
+    pdf = requests.get(pdf_url, headers=HEADERS, timeout=INDICADORES_TIMEOUT, verify=False)
+    pdf.raise_for_status()
+    uri = _find_xlsx_historico_uri(pdf.content)
+    url = _resolver_xls(uri, pdf_url)
+    blob = requests.get(url, headers=HEADERS, timeout=INDICADORES_TIMEOUT, verify=False)
+    blob.raise_for_status()
+    return parse_produccion(blob.content), url
+
+
 def _find_cols(cell, nrows: int, ncols: int) -> tuple[int, int, int]:
     """(fila de encabezado, col de fecha 'Mes/Año', col de producción) buscando por texto.
 

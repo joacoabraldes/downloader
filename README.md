@@ -16,7 +16,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `acero` | `etl_acero` | `Acero.xlsx` (1993→) | **PDF CAA** (scrape + pdfplumber) |
 | `aves` | `etl_aves` | `Aves.xlsx` (1981→) | **xlsx MAGyP** (scrape) + **PDF** de faena (fallback) |
 | `leche` | `etl_leche` | `leche.xlsx` (2015→) | **xlsx MAGyP** (URL fija) |
-| `bovinos` | `etl_bovinos` | `Bovinos.xlsx` (1998→) | **.xls MAGyP** (link dentro de un PDF) |
+| `bovinos` | `etl_bovinos` | `Bovinos.xlsx` (1998→) + planilla MAGyP (1990-1997) | **.xls MAGyP** (link dentro de un PDF) |
 | `demanda_energia` | `etl_demanda_energia` | `energia.xlsx` (2005→) | **xlsx CAMMESA** (URL fija) |
 | `icc` | `etl_icc` | — (la planilla trae 1998→) | **.xls UTDT** (link resuelto por scrape) |
 | `icg` | `etl_icg` | — (la planilla trae 2001→) | **.xls UTDT** (link resuelto por scrape) |
@@ -650,6 +650,37 @@ El xls es formato `.xls` viejo (se lee con **`xlrd`**); se ubican por texto las 
 *Mes/Año* y *Producción (miles tn res con hueso)* y se toma la producción (2019→, `definitivo`).
 El histórico profundo (1998→) sale de `etl/datasets/bovinos/data/Bovinos.xlsx` (`load-history`),
 cuya columna `desest` es la **referencia de calibración**.
+
+### MAGyP publica DOS planillas de la misma serie, y no coinciden
+
+De la misma página cuelgan dos PDFs, cada uno con su propio Excel embebido:
+
+| PDF | Excel | Rango (ago-2026) |
+|---|---|---|
+| `Tablero_Faena_Bovino.pdf` | `Faena_Bovina_2019-2026_mensual.xls` | 2019-04 → **2026-07** |
+| `Indicadores bovinos.pdf` (pág. 13) | `Planilla_indicadores_bovinos_desde_1990_MENSUAL.xlsx` | **1990-01** → 2026-06 |
+
+El ETL diario usa el **primero** y así queda: es el que trae el mes más reciente, que es lo que
+importa para el incremental. La planilla de 1990 se usó una sola vez para cargar los 8 años que
+faltaban:
+
+```bash
+python -m etl bovinos load-history --magyp-1990   # one-off, ya aplicado: 96 meses (1990-1997)
+```
+
+**Los dos archivos se contradicen** en 4 de los 87 meses que comparten (peor caso 2019-06:
+241,273 vs 234,634, un 2,75%). Por eso ese modo **sólo inserta meses anteriores al mínimo que ya
+está en la base**: rellenar el solapamiento dejaría la serie flapeando, porque la corrida diaria
+la volvería a pisar con los valores del Tablero al día siguiente. La regla lo vuelve además
+idempotente por construcción — una segunda corrida no encuentra nada y no escribe.
+
+Las dos planillas traen la producción en la **misma columna** (*Producción, en miles de toneladas
+res con hueso*), así que el tramo 1990-1997 es homogéneo con el resto de la serie. Ojo al elegir
+columna en la planilla de 1990: tiene 17 columnas y la única que dice *"toneladas equivalentes res
+con hueso"* es la de **exportaciones**, otra serie — y no existe en el archivo del Tablero.
+
+> La desestacionalizada **no** se recalculó al cargar 1990-1997: sigue arrancando en 1998.
+> Extenderla cambiaría todos los valores desestacionalizados de la serie, y es una decisión aparte.
 
 ## La fuente de demanda_energia (CAMMESA)
 
