@@ -155,8 +155,15 @@ with esperado(dataset, horas_max, dias_max_dato) as (values
                                      --   Medido sobre el `Last Saved` de las dos planillas, no sobre
                                      --   ingested_at: al 2026-08 no hay corridas incrementales todavia.
                                      --   Reajustar cuando haya varios meses de observacion real.
-    ('reservas_pasivos', 80,   8),   -- cron L-V -> fin de semana ~71 h
-                                     --   dato: edad del label al publicar 2-4 d (dia habil anterior) + finde + feriado
+    ('reservas_pasivos', 80,  11),   -- cron L-V 10:00 y 16:30 -> hueco max vie 16:30 a lun 10:00 ~65 h
+                                     --   dato: 8 -> 11 el 16/08/2026, junto con el cambio de horario del cron.
+                                     --   Medido sobre las 27 fechas de incremental real (descartando los lotes
+                                     --   del backfill, que comparten ingested_at): lag de 2 a 6 dias con el
+                                     --   horario viejo (19:15, que agarraba la publicacion de ~18:22 el mismo
+                                     --   dia). Con 10:00 + 16:30 ninguna pasada ve la publicacion del dia: el
+                                     --   dato entra a la mañana siguiente, +1 dia, y +3 si publica un viernes.
+                                     --   6 + 3 = 9, + 1 dia habil de periodo + margen = 11. Con 8 disparaba
+                                     --   DATO_VIEJO falso. Si se vuelve al horario 19:15/20:30, volver a 8.
     ('compras_granos',   80,  25)    -- cron L-V -> fin de semana ~71 h (ver nota de la ventana abajo)
                                      --   dato: edad del label al publicar 7-11 d medido sobre 3 semanas (el corte 05-ago
                                      --   entro el 12-ago) -> 11 + 7 de periodo + margen

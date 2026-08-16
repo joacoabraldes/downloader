@@ -146,7 +146,7 @@ daría falsa alarma **todos los meses**.
 
 | Dataset | Edad del label al publicarse | Período | `dias_max_dato` |
 |---|---|---|---|
-| `reservas_pasivos` | 2-4 días (día hábil anterior) | 1 día hábil | 8 |
+| `reservas_pasivos` | 2-6 días, +3 desde el cambio de horario del cron (ver nota) | 1 día hábil | 11 |
 | `compras_granos` | 7-11 días | 7 días | 25 |
 | `datos_gob` | variable (14 series) | 1 mes | 75 |
 | `patentamientos`, `cemento` | 31-37 días | 1 mes | 80 |
@@ -154,6 +154,13 @@ daría falsa alarma **todos los meses**.
 | `icc`, `icg` | ~24 días (publican **dentro** del mes) | 1 mes | 70 |
 | `granos`, `leche`, `bovinos`, `comex` | 42-50 días | 1 mes | 95 |
 | `acero`, `aves`, `demanda_energia` | 60 días | 1 mes | 105 |
+
+> **Nota sobre `reservas_pasivos` (16/08/2026).** Su cron pasó de 19:15 + 20:30 a 10:00 + 16:30 por
+> pedido explícito, sabiendo el costo: el BCRA sube `diar_bas.xls` a la tarde (~18:22), así que
+> ninguna de las dos pasadas ve la publicación del día y el dato entra a la mañana siguiente. Eso
+> le suma ~15 h de lag por día hábil y ~3 días cuando la publicación cae viernes, y por eso
+> `dias_max_dato` subió de 8 a 11. Con 8 habría disparado `DATO_VIEJO` falso. Para revertir:
+> volver a `15 19` / `30 20` en el crontab y `dias_max_dato` a 8.
 
 > En `reservas_pasivos` y `compras_granos` las dos lecturas coinciden, porque su `date` **no** es
 > el primer día de un período: es el día hábil y la fecha de corte respectivamente. La distinción

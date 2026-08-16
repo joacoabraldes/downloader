@@ -306,10 +306,15 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # 20-jul). Ventana 18-31, igual que granos. La corrida re-lee siempre los meses de los anios que
 # INDEC todavia marca provisorios, asi que ademas capta las revisiones sin pedirselo.
 30 16 18-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh comex
-# reservas_pasivos: dos pasadas por dia habil. La corrida es idempotente, asi que la segunda
-# no cuesta nada y cubre el caso de que el BCRA todavia no hubiera publicado a las 19:15.
-15 19 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh reservas_pasivos
-30 20 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh reservas_pasivos
+# reservas_pasivos: dos pasadas por dia habil, 10:00 y 16:30 (pedido del usuario, 16/08/2026).
+# OJO: el BCRA sube diar_bas.xls a la TARDE -- ~18:22 segun el `Last Saved` del archivo del
+# viernes 14-ago -- asi que NINGUNA de las dos pasadas ve la publicacion del dia: el dato entra
+# recien a la mañana siguiente. El horario anterior (19:15 + 20:30) la agarraba con ~1 h de
+# atraso; las 30 fechas medidas habian entrado TODAS a las 19:15, ninguna a las 20:30.
+# Costo medido: ~15 h mas de lag por dia habil, ~3 dias si publica un viernes. Por eso
+# dias_max_dato paso de 8 a 11. Para revertir: `15 19` + `30 20` y dias_max_dato a 8.
+0  10 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh reservas_pasivos
+30 16 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh reservas_pasivos
 # Semanal (compras y DJVE de granos). Corre todos los dias habiles porque TODAVIA NO SABEMOS
 # el dia real de publicacion: la pagina dice "se actualiza los miercoles" pero no esta verificado.
 # Es idempotente y barato (baja ~4 paginas y re-lee las ultimas 3 semanas, con lo que ademas
