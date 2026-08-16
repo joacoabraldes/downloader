@@ -29,7 +29,7 @@ filas por `(serie, mes)`. Para consumir hay **dos vistas por dataset** que ya re
 | `demanda_energia` | `etl_demanda_energia` | `etl_demanda_energia_actual` | `etl_demanda_energia_desest` |
 | `icc` | `etl_icc` | `etl_icc_actual` | `etl_icc_desest` (vacía: no se desestacionaliza) |
 | `icg` | `etl_icg` | `etl_icg_actual` | `etl_icg_desest` (vacía: no se desestacionaliza) |
-| `datos_gob` | `etl_datos_gob` + dimensión `etl_datos_gob_series` | `etl_datos_gob_actual` (+ `_real` y `_completo`) | `etl_datos_gob_desest` (sólo las 2 de ventas) |
+| `datos_gob` | `etl_datos_gob` + dimensión `etl_datos_gob_series` | `etl_datos_gob_actual` (+ `_real` y `_completo`) | `etl_datos_gob_desest` (las 2 de ventas + las 2 de comercio exterior) |
 | `comex` | `etl_comex` + dimensión `etl_comex_series` | `etl_comex_actual` | `etl_comex_desest` (sólo las 6 de cantidad) |
 | `compras_granos` | `etl_compras_granos` | `etl_compras_granos_actual` | — (semanal, no se desestacionaliza) |
 
@@ -45,7 +45,7 @@ Unen todos los datasets en una sola forma, agregando una columna `dataset`:
 | Vista | Contenido |
 |---|---|
 | `series_actual` | serie **observada** de los 13 datasets mensuales (`dataset, serie, date, valor, estado, fuente, ingested_at`) |
-| `series_desest` | serie **desestacionalizada** (`dataset, serie, date, valor, fuente, ingested_at, parametros`). `icc` e `icg` no aportan filas: se publican sin ajuste estacional. De `datos_gob` sólo se ajustan las dos series de ventas; de `comex`, sólo las seis de cantidad |
+| `series_desest` | serie **desestacionalizada** (`dataset, serie, date, valor, fuente, ingested_at, parametros`). `icc` e `icg` no aportan filas: se publican sin ajuste estacional. De `datos_gob` se ajustan las 2 de ventas y las 2 de comercio exterior (sobre su serie real); de `comex`, sólo las seis de cantidad |
 
 ```sql
 -- Ejemplo: última demanda no residencial desestacionalizada
@@ -300,7 +300,7 @@ ETL corrió `ok` y `ultimo_dato` no se movió, es que MAGyP todavía no publicó
 | `demanda_energia` | `estacionalizada`, `residencial`, `no_res_estacionalizada`, `no_estacionalizada`, `gudi`, `gume`, `guma`, `mate_distribuidor`, `local`, `no_residencial` | `no_residencial` |
 | `icc` | `nacional`, `capital`, `gba`, `interior`, `situacion_personal`, `situacion_macro`, `bienes_durables` | *(ninguna)* |
 | `icg` | `icg` | *(ninguna)* |
-| `datos_gob` | las 14: `isac`, `ipi_manufacturero`, `ipc_nacional`, `expo_total`, `impo_total`, `ventas_supermercados`, `ventas_centros_compras`, `ripte`, `smvm`, `indice_salarios_total`, `indice_salarios_registrado`, `indice_salarios_priv_registrado`, `indice_salarios_publico`, `indice_salarios_priv_no_registrado` | `ventas_supermercados`, `ventas_centros_compras` *(sobre la serie real)* |
+| `datos_gob` | las 14: `isac`, `ipi_manufacturero`, `ipc_nacional`, `expo_total`, `impo_total`, `ventas_supermercados`, `ventas_centros_compras`, `ripte`, `smvm`, `indice_salarios_total`, `indice_salarios_registrado`, `indice_salarios_priv_registrado`, `indice_salarios_publico`, `indice_salarios_priv_no_registrado` | `ventas_supermercados`, `ventas_centros_compras`, `expo_total`, `impo_total` *(las 4 sobre la serie real)* |
 | `comex` | las 18: `expo_{valor,precio,cantidad}_{general,primarios,moa,moi,combustibles}` + `impo_{valor,precio,cantidad}_general` | las 6 de cantidad: `expo_cantidad_{general,primarios,moa,moi,combustibles}`, `impo_cantidad_general` |
 
 > Las series que **no** están en `_desest` (p.ej. `lino`/`algodon`/`cartamo`/`canola` de granos, o
