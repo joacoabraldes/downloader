@@ -30,6 +30,7 @@ filas por `(serie, mes)`. Para consumir hay **dos vistas por dataset** que ya re
 | `icc` | `etl_icc` | `etl_icc_actual` | `etl_icc_desest` (vacía: no se desestacionaliza) |
 | `icg` | `etl_icg` | `etl_icg_actual` | `etl_icg_desest` (vacía: no se desestacionaliza) |
 | `datos_gob` | `etl_datos_gob` + dimensión `etl_datos_gob_series` | `etl_datos_gob_actual` (+ `_real` y `_completo`) | `etl_datos_gob_desest` (sólo las 2 de ventas) |
+| `comex` | `etl_comex` + dimensión `etl_comex_series` | `etl_comex_actual` | `etl_comex_desest` (sólo las 6 de cantidad) |
 | `compras_granos` | `etl_compras_granos` | `etl_compras_granos_actual` | — (semanal, no se desestacionaliza) |
 
 > Todas las tablas llevan prefijo **`etl_`**. El nombre de la tabla no siempre deriva directo
@@ -43,8 +44,8 @@ Unen todos los datasets en una sola forma, agregando una columna `dataset`:
 
 | Vista | Contenido |
 |---|---|
-| `series_actual` | serie **observada** de los 12 datasets mensuales (`dataset, serie, date, valor, estado, fuente, ingested_at`) |
-| `series_desest` | serie **desestacionalizada** (`dataset, serie, date, valor, fuente, ingested_at, parametros`). `icc` e `icg` no aportan filas: se publican sin ajuste estacional. De `datos_gob` sólo se ajustan las dos series de ventas |
+| `series_actual` | serie **observada** de los 13 datasets mensuales (`dataset, serie, date, valor, estado, fuente, ingested_at`) |
+| `series_desest` | serie **desestacionalizada** (`dataset, serie, date, valor, fuente, ingested_at, parametros`). `icc` e `icg` no aportan filas: se publican sin ajuste estacional. De `datos_gob` sólo se ajustan las dos series de ventas; de `comex`, sólo las seis de cantidad |
 
 ```sql
 -- Ejemplo: última demanda no residencial desestacionalizada
@@ -300,6 +301,7 @@ ETL corrió `ok` y `ultimo_dato` no se movió, es que MAGyP todavía no publicó
 | `icc` | `nacional`, `capital`, `gba`, `interior`, `situacion_personal`, `situacion_macro`, `bienes_durables` | *(ninguna)* |
 | `icg` | `icg` | *(ninguna)* |
 | `datos_gob` | las 14: `isac`, `ipi_manufacturero`, `ipc_nacional`, `expo_total`, `impo_total`, `ventas_supermercados`, `ventas_centros_compras`, `ripte`, `smvm`, `indice_salarios_total`, `indice_salarios_registrado`, `indice_salarios_priv_registrado`, `indice_salarios_publico`, `indice_salarios_priv_no_registrado` | `ventas_supermercados`, `ventas_centros_compras` *(sobre la serie real)* |
+| `comex` | las 18: `expo_{valor,precio,cantidad}_{general,primarios,moa,moi,combustibles}` + `impo_{valor,precio,cantidad}_general` | las 6 de cantidad: `expo_cantidad_{general,primarios,moa,moi,combustibles}`, `impo_cantidad_general` |
 
 > Las series que **no** están en `_desest` (p.ej. `lino`/`algodon`/`cartamo`/`canola` de granos, o
 > las componentes de `demanda_energia`) quedan solo como observadas: X-13 no las ajusta (molienda
@@ -641,3 +643,56 @@ base nuevo, multiplicá por `IPC(base_nuevo)/IPC(base_viejo)`. Entre dos series 
 > Sumar una serie nueva **no requiere escribir código**: se agrega su id a `SERIES_META` en
 > `etl/datasets/datos_gob/config.py` (con su flag `deflactable`) y la dimensión se re-sincroniza
 > sola en la próxima corrida. Las trampas de la API están en `docs/datos_gob_ar.md`.
+
+## `comex` (índices de comercio exterior del INDEC) — cómo consumirlo
+
+Son **números índice base 2004=100**, mensuales desde 2004-01, del Índice de Comercio Exterior
+(ICA) del INDEC. Descomponen el comercio exterior en sus dos componentes: **cuánto se despachó**
+(`cantidad`) y **a qué precio** (`precio`), con `valor` = el producto de ambos.
+
+### La vista que probablemente querés
+
+`etl_comex_actual` ya trae la dimensión unida, así que se filtra por eje sin parsear el nombre:
+
+```sql
+-- Volumen exportado por rubro, desestacionalizado, último año
+select d.rubro, d.date, d.valor
+from etl_comex_desest d
+where d.flujo = 'expo' and d.date >= date '2025-08-01'
+order by d.rubro, d.date;
+
+-- Precio vs cantidad de las exportaciones: ¿vendimos más o sólo más caro?
+select date,
+       max(valor) filter (where indice = 'cantidad') as cantidad,
+       max(valor) filter (where indice = 'precio')   as precio,
+       max(valor) filter (where indice = 'valor')    as valor
+from etl_comex_actual
+where flujo = 'expo' and rubro = 'general'
+group by date order by date;
+```
+
+### Cuatro cosas que hay que saber
+
+**1. No confundir con `expo_total` / `impo_total` de `datos_gob`.** Aquéllas son **montos en
+dólares**; éstas son **índices**. Un monto que sube no dice si se exportó más o si subió el
+precio internacional — para eso están estas. Se complementan, no se reemplazan.
+
+**2. `cantidad` es lo único desestacionalizado, y es a propósito.** El volumen físico es lo que
+trae la estacionalidad de la cosecha, y es la serie que tiene sentido comparar contra el mes
+anterior. `precio` no tiene estacionalidad de calendario que sacarle, y desestacionalizar
+`valor` por separado rompería la identidad `valor = precio × cantidad` sin dar nada a cambio.
+Para comparar contra el mes anterior usá `etl_comex_desest`; para comparar contra el mismo mes
+del año anterior, la serie observada alcanza.
+
+**3. Los últimos años son PROVISORIOS y se revisan.** INDEC marca años enteros como provisorios
+(al 2026-08: 2024, 2025 y 2026) y los cierra después. `etl_comex_actual` prefiere el snapshot
+`definitivo` cuando existe, pero mientras tanto el `estado` de la fila dice `provisorio`: si
+guardás un número de esos, puede cambiar.
+
+**4. La base es 2004=100 y no es negociable en la serie cargada.** Si INDEC rebasea, el ETL
+**corta** en vez de apendear valores de otra base (ver `source._check_base` y el README). Un
+salto de nivel sin marcar es peor que un dato faltante.
+
+> Las importaciones sólo están a **nivel general**: INDEC no abre los grandes rubros del lado
+> importador en esta serie mensual (los agrupa por uso económico, que es otro cuadro y otra
+> planilla). Si algún día hace falta, es un dataset nuevo, no una columna más acá.

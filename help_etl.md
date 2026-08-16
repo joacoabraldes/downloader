@@ -85,7 +85,7 @@ Cada ETL corre en la ventana del mes en que su fuente publica, no todos los día
 | `compras_granos` | lunes a viernes | 80 h (cubre el fin de semana) |
 | `acero` | días 15 al 10 del mes siguiente | 130 h (~5 días) |
 | `leche` | días 20 al 10 del mes siguiente | 260 h (~11 días) |
-| `granos` | días 18 al 31 | 450 h (~19 días) |
+| `granos`, `comex` | días 18 al 31 | 450 h (~19 días) |
 | `icc` | días 17 al 31 | 470 h (~20 días) |
 | `aves` | ventanas de fin de mes | 500 h (~21 días) |
 | `cemento`, `patentamientos`, `automotriz` | días 1 al 10 | 530 h (~22 días) |
@@ -152,7 +152,7 @@ daría falsa alarma **todos los meses**.
 | `patentamientos`, `cemento` | 31-37 días | 1 mes | 80 |
 | `automotriz` | 33 días, pero la ventana 1-10 puede atrasar la captura un mes entero | 1 mes | 105 |
 | `icc`, `icg` | ~24 días (publican **dentro** del mes) | 1 mes | 70 |
-| `granos`, `leche`, `bovinos` | 42-50 días | 1 mes | 95 |
+| `granos`, `leche`, `bovinos`, `comex` | 42-50 días | 1 mes | 95 |
 | `acero`, `aves`, `demanda_energia` | 60 días | 1 mes | 105 |
 
 > En `reservas_pasivos` y `compras_granos` las dos lecturas coinciden, porque su `date` **no** es
@@ -161,7 +161,10 @@ daría falsa alarma **todos los meses**.
 
 La columna del medio se midió con `min(ingested_at)` por fecha en cada tabla, descartando los lotes
 del backfill inicial (se reconocen porque cientos de fechas comparten el mismo `ingested_at`; sin
-descartarlos, lo "observado" es la fecha del backfill y no significa nada).
+descartarlos, lo "observado" es la fecha del backfill y no significa nada). La excepción es
+`comex`, que al 2026-08 sólo tiene el backfill: sus ~50 días salen del `Last Saved` de las
+planillas del INDEC (junio-2026 quedó guardado el 20-jul). Reajustar cuando haya corridas
+incrementales reales.
 
 Dos límites que conviene tener presentes:
 

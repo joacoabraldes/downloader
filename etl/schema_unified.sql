@@ -44,7 +44,12 @@ create or replace view series_actual as
   -- datos_gob mezcla unidades entre sus series (indices, USD, pesos). El nombre y la unidad de
   -- cada una salen de etl_datos_gob_actual, que ya trae la dimension.
   select 'datos_gob'::text as dataset, serie, date, valor, estado, fuente, ingested_at
-    from etl_datos_gob_actual;
+    from etl_datos_gob_actual
+  union all
+  -- comex son 18 numeros indice base 2004=100 (valor/precio/cantidad x rubro). El desarme del
+  -- slug en flujo/indice/rubro esta en etl_comex_actual, que ya trae la dimension.
+  select 'comex'::text as dataset, serie, date, valor, estado, fuente, ingested_at
+    from etl_comex_actual;
 
 -- Serie desestacionalizada (X-13) de todos los datasets, un valor por serie/mes.
 -- `parametros` (jsonb) trae lo que se usó en la corrida X-13 (modo mult/add, metodo, etc.).
@@ -86,4 +91,8 @@ create or replace view series_desest as
     from etl_icg_desest
   union all
   select 'datos_gob'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
-    from etl_datos_gob_desest;
+    from etl_datos_gob_desest
+  union all
+  -- comex aporta las 6 series de cantidad (5 rubros de expo + nivel general de impo).
+  select 'comex'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
+    from etl_comex_desest;

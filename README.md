@@ -1,4 +1,4 @@
-# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia · icc · icg · datos_gob)
+# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia · icc · icg · datos_gob · comex)
 
 Monorepo de ETLs de series mensuales argentinas. Un **núcleo compartido** + un paquete por
 serie, todo detrás de un solo CLI (`python -m etl ...`). Modelo de datos **append-only**
@@ -21,6 +21,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `icc` | `etl_icc` | — (la planilla trae 1998→) | **.xls UTDT** (link resuelto por scrape) |
 | `icg` | `etl_icg` | — (la planilla trae 2001→) | **.xls UTDT** (link resuelto por scrape) |
 | `datos_gob` | `etl_datos_gob` | — (la API trae 1965→) | **API oficial** `apis.datos.gob.ar/series` |
+| `comex` | `etl_comex` | — (las planillas traen 2004→) | **2 .xls INDEC** (URLs fijas, `xlrd`) |
 
 Las tablas están en formato **long** (una fila por `serie, date, estado`). Series por
 dataset:
@@ -80,6 +81,22 @@ dataset:
   las 2 de comercio exterior se **desestacionalizan sobre esa serie real**.
   `etl_datos_gob_completo` devuelve los tres valores —nominal, real y desestacionalizado— en una
   sola fila.
+- **comex**: 18 **números índice** de comercio exterior del INDEC (ICA), **base 2004=100**, desde
+  2004-01. Son `valor`, `precio` y `cantidad` para las exportaciones abiertas por **grandes
+  rubros** (`general`, `primarios`, `moa`, `moi`, `combustibles`) y para las importaciones a
+  nivel general —INDEC no abre las importaciones por grandes rubros en esta serie mensual—.
+  El nombre de serie es un slug plano `<flujo>_<indice>_<rubro>` (p. ej. `expo_cantidad_moa`)
+  porque el cuadro de desestacionalización selecciona por nombre; los tres ejes viven
+  desarmados en la dimensión `etl_comex_series` para poder filtrar sin parsear strings.
+  Se desestacionalizan las **6 series de cantidad** (los 5 rubros de expo + impo nivel general):
+  son el volumen físico, que es lo que se compara mes contra mes. Precio y valor quedan crudos
+  (ver `etl/series_desest.toml`).
+
+> **`comex` no reemplaza a `expo_total` / `impo_total` de `datos_gob`, ni al revés.** Aquéllas
+> son montos en **dólares** (y su serie real deflactada por CPI de EEUU); éstas son **números
+> índice** que separan el monto en sus dos componentes: cuánto se despachó (`cantidad`) y a qué
+> precio (`precio`). Cuando la pregunta es "¿exportamos más *cosas* o sólo subió el precio de la
+> soja?", la respuesta está en `expo_cantidad_*`, no en el monto.
 
 > Los dos índices de UTDT son la excepción del repo en dos cosas. **(1)** Se publican *dentro*
 > del mes de referencia, no al mes siguiente. **(2)** No se desestacionalizan: UTDT los publica
@@ -141,7 +158,8 @@ de generar los miércoles: la fuente saltea semanas y algún link apunta a una p
 `etl/series_desest.toml`** (ver la sección *Desestacionalización*): granos **4** series
 (`total`, `soja`, `girasol`, `mani`), automotriz las 3 (`produccion`, `ventas`,
 `expo`), cemento `despacho_nacional`, patentamientos las 7 categorías, acero `acero_crudo`,
-aves `faena`, demanda_energia `no_residencial`. `lino`, `algodon`, `cartamo`
+aves `faena`, demanda_energia `no_residencial`, comex las **6 de cantidad**
+(`expo_cantidad_*` + `impo_cantidad_general`). `lino`, `algodon`, `cartamo`
 y `canola` **no** se desestacionalizan: su molienda es intermitente (mayormente ceros) y
 X-13 no puede ajustarlas; quedan solo como serie observada.
 
@@ -284,6 +302,10 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # datos_gob: 9 series de organismos distintos, cada uno con su calendario. Sin ventana; la
 # corrida son 9 requests a una API y es idempotente.
 45 15 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh datos_gob
+# comex: INDEC publica el ICA a mediados del mes siguiente (junio-2026 quedo en las planillas el
+# 20-jul). Ventana 18-31, igual que granos. La corrida re-lee siempre los meses de los anios que
+# INDEC todavia marca provisorios, asi que ademas capta las revisiones sin pedirselo.
+30 16 18-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh comex
 # reservas_pasivos: dos pasadas por dia habil. La corrida es idempotente, asi que la segunda
 # no cuesta nada y cubre el caso de que el BCRA todavia no hubiera publicado a las 19:15.
 15 19 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh reservas_pasivos
@@ -370,8 +392,8 @@ python -m etl export                  # todos los datasets a CSV en la carpeta a
 python -m etl export automotriz       # solo automotriz -> automotriz_d11.csv
 python -m etl export automotriz --dir ~/csvs
 ```
-`automotriz_d11.csv` y `patentamientos_d11.csv` salen en formato ancho (`date` + una columna
-por serie); granos y cemento en `date, d11`.
+`automotriz_d11.csv`, `patentamientos_d11.csv` y `comex_d11.csv` salen en formato ancho (`date`
++ una columna por serie); granos y cemento en `date, d11`.
 
 ## Modelo de datos
 
@@ -701,3 +723,40 @@ filas se guardan como series (en GWh, ÷1000), con `estado='definitivo'` (2023�
 `no_residencial` (Demanda No Residencial + Demanda No Estacionalizada) es la principal; su
 histórico profundo (2005→2022) sale de `etl/datasets/demanda_energia/data/energia.xlsx`
 (`load-history`), cuya columna `desest` es la **referencia de calibración**.
+
+## La fuente de comex (INDEC)
+
+`etl/datasets/comex/source.py` baja **dos** planillas `.xls` del INDEC por URL fija
+(`ftp/cuadros/economia/serie_mensual_indices_expo.xls` y `..._comex.xls`, los links *Series
+mensuales* del cuadro **Índices de comercio exterior**). Las dos tienen el mismo layout y una
+sola hoja: fila 2 el encabezado de bloque, fila 3 `Valor | Precio | Cantidad`, fila 5 en
+adelante un mes por fila. Los bloques se ubican **leyendo el encabezado**, no por número de
+columna: si INDEC agrega un rubro o los reordena, el parser lo sigue encontrando.
+
+Traen **siempre el histórico completo** (2004-01 →), así que no hay `load-history`: la primera
+corrida carga los 270 meses sola, por el camino de backfill masivo.
+
+**Las dos planillas se pisan y eso es deliberado.** El bloque de exportaciones nivel general
+está en las dos y es idéntico (verificado sobre los 270 meses: diferencia 0). Se ingesta el de
+la planilla de expo —que además abre los rubros— y el de la de comex se parsea **sólo para
+cruzarlo**. Si algún mes deja de coincidir, es que una de las dos cambió de base o de
+metodología, y entonces el dato de importaciones —que sale sólo de la de comex— dejó de ser
+comparable con el resto. El ETL lo reporta como falla (dispara el mail del cron) pero igual
+ingesta lo que sí pudo leer.
+
+> **El chequeo de base es un stop-the-world.** El título de la planilla declara `base 2004=100`
+> y `source._check_base` corta la corrida si deja de decirlo. INDEC ya rebaseó una vez (venía de
+> base 1993): apendear valores de una base nueva sobre la serie vieja dejaría un salto de nivel
+> sin marcar, que es peor que no traer el dato.
+
+`estado` sale de la planilla: INDEC marca con asterisco el **año** provisorio (`2026*`) y esa
+marca aplica a sus 12 meses. Al 2026-08 son provisorios 2024, 2025 y 2026. Cuando cierra un año,
+el asterisco desaparece y los mismos meses vuelven a entrar como snapshot `definitivo`; los dos
+conviven y `etl_comex_actual` prioriza el definitivo. Por eso el incremental re-lee en cada
+corrida **los meses de los años provisorios** (~30) más cualquier `(serie, mes, estado)` que no
+esté cargado, y no toca los ya definitivos; `--full` los revisa igual.
+
+> El criterio del incremental es por **estado**, no por fecha. Con un `date > último cargado`
+> —lo natural— el pasaje provisorio → definitivo no entraría nunca: cuando INDEC cierra 2024,
+> esos meses siguen siendo viejos y quedarían fuera de la ventana, con la serie marcada
+> provisoria para siempre.

@@ -193,3 +193,36 @@ td = "td1coef"
 
 [datos_gob.overrides.impo_total]
 td = "td1coef"
+
+# Índices de comercio exterior del INDEC (ICA), base 2004=100. Se desestacionalizan SOLO las 6
+# series de CANTIDAD (5 rubros de expo + nivel general de impo).
+#
+# Por qué sólo las de cantidad: son el volumen físico despachado, que es lo que se compara mes
+# contra mes y lo que trae la estacionalidad de la cosecha. El índice de PRECIO no se ajusta
+# (un precio no tiene estacionalidad de calendario que sacarle, igual que no se le corre X-13 al
+# ipc_nacional), y el de VALOR es el producto de los otros dos: desestacionalizarlo aparte
+# rompería la identidad valor = precio x cantidad sin dar nada a cambio.
+#
+# mult: las seis son estrictamente positivas (el mínimo histórico es 11.61, cantidad de
+# combustibles) y su estacionalidad escala con el nivel: la cosecha gruesa mueve el volumen
+# exportado en proporción, no en una constante de índice.
+#
+# td1coef, no el td de 6 coeficientes: lo que mueve el volumen despachado en un mes es cuántos
+# días hábiles tuvo la aduana, un contraste hábil/no hábil. Distinguir lunes de martes tiene
+# sentido en comercio minorista; en un registro aduanero son 5 regresores más sin hipótesis
+# detrás. Es el mismo criterio que expo_total / impo_total en datos_gob.
+#
+# SIN REFERENCIA DE CALIBRACIÓN: INDEC publica estos índices crudos. En el informe del ICA sí
+# hay series desestacionalizadas, pero de los VALORES en dólares, no de estos índices de
+# cantidad: no son el mismo número y no tienen por qué coincidir. Los parámetros de arriba son
+# los razonables para una serie de volumen, no los que reproducen un resultado oficial. Si
+# algún día aparece esa referencia, recalibrar.
+#
+# Sin `start`: la serie arranca en 2004-01 y es contigua (270 meses al 2026-08, sin huecos).
+[comex]
+table = "etl_comex"
+desest = ["expo_cantidad_general", "expo_cantidad_primarios", "expo_cantidad_moa",
+          "expo_cantidad_moi", "expo_cantidad_combustibles", "impo_cantidad_general"]
+mode = "mult"
+td = "td1coef"
+seasonalma = "s3x5"

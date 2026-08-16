@@ -148,6 +148,13 @@ with esperado(dataset, horas_max, dias_max_dato) as (values
                                      --   dato: `ultimo_dato` es el MAX sobre todas las series, asi
                                      --   que avanza en cuanto publica la mas rapida. Ojo: este umbral
                                      --   NO detecta una serie individual congelada, solo el corte total.
+    ('comex',           450,  95),   -- cron 18-31 -> hueco max ~18 dias (del 31 al 18), igual que granos
+                                     --   dato: INDEC publica el ICA a mediados del mes siguiente (junio-2026
+                                     --   salio el 20-jul: la planilla quedo guardada ese dia) -> edad del
+                                     --   label al publicar ~50 d. 50 + 31 de periodo + margen = 95.
+                                     --   Medido sobre el `Last Saved` de las dos planillas, no sobre
+                                     --   ingested_at: al 2026-08 no hay corridas incrementales todavia.
+                                     --   Reajustar cuando haya varios meses de observacion real.
     ('reservas_pasivos', 80,   8),   -- cron L-V -> fin de semana ~71 h
                                      --   dato: edad del label al publicar 2-4 d (dia habil anterior) + finde + feriado
     ('compras_granos',   80,  25)    -- cron L-V -> fin de semana ~71 h (ver nota de la ventana abajo)
