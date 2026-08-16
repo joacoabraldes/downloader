@@ -331,7 +331,7 @@ select * from etl_control_salud where estado <> 'ok';
 
 | Columna | Significado |
 |---|---|
-| `dataset` | los 14, hayan corrido o no |
+| `dataset` | los 15, hayan corrido o no |
 | `estado` | **proceso**: `ok` · `FALLA` · `SIN_CORRER` · `NUNCA_CORRIO` |
 | `estado_ultima_corrida` | `ok` / `falla` de la última ejecución |
 | `ultima_corrida` · `horas_desde` | cuándo terminó y hace cuánto |
