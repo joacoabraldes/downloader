@@ -156,8 +156,12 @@ start = 2022-12-01
 # nominal no dice nada útil. De ahí el `view` de abajo, que apunta a la serie deflactada.
 [datos_gob]
 table = "etl_datos_gob"
-view = "etl_datos_gob_real"      # insumo: la serie deflactada, NO la nominal
-desest = ["ventas_supermercados", "ventas_centros_compras"]
+# Insumo: la serie deflactada, NO la nominal. OJO: `etl_datos_gob_real` deflacta con DOS índices
+# según la serie —'ipc_largo' para las de pesos, 'uscpi_mensual' (CPI-U del BLS, NSA) para
+# expo/impo—, así que acá conviven pesos constantes y dólares constantes. A X-13 le da igual:
+# ajusta cada serie por separado y es invariante a escala.
+view = "etl_datos_gob_real"
+desest = ["ventas_supermercados", "ventas_centros_compras", "expo_total", "impo_total"]
 # mult: son ventas, estrictamente positivas y con estacionalidad proporcional al nivel (el pico
 # de diciembre escala con la serie). Además el modo multiplicativo es invariante a la escala, así
 # que cambiar el mes base del deflactor no altera la descomposición: sólo reescala el d11.
@@ -170,3 +174,22 @@ seasonalma = "s3x5"
 # desestacionalizada de estas dos series contra la cual verificar que reproducimos su número. Los
 # parámetros de arriba son los razonables para una serie de ventas minoristas, no los que
 # reproducen un resultado oficial. Si algún día aparece esa referencia, recalibrar.
+
+# Comercio exterior (INDEC, ICA). Heredan mult del dataset —son valores estrictamente positivos
+# (mínimo histórico USD 593 M) con estacionalidad proporcional al nivel: la cosecha gruesa mueve
+# las exportaciones en proporción, no en una constante de dólares.
+#
+# td1coef en vez del td de 6 coeficientes del default: lo que mueve el valor despachado en un mes
+# es cuántos días hábiles tuvo la aduana, un contraste hábil/no hábil. Distinguir lunes de martes
+# —que es lo que agrega el td de 6— tiene sentido en comercio minorista, donde el sábado pesa
+# distinto; en un registro aduanero son 5 regresores más sin hipótesis detrás.
+#
+# SIN REFERENCIA DE CALIBRACIÓN, y acá hay un matiz: INDEC publica series desestacionalizadas de
+# comercio exterior en el informe del ICA, pero sobre los valores NOMINALES en dólares. No sirven
+# de referencia para estas, que salen de la serie deflactada por CPI. No son el mismo número y no
+# tienen por qué coincidir.
+[datos_gob.overrides.expo_total]
+td = "td1coef"
+
+[datos_gob.overrides.impo_total]
+td = "td1coef"

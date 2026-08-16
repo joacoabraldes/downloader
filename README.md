@@ -72,11 +72,14 @@ dataset:
   (`total`, `registrado`, `priv_registrado`, `publico`, `priv_no_registrado`). Es el único
   dataset **star-schema mensual**: sus series no comparten unidad (conviven índices, dólares y
   pesos), así que el nombre y la unidad viven en `etl_datos_gob_series`.
-  Las 9 series en pesos corrientes tienen además **valor real** (a precios de junio-2026,
-  deflactadas por `public.deflactores` / `ipc_largo`, que cubre desde 1990-01) en la vista
-  `etl_datos_gob_real`, y las 2 de ventas se
-  **desestacionalizan sobre esa serie real**. `etl_datos_gob_completo` devuelve los tres valores
-  —nominal, real y desestacionalizado— en una sola fila.
+  Las 11 series en valores corrientes tienen además **valor real** en `etl_datos_gob_real`, a
+  precios del último dato de cada serie (base móvil y por serie; el mes viaja en `mes_base`).
+  Son **dos deflactores**, ambos de `public.deflactores` y elegidos por la columna `deflactor`:
+  `ipc_largo` para las 9 en pesos (desde 1990-01) y `uscpi_mensual` —CPI-U del BLS, NSA— para
+  `expo_total` / `impo_total`, porque estar en dólares no exime de deflactar. Las 2 de ventas y
+  las 2 de comercio exterior se **desestacionalizan sobre esa serie real**.
+  `etl_datos_gob_completo` devuelve los tres valores —nominal, real y desestacionalizado— en una
+  sola fila.
 
 > Los dos índices de UTDT son la excepción del repo en dos cosas. **(1)** Se publican *dentro*
 > del mes de referencia, no al mes siguiente. **(2)** No se desestacionalizan: UTDT los publica
