@@ -19,8 +19,9 @@ from __future__ import annotations
 import datetime as dt
 import re
 
-import requests
 from bs4 import BeautifulSoup
+
+from etl.core import http
 
 # URL de la página de provisorios.
 PAGE_URL = (
@@ -49,13 +50,10 @@ _NUM_RE = re.compile(r"^-?[\d.]+$")
 
 
 def fetch_html(url: str = PAGE_URL, timeout: int = 60) -> str:
-    """Baja el HTML. Fija el encoding real (gov.ar declara ISO-8859-1 pero suele ser
-    Windows-1252). verify=False: los certs de gov.ar suelen ser problemáticos."""
-    resp = requests.get(
-        url, timeout=timeout, verify=False,
-        headers={"User-Agent": "Mozilla/5.0"},
-    )
-    resp.raise_for_status()
+    """Baja el HTML con reintentos y backoff (ver `etl.core.http`: MAGyP corta por volumen y
+    también deja morir la conexión por timeout). Fija el encoding real: gov.ar declara
+    ISO-8859-1 pero suele mandar Windows-1252."""
+    resp = http.fetch(url, timeout=timeout, verify=False)
     resp.encoding = resp.apparent_encoding
     return resp.text
 

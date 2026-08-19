@@ -48,18 +48,15 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-import time
 import unicodedata
 
-import requests
 from bs4 import BeautifulSoup
 
-# Códigos que se reintentan: throttling y errores de servidor. El 403 entra acá porque es lo que
-# devuelve este sitio cuando corta por volumen, no un problema de permisos. El 404 queda afuera
-# a propósito: es una página que no existe.
-REINTENTABLES = frozenset({403, 429, 500, 502, 503, 504})
-REINTENTOS = 4
-ESPERA_BASE = 5.0  # segundos; se duplica en cada intento (5, 10, 20)
+from etl.core import http
+
+# La política de reintentos (qué códigos, cuántos intentos, cuánto se espera) vive en
+# `etl.core.http`, compartida con los demás ETLs que pegan contra MAGyP.
+REINTENTOS = http.REINTENTOS
 
 BASE = (
     "https://www.magyp.gob.ar/sitio/areas/ss_mercados_agropecuarios/areas/granos/"
@@ -165,29 +162,18 @@ def url_semana(fecha: dt.date) -> str:
 
 
 def fetch_html(url: str, timeout: int = 60, reintentos: int = REINTENTOS) -> str:
-    """Baja el HTML, con reintentos y backoff ante throttling.
+    """Baja el HTML con reintentos y backoff (política en `etl.core.http`).
 
-    Fija el encoding real (gov.ar declara ISO-8859-1 y manda Windows-1252) y desactiva verify
-    (sus certs suelen fallar).
+    Fija el encoding real: gov.ar declara ISO-8859-1 y manda Windows-1252.
 
-    El sitio **corta por volumen de requests**: en el backfill inicial, tras ~700 páginas seguidas
-    empezó a devolver 403 en TODO, índices incluidos, y siguió bloqueando un buen rato. Por eso
-    el 403 se reintenta con espera creciente en lugar de darse por perdido: un ETL semanal que
-    baja 4 páginas no debería fallar por un corte transitorio. El 404 NO se reintenta — es una
-    página que no existe, no un bloqueo (ver `load_history`).
+    Este es el sitio que motivó los reintentos por 403: en el backfill inicial, tras ~700
+    páginas seguidas empezó a devolver 403 en TODO, índices incluidos. El 404 sigue sin
+    reintentarse y llega como `HTTPError` — `load_history` lo usa para saltear las semanas que
+    el índice linkea pero la fuente nunca publicó.
     """
-    espera = ESPERA_BASE
-    for intento in range(reintentos):
-        resp = requests.get(url, timeout=timeout, verify=False,
-                            headers={"User-Agent": "Mozilla/5.0"})
-        if resp.status_code in REINTENTABLES and intento < reintentos - 1:
-            time.sleep(espera)
-            espera *= 2
-            continue
-        resp.raise_for_status()
-        resp.encoding = resp.apparent_encoding
-        return resp.text
-    raise RuntimeError(f"inalcanzable: {url}")  # el loop siempre sale por return o raise
+    resp = http.fetch(url, timeout=timeout, reintentos=reintentos, verify=False)
+    resp.encoding = resp.apparent_encoding
+    return resp.text
 
 
 def parse_indice_anual(html: str) -> list[dt.date]:
