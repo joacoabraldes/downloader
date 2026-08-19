@@ -23,6 +23,8 @@ import requests
 import xlrd
 from bs4 import BeautifulSoup
 
+from etl.core import http
+
 PAGE = "https://www.magyp.gob.ar/sitio/areas/bovinos/informacion_sectorial/"
 HEADERS = {"User-Agent": "Mozilla/5.0 (bovinos ETL)"}
 TIMEOUT = 90
@@ -35,8 +37,7 @@ ARCHIVO_BASE = "http://www.magyp.gob.ar/sitio/areas/ss_ganaderia/archivos/"
 
 def _find_tablero_pdf() -> str:
     """URL del PDF 'Tablero de Faena Bovina' (linkeado en la página de info sectorial)."""
-    r = requests.get(PAGE, headers=HEADERS, timeout=TIMEOUT, verify=False)
-    r.raise_for_status()
+    r = http.fetch(PAGE, headers=HEADERS, timeout=TIMEOUT, verify=False)
     soup = BeautifulSoup(r.content, "lxml")
     for a in soup.find_all("a", href=True):
         name = a["href"].rsplit("/", 1)[-1].lower()
@@ -84,8 +85,7 @@ def _resolver_xls(uri: str, pdf_url: str) -> str:
 
 def download(url: str) -> bytes:
     """Baja el archivo (verify=False: el cert de magyp.gob.ar no valida en el server)."""
-    r = requests.get(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
-    r.raise_for_status()
+    r = http.fetch(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
     return r.content
 
 
@@ -111,8 +111,7 @@ INDICADORES_TIMEOUT = 240  # el PDF de indicadores pesa ~480 KB y el host viene 
 
 def _find_indicadores_pdf() -> str:
     """URL del PDF 'Indicadores bovinos' (el que lleva la planilla desde 1990)."""
-    r = requests.get(PAGE, headers=HEADERS, timeout=TIMEOUT, verify=False)
-    r.raise_for_status()
+    r = http.fetch(PAGE, headers=HEADERS, timeout=TIMEOUT, verify=False)
     soup = BeautifulSoup(r.content, "lxml")
     for a in soup.find_all("a", href=True):
         name = a["href"].rsplit("/", 1)[-1].lower()
@@ -146,12 +145,10 @@ def get_historico_magyp() -> tuple[dict[dt.date, float], str]:
     ('Mes/Año' y 'Producción ... res con hueso'), así que `_find_cols` la ubica sin cambios.
     """
     pdf_url = _find_indicadores_pdf()
-    pdf = requests.get(pdf_url, headers=HEADERS, timeout=INDICADORES_TIMEOUT, verify=False)
-    pdf.raise_for_status()
+    pdf = http.fetch(pdf_url, headers=HEADERS, timeout=INDICADORES_TIMEOUT, verify=False)
     uri = _find_xlsx_historico_uri(pdf.content)
     url = _resolver_xls(uri, pdf_url)
-    blob = requests.get(url, headers=HEADERS, timeout=INDICADORES_TIMEOUT, verify=False)
-    blob.raise_for_status()
+    blob = http.fetch(url, headers=HEADERS, timeout=INDICADORES_TIMEOUT, verify=False)
     return parse_produccion(blob.content), url
 
 

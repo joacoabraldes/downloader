@@ -16,9 +16,9 @@ import datetime as dt
 import io
 import re
 
-import requests
 from bs4 import BeautifulSoup
 
+from etl.core import http
 from . import config
 
 COMUNICADOS_URL = "https://www.acero.org.ar/comunicados-cifras-2023-2-2-2/"
@@ -44,8 +44,7 @@ def _num(t: str) -> float:
 
 def find_latest_cifras_pdf() -> tuple[str, int, int] | None:
     """(url, año, mes) del PDF de Cifras más nuevo publicado en la página, o None."""
-    r = requests.get(COMUNICADOS_URL, headers=HEADERS, timeout=TIMEOUT, verify=False)
-    r.raise_for_status()
+    r = http.fetch(COMUNICADOS_URL, headers=HEADERS, timeout=TIMEOUT, verify=False)
     soup = BeautifulSoup(r.content, "lxml")
     best = None
     for a in soup.find_all("a", href=True):
@@ -64,8 +63,7 @@ def find_latest_cifras_pdf() -> tuple[str, int, int] | None:
 
 def download_pdf(url: str) -> bytes:
     """Baja el PDF (verify=False: el cert de acero.org.ar no valida en el server)."""
-    r = requests.get(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
-    r.raise_for_status()
+    r = http.fetch(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
     return r.content
 
 

@@ -24,9 +24,9 @@ import urllib.parse
 
 import openpyxl
 import pdfplumber
-import requests
 from bs4 import BeautifulSoup
 
+from etl.core import http
 from . import config
 
 PAGE = "https://www.magyp.gob.ar/sitio/areas/aves/estadistica/carne/index.php"
@@ -61,8 +61,7 @@ def _anio_de_href(href: str) -> int:
 
 def find_latest_indicadores_xlsx() -> str | None:
     """URL absoluta del 'Indicadores de Oferta y Demanda' .xlsx de mayor año, o None."""
-    r = requests.get(PAGE, headers=HEADERS, timeout=TIMEOUT, verify=False)
-    r.raise_for_status()
+    r = http.fetch(PAGE, headers=HEADERS, timeout=TIMEOUT, verify=False)
     soup = BeautifulSoup(r.content, "lxml")
     best = None
     for a in soup.find_all("a", href=True):
@@ -85,8 +84,7 @@ def find_latest_faena_pdf() -> str | None:
     **'provincial' se excluye explícitamente**: `Faena Provincial <años>.pdf` vive en la misma
     carpeta, matchea 'faena' y es otra serie (faena abierta por provincia).
     """
-    r = requests.get(PAGE, headers=HEADERS, timeout=TIMEOUT, verify=False)
-    r.raise_for_status()
+    r = http.fetch(PAGE, headers=HEADERS, timeout=TIMEOUT, verify=False)
     soup = BeautifulSoup(r.content, "lxml")
     best = None
     for a in soup.find_all("a", href=True):
@@ -104,8 +102,7 @@ def find_latest_faena_pdf() -> str | None:
 
 def download(url: str) -> bytes:
     """Baja el archivo (verify=False: el cert de magyp.gob.ar no valida en el server)."""
-    r = requests.get(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
-    r.raise_for_status()
+    r = http.fetch(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
     return r.content
 
 

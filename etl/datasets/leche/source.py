@@ -16,6 +16,8 @@ import openpyxl
 import requests
 from bs4 import BeautifulSoup
 
+from etl.core import http
+
 BASE = "https://www.magyp.gob.ar/sitio/areas/ss_lecheria/estadisticas/_01_primaria"
 XLSX_URL = f"{BASE}/_archivos/PPV021_PPV022.xlsx"
 PAGE = f"{BASE}/index.php"
@@ -29,8 +31,7 @@ def _resolve_url() -> str:
                       allow_redirects=True)
     if r.status_code == 200:
         return XLSX_URL
-    page = requests.get(PAGE, headers=HEADERS, timeout=TIMEOUT, verify=False)
-    page.raise_for_status()
+    page = http.fetch(PAGE, headers=HEADERS, timeout=TIMEOUT, verify=False)
     soup = BeautifulSoup(page.content, "lxml")
     for a in soup.find_all("a", href=True):
         if "PPV021_PPV022" in a["href"] and a["href"].lower().endswith(".xlsx"):
@@ -40,8 +41,7 @@ def _resolve_url() -> str:
 
 def download(url: str) -> bytes:
     """Baja el archivo (verify=False: el cert de magyp.gob.ar no valida en el server)."""
-    r = requests.get(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
-    r.raise_for_status()
+    r = http.fetch(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
     return r.content
 
 

@@ -50,6 +50,8 @@ import re
 
 import requests
 
+from etl.core import http
+
 BASE = "https://www.adefa.org.ar/upload/estadisticas"
 PRENSA_BASE = "https://www.adefa.org.ar/es/prensa-archivo"
 HEADERS = {"User-Agent": "Mozilla/5.0 (automotriz ETL)"}
@@ -107,11 +109,15 @@ def pdf_url(year: int, month: int) -> str:
 
 def download_pdf(year: int, month: int) -> bytes | None:
     """Baja el PDF del mes. None si no está publicado (404). verify=False: cert de ADEFA."""
-    resp = requests.get(pdf_url(year, month), headers=HEADERS, timeout=TIMEOUT,
-                        verify=False)
-    if resp.status_code == 404:
-        return None
-    resp.raise_for_status()
+    try:
+        resp = http.fetch(pdf_url(year, month), headers=HEADERS, timeout=TIMEOUT,
+                          verify=False)
+    except requests.HTTPError as e:
+        # 404 = el informe del mes todavía no salió. `http.fetch` no reintenta el 404, así que
+        # llega en el primer intento y no paga el backoff.
+        if e.response is not None and e.response.status_code == 404:
+            return None
+        raise
     return resp.content
 
 
@@ -236,8 +242,7 @@ def find_prensa(year: int, month: int, *, desde_id: int | None = None,
         low = nombre.lower()
         if objetivo not in low or str(year) not in low:
             continue
-        resp = requests.get(prensa_url(id_), headers=HEADERS, timeout=TIMEOUT, verify=False)
-        resp.raise_for_status()
+        resp = http.fetch(prensa_url(id_), headers=HEADERS, timeout=TIMEOUT, verify=False)
         # Hay ids que declaran `application/octet-stream` y no son PDF: se chequea el magic
         # byte en vez de confiar en el Content-Type.
         if resp.content[:4] != b"%PDF":

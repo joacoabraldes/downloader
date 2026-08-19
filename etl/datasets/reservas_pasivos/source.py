@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import datetime as dt
 
-import requests
 import xlrd
+
+from etl.core import http
 
 URL = "https://www.bcra.gob.ar/archivos/Pdfs/PublicacionesEstadisticas/diar_bas.xls"
 HEADERS = {"User-Agent": "Mozilla/5.0 (reservas_pasivos ETL)"}
@@ -33,8 +34,7 @@ ANCHOR_CD = "246"
 
 def download(url: str = URL) -> bytes:
     """Baja el archivo (verify=False: el cert de bcra.gob.ar no siempre valida en el server)."""
-    r = requests.get(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
-    r.raise_for_status()
+    r = http.fetch(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
     return r.content
 
 

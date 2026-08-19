@@ -571,6 +571,58 @@ dígitos (`JUN.26`) y sólo después el título con nombre completo y año de cu
 > `automotriz`, que tienen su mapa propio y hoy funcionan; conviene migrarlos al tocar cada ETL
 > y verificando contra la base, no todos de una.
 
+## Bajar de la fuente: usar `etl/core/http.py`
+
+Las fuentes del Estado fallan de **dos formas** distintas y las dos son transitorias:
+
+1. **Cortan por volumen** y devuelven 403/429/5xx. En el backfill de `compras_granos`, tras
+   ~700 páginas seguidas MAGyP empezó a devolver 403 en TODO, índices incluidos.
+2. **No completan la conexión** y el request muere por timeout.
+
+El 18 de agosto de 2026 la corrida de `granos` murió por la segunda: `ConnectTimeout` de 60 s
+contra `www.magyp.gob.ar`. `compras_granos`, contra el MISMO host y dos horas antes, había
+bajado sus páginas sin problema — o sea que la fuente estaba viva y el ETL falló igual.
+
+Lo importante es que `compras_granos` YA tenía reintentos y tampoco lo habría salvado: su loop
+miraba `resp.status_code`, y en un fallo de red la excepción se levanta **antes de que exista
+una `Response`**. Reintentar por código de estado cubre el caso 1 y deja el caso 2 afuera.
+
+```python
+from etl.core import http
+
+r = http.fetch(url, headers=HEADERS, timeout=TIMEOUT, verify=False)
+r.raise_for_status()   # NO hace falta: fetch() ya lo llamó
+blob = r.content
+```
+
+`fetch()` hace 4 intentos con backoff 5/10/20 s, reintentando tanto por estado (403, 429, 5xx)
+como por error de red (`ConnectionError` y `Timeout`, que entre las dos cubren `ConnectTimeout`
+y `ReadTimeout`). Devuelve la `Response` ya validada con `raise_for_status()`.
+
+**El 404 no se reintenta y llega como `HTTPError`**, a propósito: no es un corte, es una página
+que no existe, y aguas abajo eso es una señal. `compras_granos.load_history` lo usa para saltear
+semanas que el índice linkea pero la fuente nunca publicó, y `automotriz.download_pdf` para
+saber que el informe del mes todavía no salió.
+
+**`verify` es `True` por default** aunque casi todas las fuentes `.gob.ar` necesiten `False`: si
+alguien agrega un call site y se olvida del parámetro, el error es quedarse corto de permisivo y
+no aflojar TLS sin querer.
+
+**Qué NO pasa por acá, a propósito:**
+
+- Los **probes HEAD** que preguntan "¿existe esta URL?" y tienen un camino alternativo cuando la
+  respuesta es no (`automotriz.prensa_filename`, `leche._resolve_url`, `bovinos._resolver_xls`).
+  Reintentar adentro de un barrido multiplica el peor caso por el largo del barrido:
+  `automotriz.find_prensa` mira hasta 60 ids, y a 4 intentos × 90 s un caído de ADEFA pasaría de
+  ~2 minutos a **~6,6 horas**. El barrido ya tolera que un id no conteste.
+- `patentamientos`, que habla con la API de mail.tm y ya tiene su propio loop de polling.
+
+**El costo:** con la fuente realmente caída, una corrida ahora tarda minutos en vez de segundos
+antes de fallar. El peor caso por corrida va de 4,6 min (`granos`) a ~28 min (`compras_granos`,
+que encadena índice + semanas). El margen más ajustado es `reservas_pasivos`: 8,6 min contra las
+6,5 h que separan sus dos corridas diarias. La corrida sigue fallando y mandando el mail cuando
+la fuente está caída de verdad — reintentar no es esconder.
+
 ## La fuente de automotriz (ADEFA)
 
 `etl/datasets/automotriz/source.py` baja el informe mensual y, con `pdfplumber`, lee las 3

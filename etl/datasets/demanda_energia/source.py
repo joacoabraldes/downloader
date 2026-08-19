@@ -12,8 +12,8 @@ import datetime as dt
 import io
 
 import openpyxl
-import requests
 
+from etl.core import http
 from . import config
 
 # Link "Demanda Mensual" (WP Download Manager, wpdmdl estable) de estadistica-informe-sintesis-mem.
@@ -27,8 +27,7 @@ MAX_HEADER_SCAN = 40           # las filas del cuadro están arriba de todo
 
 
 def download(url: str = URL) -> bytes:
-    r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-    r.raise_for_status()
+    r = http.fetch(url, headers=HEADERS, timeout=TIMEOUT)
     return r.content
 
 

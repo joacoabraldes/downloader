@@ -25,10 +25,9 @@ from __future__ import annotations
 
 import datetime as dt
 
-import requests
 import xlrd
 
-from etl.core import meses
+from etl.core import http, meses
 from . import config
 
 URL_EXPO = "https://www.indec.gob.ar/ftp/cuadros/economia/serie_mensual_indices_expo.xls"
@@ -72,8 +71,7 @@ def _norm(texto) -> str:
 
 def download(url: str) -> bytes:
     """Baja una de las planillas."""
-    r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-    r.raise_for_status()
+    r = http.fetch(url, headers=HEADERS, timeout=TIMEOUT)
     return r.content
 
 
