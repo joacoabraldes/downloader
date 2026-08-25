@@ -51,6 +51,17 @@ def main(argv=None) -> None:
             return
         data, url = res
         rep.info(f"fuente: {url} | meses: {min(data):%Y-%m}..{max(data):%Y-%m}")
+        # La CAA a veces sube el PDF de Cifras sin linkearlo en la página (ver source.py), así
+        # que el descubrimiento por link puede quedar atrás de lo ya cargado. Se avisa: sin
+        # esto, la corrida son trece 'sin_cambios' y la situación pasa inadvertida.
+        prev_max = db.last_date(
+            conn, table=config.TABLE,
+            where="serie = %s and estado is distinct from 'desestacionalizado'",
+            where_params=(config.MAIN_SERIE,))
+        if prev_max and max(data) < prev_max:
+            rep.info(f"OJO: el PDF linkeado llega a {max(data):%Y-%m} pero ya hay datos hasta "
+                     f"{prev_max:%Y-%m}, cargados de un PDF aún sin link. Revisar si hay uno "
+                     f"más nuevo sin linkear antes de dar la fuente por atrasada.")
         for fecha in sorted(data):
             valor = data[fecha]
             status = db.insert_if_changed(

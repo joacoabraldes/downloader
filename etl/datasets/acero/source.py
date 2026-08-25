@@ -9,6 +9,15 @@ nuevo (mayor año/mes parseado del nombre), no se puede construir la URL.
 Cada PDF trae los últimos ~13 meses. El texto extrae limpio y en orden: cada fila mensual
 es `<Mes> <Año>` seguido de 8 valores (arrabio, esponja, total hierro primario, ACERO CRUDO,
 planos 1, planos 2, total laminados, planos en frío). Tomamos la 4ª (acero crudo).
+
+El descubrimiento es por link, y eso tiene un punto ciego: la CAA sube el PDF a
+`wp-content/uploads/<año>/<mes de subida>/` y a veces tarda días en linkearlo en la página.
+Mientras tanto el archivo ya se baja por ruta directa, pero `find_latest_cifras_pdf()` no lo
+ve. Pasó con julio 2026: subido el 2026-08-17, cargado a mano el 2026-08-25 con la página
+todavía sin el link (`.../uploads/2026/08/Cifras-julio2026.pdf`). No se puede construir la URL
+para adelantarse — el nombre tuvo 4 convenciones distintas en 6 archivos, y la carpeta es el
+mes de subida, no el del dato. `run.py` avisa si el PDF linkeado quedó atrás del último dato
+cargado; ante esa señal, revisar a mano si hay un PDF más nuevo sin linkear.
 """
 from __future__ import annotations
 
