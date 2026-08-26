@@ -57,7 +57,7 @@ from etl_control_ejecucion
 where comando <> 'load-history'   -- carga manual one-off, no es señal de que el cron viva
 order by dataset, inicio desc;
 
--- LA vista para la app: los 16 datasets SIEMPRE, hayan corrido o no.
+-- LA vista para la app: los 17 datasets SIEMPRE, hayan corrido o no.
 --
 --   select * from etl_control_salud where estado <> 'ok';        -- el PROCESO esta roto
 --   select * from etl_control_salud where estado_dato <> 'ok';   -- la FUENTE dejo de publicar
@@ -144,6 +144,13 @@ with esperado(dataset, horas_max, dias_max_dato) as (values
     ('demanda_energia',  80, 105),   -- cron diario -> hueco max viernes 12:00 a lunes 12:00 ~72 h:
                                      --   la VM esta apagada el finde (con 26 h daba SIN_CORRER los lunes)
                                      --   dato: edad del label al publicar 60 d (jun visto 31-jul)
+    ('escrituras_caba', 580, 105),   -- cron 22-31 -> hueco max ~22 dias (del 31 al 22), igual que icg
+                                     --   dato: MEDIDO sobre los 120 informes publicados. Los ultimos 24
+                                     --   salen entre el dia 22 y el 26 del mes siguiente, con la edad del
+                                     --   label en 51-56 d (mediana 52). 56 + 31 de periodo = 87 + margen.
+                                     --   El margen es ancho a proposito: en 2016-2017 la fuente se
+                                     --   atrasaba mucho mas (maximo historico 96 d, dic-2016 salio el
+                                     --   01-mar-2017). Si vuelve a aflojar el ritmo, 95 daria falsa alarma.
     ('icc',             470,  70),   -- cron 17-31 -> hueco max ~17 dias (del 31 al 17) + finde
                                      --   dato: UTDT publica DENTRO del mes de referencia (ICC un
                                      --   jueves entre el 17 y el 24), no al mes siguiente: el label

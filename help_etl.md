@@ -89,7 +89,7 @@ Cada ETL corre en la ventana del mes en que su fuente publica, no todos los día
 | `icc` | días 17 al 31 | 470 h (~20 días) |
 | `aves` | ventanas de fin de mes | 500 h (~21 días) |
 | `cemento`, `patentamientos`, `automotriz` | días 1 al 10 | 530 h (~22 días) |
-| `icg` | días 22 al 31 | 580 h (~24 días) |
+| `icg`, `escrituras_caba` | días 22 al 31 | 580 h (~24 días) |
 
 Es decir: que `cemento` lleve 20 días sin correr es normal, porque su ventana es del 1 al 10.
 Que `demanda_energia` lleve cinco días sin correr no lo es.
@@ -155,6 +155,7 @@ daría falsa alarma **todos los meses**.
 | `granos`, `leche`, `bovinos`, `comex` | 42-50 días | 1 mes | 95 |
 | `acero`, `aves`, `demanda_energia` | 60 días | 1 mes | 105 |
 | `hidrocarburos` | ~50-56 días **(estimado, no medido)** | 1 mes | 105 |
+| `escrituras_caba` | 51-56 días (medido sobre 120 informes) | 1 mes | 105 |
 
 > **Nota sobre `hidrocarburos`.** Su umbral es el único **estimado y no medido**: al 2026-08 no
 > hay corridas incrementales todavía y la única observación es que el dato de julio-2026 ya

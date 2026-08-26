@@ -41,6 +41,11 @@ create or replace view series_actual as
   select 'hidrocarburos'::text as dataset, serie, date, valor, estado, fuente, ingested_at
     from etl_hidrocarburos_actual
   union all
+  -- escrituras_caba es un CONTEO de actos, no una magnitud fisica ni un indice. Tiene 6 meses
+  -- rellenados desde una planilla posterior (estado='relleno'), que se distinguen por esa columna.
+  select 'escrituras_caba'::text as dataset, serie, date, valor, estado, fuente, ingested_at
+    from etl_escrituras_caba_actual
+  union all
   select 'icc'::text as dataset, serie, date, valor, estado, fuente, ingested_at
     from etl_icc_actual
   union all
@@ -91,6 +96,10 @@ create or replace view series_desest as
   -- m3). El desagregado por tipo de recurso queda crudo.
   select 'hidrocarburos'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
     from etl_hidrocarburos_desest
+  union all
+  -- escrituras_caba no se desestacionaliza: esta vista aporta 0 filas (igual que icc / icg).
+  select 'escrituras_caba'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
+    from etl_escrituras_caba_desest
   union all
   -- icc / icg no se desestacionalizan: estas dos ramas devuelven 0 filas. Se dejan para que
   -- sumar X-13 más adelante sea sólo agregar el bloque en etl/series_desest.toml.

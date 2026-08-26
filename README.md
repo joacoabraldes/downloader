@@ -1,4 +1,4 @@
-# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia · hidrocarburos · icc · icg · datos_gob · comex)
+# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia · hidrocarburos · escrituras_caba · icc · icg · datos_gob · comex)
 
 Monorepo de ETLs de series mensuales argentinas. Un **núcleo compartido** + un paquete por
 serie, todo detrás de un solo CLI (`python -m etl ...`). Modelo de datos **append-only**
@@ -19,6 +19,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `bovinos` | `etl_bovinos` | `Bovinos.xlsx` (1998→) + planilla MAGyP (1990-1997) | **.xls MAGyP** (link dentro de un PDF) |
 | `demanda_energia` | `etl_demanda_energia` | `energia.xlsx` (2005→) | **xlsx CAMMESA** (URL fija) |
 | `hidrocarburos` | `etl_hidrocarburos` | `petroleo.xlsx` + `Gas.xlsx` (1996→) | **API Superset** Sec. Energía (CSV por chart) |
+| `escrituras_caba` | `etl_escrituras_caba` | — (los informes traen 2016-02→) | **API REST de WordPress** del Colegio de Escribanos |
 | `icc` | `etl_icc` | — (la planilla trae 1998→) | **.xls UTDT** (link resuelto por scrape) |
 | `icg` | `etl_icg` | — (la planilla trae 2001→) | **.xls UTDT** (link resuelto por scrape) |
 | `datos_gob` | `etl_datos_gob` | — (la API trae 1965→) | **API oficial** `apis.datos.gob.ar/series` |
@@ -63,6 +64,11 @@ dataset:
   tienen histórico 1996→ (Excel); el desagregado arranca en 2009, que es donde arranca el dato
   por pozo del capítulo IV. Sólo se desestacionalizan los dos totales. La fuente publica el
   total ya desagregado por `concepto` y el total del mes es la suma de los tres.
+- **escrituras_caba**: `compraventa`, cantidad de escrituras de compraventa de inmuebles
+  oficializadas por escribanos de CABA sobre inmuebles de esa demarcación (Colegio de
+  Escribanos de la Ciudad de Buenos Aires). Histórico 2016-02→. Es un **conteo de actos**, no
+  una magnitud física ni un índice. **No se desestacionaliza** (ver el cuadro). El informe trae
+  además monto involucrado, escrituras con hipoteca y monto medio: quedan afuera por ahora.
 - **icc**: Índice de Confianza del Consumidor (UTDT), escala 0-100. 7 series: `nacional`, sus
   3 aperturas geográficas (`capital`, `gba`, `interior`) y sus 3 subíndices
   (`situacion_personal`, `situacion_macro`, `bienes_durables`). `capital` arranca en 1998-07 y
@@ -307,6 +313,9 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # de mes; la corrida es idempotente y repite hasta que la planilla trae el mes nuevo.
 30 13 17-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh icc
 0  19 22-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh icg
+# escrituras_caba: el Colegio de Escribanos publica entre el dia 22 y el 26 del mes siguiente
+# (medido sobre los ultimos 24 informes). Ventana 22-31, igual que icg.
+0  16 22-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh escrituras_caba
 # datos_gob: 9 series de organismos distintos, cada uno con su calendario. Sin ventana; la
 # corrida son 9 requests a una API y es idempotente.
 45 15 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh datos_gob
@@ -373,7 +382,7 @@ Para consumir desde una app, dos vistas:
 | Vista | Para qué |
 |---|---|
 | `etl_control_ultima` | última corrida de cada dataset que alguna vez corrió |
-| **`etl_control_salud`** | los 16 datasets **siempre**, con dos veredictos: proceso y dato |
+| **`etl_control_salud`** | los 17 datasets **siempre**, con dos veredictos: proceso y dato |
 
 ```sql
 -- ¿Hay algo roto de nuestro lado? Si vuelve vacío, está todo bien.
@@ -425,7 +434,7 @@ solo si el valor es nuevo o cambió respecto del último de ese `(clave, estado)
 
 Y dos vistas que **homogeneízan el consumo** de todos los datasets en una sola forma (agregan
 una columna `dataset`):
-- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves + leche + bovinos + demanda_energia + hidrocarburos + icc + icg + datos_gob.
+- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves + leche + bovinos + demanda_energia + hidrocarburos + escrituras_caba + icc + icg + datos_gob.
 - `series_desest`: serie desestacionalizada de los nueve.
 
 Y para el **carril diario** (BCRA), una vista aparte que NO se mezcla con las mensuales:
@@ -887,6 +896,68 @@ python -m etl redesest hidrocarburos
 
 Sin el `--all`, la ventana automática sólo mira los últimos meses y la vista `_actual` se queda
 sirviendo el histórico del Excel en todo 2009-2026.
+
+## La fuente de escrituras_caba (Colegio de Escribanos)
+
+El sitio del Colegio es un **WordPress con la API REST expuesta**, así que
+`etl/datasets/escrituras_caba/source.py` no pagina HTML: baja la categoría entera
+("Estadísticas de escrituras", id **382**) en dos requests.
+
+```
+GET /wp-json/wp/v2/posts?categories=382&per_page=100&page=N
+```
+
+Cada post es el informe de un mes y **el número está en el cuerpo del texto**:
+
+```
+Actos de escrituras de compraventa                   6051
+Monto involucrado                                    $ 1.068.467 millones
+```
+
+> **Verificado contra las planillas.** Los 12 meses del `.xls` "Comparativo últimos 12 meses"
+> que el propio informe linkea coinciden **exactamente** con lo que dice el texto de los 12
+> informes correspondientes. El texto es fuente confiable, no un resumen redondeado.
+
+### Tres trampas
+
+**El mes sale del TÍTULO, no de la fecha de publicación.** El informe de julio-2026 se publicó
+el 2026-08-24; usar `post.date` correría toda la serie un mes. Si el título no parsea, se corta.
+
+**Hay dos redacciones.** Los informes de octubre, noviembre y diciembre de 2019 dicen
+*"Escrituras de compraventa 3265"*, sin el *"Actos de"* del resto. Con el patrón estricto esos
+tres meses se perdían **en silencio**, que es peor que fallar: por eso el prefijo es opcional en
+el regex.
+
+**Los nombres de las planillas cambian entre informes** (`12-meses`, `ultimos-12-meses`,
+`cantidad_de_escrituras_por_mes`, `12-meses-2022-2023`…), así que la URL no se construye por
+aritmética: se leen los `<a href>` del post y se filtran por patrón. Misma lección que las
+gacetillas de ADEFA en `automotriz`. Y una fila del `.xls` de julio-2026 trae la fecha como el
+texto **`juk-26`** (typo de la fuente): el lector ignora las filas cuya primera celda no es una
+fecha real de Excel en vez de intentar interpretarla.
+
+### Los 6 meses sin informe
+
+La fuente **nunca publicó** informe para 2016-04, 2016-09, 2017-01, 2022-12, 2023-01 y 2023-02.
+No es un error de parseo: esos posts no existen en la categoría.
+
+`load-history` los rellena leyendo las planillas rodantes de un informe posterior dentro de los
+12 meses siguientes, y los guarda con **`estado='relleno'`** para que se distingan del número
+del informe propio. Si algún día la fuente publica el informe faltante, su valor (`definitivo`)
+pasa a mandar en la vista `_actual` sin que haya que borrar nada.
+
+> La fuente **revisa**: febrero-2016 dice 1919 actos en el texto del post y 1920 en la planilla
+> de un informe posterior. Son diferencias de ±1 que el modelo append-only absorbe como
+> snapshot nuevo.
+
+### Backfill
+
+```bash
+python -m etl init-db escrituras_caba
+python -m etl escrituras_caba load-history   # 120 informes + 6 rellenos = 126 meses, sin huecos
+```
+
+Este host **sí** tiene el certificado bien: va con verificación TLS activada, a diferencia de
+las fuentes `.gob.ar`.
 
 ## La fuente de comex (INDEC)
 

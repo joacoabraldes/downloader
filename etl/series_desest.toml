@@ -170,6 +170,21 @@ seasonalma = "s3x5"
 # adelante (43 meses). Los meses ene..oct-2022 quedan guardados como observados, sin ajustar.
 start = 2022-12-01
 
+# escrituras_caba: NO se desestacionaliza, a propósito. Por dos razones independientes.
+#
+# 1. La serie tiene HUECOS. La fuente no publicó informe para 6 meses (2016-04, 2016-09,
+#    2017-01, 2022-12, 2023-01, 2023-02) y X-13 exige meses contiguos. Los seis están
+#    rellenados desde planillas de informes posteriores, así que hoy la serie es contigua,
+#    pero el relleno es un parche de una fuente secundaria: no es base para un ajuste.
+# 2. No hay contra qué calibrar. Todas las series de este archivo se ajustaron contra una
+#    columna "desest" de una planilla de referencia hasta reproducirla. El Colegio de
+#    Escribanos publica el conteo crudo: cualquier receta que eligiéramos sería un número
+#    inventado por nosotros.
+#
+# Además, el pedido explícito fue "cantidad por ahora". Si en algún momento se quiere ajustar,
+# sumarlo es agregar acá un bloque [escrituras_caba] con table/desest/mode/td/seasonalma; la
+# tabla y la vista etl_escrituras_caba_desest ya existen y hoy devuelven 0 filas.
+
 # icc / icg (UTDT): NO se desestacionalizan, a propósito. No es un olvido.
 #
 # 1. No hay contra qué calibrar. Todas las series de este archivo se ajustaron contra una
