@@ -84,7 +84,7 @@ Cada ETL corre en la ventana del mes en que su fuente publica, no todos los día
 | `reservas_pasivos` | lunes a viernes | 80 h (cubre el fin de semana) |
 | `compras_granos` | lunes a viernes | 80 h (cubre el fin de semana) |
 | `acero` | días 15 al 10 del mes siguiente | 130 h (~5 días) |
-| `leche` | días 20 al 10 del mes siguiente | 260 h (~11 días) |
+| `leche`, `hidrocarburos` | días 20 al 10 del mes siguiente | 260 h (~11 días) |
 | `granos`, `comex` | días 18 al 31 | 450 h (~19 días) |
 | `icc` | días 17 al 31 | 470 h (~20 días) |
 | `aves` | ventanas de fin de mes | 500 h (~21 días) |
@@ -154,6 +154,12 @@ daría falsa alarma **todos los meses**.
 | `icc`, `icg` | ~24 días (publican **dentro** del mes) | 1 mes | 70 |
 | `granos`, `leche`, `bovinos`, `comex` | 42-50 días | 1 mes | 95 |
 | `acero`, `aves`, `demanda_energia` | 60 días | 1 mes | 105 |
+| `hidrocarburos` | ~50-56 días **(estimado, no medido)** | 1 mes | 105 |
+
+> **Nota sobre `hidrocarburos`.** Su umbral es el único **estimado y no medido**: al 2026-08 no
+> hay corridas incrementales todavía y la única observación es que el dato de julio-2026 ya
+> estaba disponible el 26-ago. Reajustar cuando haya varios meses de incremental real, igual que
+> se hizo con `comex`.
 
 > **Nota sobre `reservas_pasivos` (16/08/2026).** Su cron pasó de 19:15 + 20:30 a 10:00 + 16:30 por
 > pedido explícito, sabiendo el costo: el BCRA sube `diar_bas.xls` a la tarde (~18:22), así que

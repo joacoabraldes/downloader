@@ -57,7 +57,7 @@ from etl_control_ejecucion
 where comando <> 'load-history'   -- carga manual one-off, no es señal de que el cron viva
 order by dataset, inicio desc;
 
--- LA vista para la app: los 14 datasets SIEMPRE, hayan corrido o no.
+-- LA vista para la app: los 16 datasets SIEMPRE, hayan corrido o no.
 --
 --   select * from etl_control_salud where estado <> 'ok';        -- el PROCESO esta roto
 --   select * from etl_control_salud where estado_dato <> 'ok';   -- la FUENTE dejo de publicar
@@ -132,6 +132,15 @@ with esperado(dataset, horas_max, dias_max_dato) as (values
                                      --   dato: edad del label al publicar 42-49 d, y la fecha se mueve -> margen ancho
     ('leche',           260,  95),   -- cron 20-31,1-10 -> hueco max ~10 dias
                                      --   dato: edad del label al publicar 49 d (jun visto 20-jul)
+    ('hidrocarburos',   260, 105),   -- cron 20-31,1-10 -> hueco max ~10 dias (del 10 al 20), igual que leche
+                                     --   dato: la Secretaria de Energia publica el capitulo IV a
+                                     --   fines del mes siguiente (julio-2026 ya estaba el 26-ago) ->
+                                     --   edad del label al publicar ~50-56 d. 56 + 31 de periodo +
+                                     --   margen = 105.
+                                     --   OJO: umbral ESTIMADO, no medido. Al 2026-08 no hay corridas
+                                     --   incrementales todavia; la unica observacion es que el dato de
+                                     --   julio estaba disponible el 26-ago. Reajustar cuando haya
+                                     --   varios meses de incremental real, como se hizo con comex.
     ('demanda_energia',  80, 105),   -- cron diario -> hueco max viernes 12:00 a lunes 12:00 ~72 h:
                                      --   la VM esta apagada el finde (con 26 h daba SIN_CORRER los lunes)
                                      --   dato: edad del label al publicar 60 d (jun visto 31-jul)

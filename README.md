@@ -1,4 +1,4 @@
-# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia · icc · icg · datos_gob · comex)
+# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia · hidrocarburos · icc · icg · datos_gob · comex)
 
 Monorepo de ETLs de series mensuales argentinas. Un **núcleo compartido** + un paquete por
 serie, todo detrás de un solo CLI (`python -m etl ...`). Modelo de datos **append-only**
@@ -18,6 +18,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `leche` | `etl_leche` | `leche.xlsx` (2015→) | **xlsx MAGyP** (URL fija) |
 | `bovinos` | `etl_bovinos` | `Bovinos.xlsx` (1998→) + planilla MAGyP (1990-1997) | **.xls MAGyP** (link dentro de un PDF) |
 | `demanda_energia` | `etl_demanda_energia` | `energia.xlsx` (2005→) | **xlsx CAMMESA** (URL fija) |
+| `hidrocarburos` | `etl_hidrocarburos` | `petroleo.xlsx` + `Gas.xlsx` (1996→) | **API Superset** Sec. Energía (CSV por chart) |
 | `icc` | `etl_icc` | — (la planilla trae 1998→) | **.xls UTDT** (link resuelto por scrape) |
 | `icg` | `etl_icg` | — (la planilla trae 2001→) | **.xls UTDT** (link resuelto por scrape) |
 | `datos_gob` | `etl_datos_gob` | — (la API trae 1965→) | **API oficial** `apis.datos.gob.ar/series` |
@@ -56,6 +57,12 @@ dataset:
   2023→. Se guardan además todas las filas del cuadro como series: `estacionalizada`,
   `residencial`, `gudi`, `gume`, `guma`, `mate_distribuidor`, `local`. La fuente está en MWh;
   se convierte a GWh (÷1000). Se parsea **por etiqueta**, no por fila (CAMMESA agrega filas).
+- **hidrocarburos**: producción de petróleo y de gas (Secretaría de Energía). Dos totales,
+  `petroleo` en **miles de m3** y `gas` en **millones de m3** (ojo: no comparten unidad), más
+  el desagregado por tipo de recurso `<serie>_convencional` / `_shale` / `_tight`. Los totales
+  tienen histórico 1996→ (Excel); el desagregado arranca en 2009, que es donde arranca el dato
+  por pozo del capítulo IV. Sólo se desestacionalizan los dos totales. La fuente publica el
+  total ya desagregado por `concepto` y el total del mes es la suma de los tres.
 - **icc**: Índice de Confianza del Consumidor (UTDT), escala 0-100. 7 series: `nacional`, sus
   3 aperturas geográficas (`capital`, `gba`, `interior`) y sus 3 subíndices
   (`situacion_personal`, `situacion_macro`, `bienes_durables`). `capital` arranca en 1998-07 y
@@ -158,7 +165,8 @@ de generar los miércoles: la fuente saltea semanas y algún link apunta a una p
 `etl/series_desest.toml`** (ver la sección *Desestacionalización*): granos **4** series
 (`total`, `soja`, `girasol`, `mani`), automotriz las 3 (`produccion`, `ventas`,
 `expo`), cemento `despacho_nacional`, patentamientos las 7 categorías, acero `acero_crudo`,
-aves `faena`, demanda_energia `no_residencial`, comex las **6 de cantidad**
+aves `faena`, demanda_energia `no_residencial`, hidrocarburos los 2 totales
+(`petroleo`, `gas`), comex las **6 de cantidad**
 (`expo_cantidad_*` + `impo_cantidad_general`). `lino`, `algodon`, `cartamo`
 y `canola` **no** se desestacionalizan: su molienda es intermitente (mayormente ceros) y
 X-13 no puede ajustarlas; quedan solo como serie observada.
@@ -302,6 +310,10 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # datos_gob: 9 series de organismos distintos, cada uno con su calendario. Sin ventana; la
 # corrida son 9 requests a una API y es idempotente.
 45 15 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh datos_gob
+# hidrocarburos: la Secretaria de Energia publica el capitulo IV a fines del mes siguiente
+# (julio-2026 ya estaba el 26-ago). Ventana 20-31,1-10 como leche. La corrida son 2 GET de ~9 KB
+# a la API de Superset y es idempotente.
+0  12 20-31,1-10 * * /home/jmt/dev/downloader/scripts/run_etl.sh hidrocarburos
 # comex: INDEC publica el ICA a mediados del mes siguiente (junio-2026 quedo en las planillas el
 # 20-jul). Ventana 18-31, igual que granos. La corrida re-lee siempre los meses de los anios que
 # INDEC todavia marca provisorios, asi que ademas capta las revisiones sin pedirselo.
@@ -361,7 +373,7 @@ Para consumir desde una app, dos vistas:
 | Vista | Para qué |
 |---|---|
 | `etl_control_ultima` | última corrida de cada dataset que alguna vez corrió |
-| **`etl_control_salud`** | los 15 datasets **siempre**, con dos veredictos: proceso y dato |
+| **`etl_control_salud`** | los 16 datasets **siempre**, con dos veredictos: proceso y dato |
 
 ```sql
 -- ¿Hay algo roto de nuestro lado? Si vuelve vacío, está todo bien.
@@ -413,7 +425,7 @@ solo si el valor es nuevo o cambió respecto del último de ese `(clave, estado)
 
 Y dos vistas que **homogeneízan el consumo** de todos los datasets en una sola forma (agregan
 una columna `dataset`):
-- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves + leche + bovinos + demanda_energia + icc + icg + datos_gob.
+- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves + leche + bovinos + demanda_energia + hidrocarburos + icc + icg + datos_gob.
 - `series_desest`: serie desestacionalizada de los nueve.
 
 Y para el **carril diario** (BCRA), una vista aparte que NO se mezcla con las mensuales:
@@ -459,6 +471,8 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 | leche | `produccion` | `add` | `td1coef` | `s3x5` |
 | bovinos | `produccion` | `add` | `td1coef` | `s3x5` |
 | demanda_energia | `no_residencial` | `add` | `td1coef` | `s3x5` |
+| hidrocarburos | `gas` | `add` | `td1coef` | `s3x5` |
+| hidrocarburos | `petroleo` | `add` | **`none`** | `s3x5` |
 
 > **patentamientos** aún no tiene referencia de calibración: `mode=auto` deja que X-13 elija
 > add/mult por AIC. La desest arranca en **2022-12** (`start` en el cuadro): el informe de
@@ -486,6 +500,22 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 > 257 meses). La serie observada empalma `energia.xlsx` (2005→2022) con CAMMESA (2023→), contigua.
 > Fuente en MWh → se guarda en GWh (÷1000); `no_residencial` = Demanda No Residencial + Demanda
 > No Estacionalizada. Guión de calibración: `scripts/calibrar_demanda_energia.py`.
+
+> **hidrocarburos** se calibra contra la columna `desest` de `petroleo.xlsx` / `Gas.xlsx`, pero
+> **la ventana de comparación corta en 2018-12** a propósito. La referencia se calculó sobre el
+> observado de la compilación del Min. de Economía, que de 2019 en adelante corre ~1% por debajo
+> del dato primario que ingestamos (ver *La fuente de hidrocarburos*). Ese ~1% está en el insumo,
+> no en la receta. En esa ventana: **gas** `add` + `td1coef` + `s3x5` da 0.061% medio (2.05% máx)
+> y **petroleo** `add` + `none` + `s3x5` da 0.190% medio (1.04% máx). Ninguna reproduce exacto.
+>
+> Dos resultados del barrido que valen la pena, porque contradicen la intuición:
+> - **gas NO es multiplicativa.** Parece que debería serlo (producción, siempre positiva, pico
+>   estacional grande), pero `mult` es 5x peor: 0.34% medio y 8.09% máx. El pico de invierno lo
+>   manda el clima y el parque de usuarios, no el nivel de producción: es aditivo.
+> - **petroleo no lleva trading-day.** `none` gana claro contra `td1coef` (0.190% vs 0.359%
+>   medio, y 1.04% vs 3.66% de máximo). Coincide con lo medido: su perfil estacional es de
+>   −1.6% invierno/verano una vez sacado el calendario, o sea plano. Un pozo no cierra los
+>   domingos. Guión: `scripts/calibrar_hidrocarburos.py`.
 
 > **Guard de ceros:** aunque el cuadro diga `mult`/`auto`, si la serie tiene algún valor ≤ 0
 > (p.ej. `produccion` en **abril-2020**, COVID: producción 0) el núcleo la fuerza a **aditivo**
@@ -780,6 +810,83 @@ filas se guardan como series (en GWh, ÷1000), con `estado='definitivo'` (2023�
 `no_residencial` (Demanda No Residencial + Demanda No Estacionalizada) es la principal; su
 histórico profundo (2005→2022) sale de `etl/datasets/demanda_energia/data/energia.xlsx`
 (`load-history`), cuya columna `desest` es la **referencia de calibración**.
+
+## La fuente de hidrocarburos (Secretaría de Energía)
+
+`etl/datasets/hidrocarburos/source.py` NO scrapea el dashboard: `estadisticas.energia.gob.ar`
+corre **Apache Superset con la API REST abierta** (sin login y sin CSRF), así que un GET trae el
+CSV que el panel ofrece por el botón de los tres puntos:
+
+```
+GET /api/v1/dashboard/<id>/charts        -> el form_data de cada panel (de ahí sale el slice_id)
+GET /api/v1/chart/<slice_id>/data/?format=csv   -> los datos ya agregados
+```
+
+Los dos paneles que se usan son los de la serie mensual por tipo: **petróleo** dashboard 68 →
+slice **480**, **gas** dashboard 74 → slice **492**. Cada uno devuelve una fila por mes y una
+columna por `concepto` (convencional / shale / tight). Un solo request trae la serie entera
+(~9 KB), así que no hay endpoint "por mes" ni falta: el incremental filtra en memoria.
+
+> **Ojo con las unidades.** La columna del dataset de gas se llama `cantidad_mm3` y la de
+> petróleo `cantidad_m3`, pero **las dos vienen en miles de m3**. Hay que dividir por 1000 para
+> llegar a las unidades publicadas: petróleo en **miles de m3**, gas en **millones de m3**.
+
+El total del mes es la **suma de los tres conceptos**: `concepto` es la única dimensión de medida
+del dataset (el resto es empresa / área / cuenca / provincia), verificado pidiendo el desagregado
+por provincia con un POST a `/api/v1/chart/data` — la suma por provincia coincide con el total del
+chart con 0,0000% de error. Si aparece un `concepto` que el mapeo no reconoce el parser **corta**
+en vez de ignorarlo: ignorarlo subestimaría el total en silencio, y el número resultante seguiría
+siendo plausible.
+
+El certificado TLS del host está **incompleto** (falta la cadena intermedia) → `verify=False`,
+igual que ADEFA.
+
+### Por qué el histórico y el incremental no son la misma fuente
+
+Superset arranca en **2009-01**, que es donde arranca el dato por pozo (declaraciones juradas del
+capítulo IV). El tramo 1996-2008 sale de los Excel de referencia, cuya columna observada viene de
+la serie `41.3_PC_0_A_14` / `41.3_GN_0_A_11` de datos.gob.ar — que **no es de la Secretaría de
+Energía**: es el dataset 41 *"Indicadores de producción de la Industria manufacturera"* de la
+**Subsecretaría de Programación Macroeconómica** (Min. Economía), una compilación secundaria.
+
+En el solapamiento las dos no dan igual, y en la vista `_actual` **gana Superset** (`provisorio`
+sobre el histórico `NULL`) porque es la fuente primaria y publica un mes antes. La brecha en
+petróleo, medida contra una tercera serie (`PROD_PET_SESCO_6_1`, también de Sec. Energía, hasta
+2018):
+
+| tramo | Superset vs SESCO | SSPM vs SESCO |
+|---|---|---|
+| 2009-2018 | +0.059% | +0.001% |
+
+Las tres coinciden hasta ~2013. Después la brecha Superset−SSPM crece monótona: +0.015% (2014),
++0.132% (2016), +0.342% (2018), +0.909% (2019), +1.126% (2020), +0.828% (2026), y desde 2014 son
+**12/12 meses por año** con Superset arriba. No se explica por provincia (las 15 correlacionan
+*negativo* con la brecha) ni por concepto; en absoluto es de ~25-35 mil m3/mes desde 2019, casi
+plana. Lo más consistente es que la compilación de Economía **no absorbe las correcciones
+retroactivas** de las DDJJ.
+
+> **El empalme no tiene escalón**: en 2009-2013 las dos fuentes coinciden con 0,000%, así que unir
+> el histórico con Superset en 2009-01 no introduce un salto de nivel. La consecuencia sí asumida
+> es que el d11 no reproduce la columna `desest` de referencia de 2019 en adelante (~1%), porque
+> esa referencia se calculó sobre el otro observado.
+
+**Gas no tiene este problema**: Superset vs `41.3_GN_0_A_11` da 207/210 meses con error <1% y
+0.064% de error medio.
+
+### Backfill inicial
+
+`load-history` carga los Excel (1996→2026, `estado=NULL`) pero **no** trae el dato primario de
+2009 en adelante. Para eso está `--all`, que procesa todos los meses que trae la fuente:
+
+```bash
+python -m etl init-db hidrocarburos
+python -m etl hidrocarburos load-history     # 734 filas (2 series x 367 meses)
+python -m etl hidrocarburos --all            # 1688 filas (2 totales + 6 tipos, 2009->)
+python -m etl redesest hidrocarburos
+```
+
+Sin el `--all`, la ventana automática sólo mira los últimos meses y la vista `_actual` se queda
+sirviendo el histórico del Excel en todo 2009-2026.
 
 ## La fuente de comex (INDEC)
 

@@ -118,6 +118,46 @@ mode = "add"
 td = "td1coef"
 seasonalma = "s3x5"
 
+# Producción de hidrocarburos (Secretaría de Energía). Se desestacionalizan SOLO los dos
+# totales; el desagregado por tipo de recurso (convencional/shale/tight) queda crudo: son
+# componentes de esos totales y ajustarlos por separado rompería la identidad
+# total = convencional + shale + tight sin dar nada a cambio. Mismo criterio que comex con el
+# índice de valor.
+#
+# CALIBRADO contra la columna desest de los Excel de referencia (scripts/calibrar_hidrocarburos.py).
+# El barrido ordena por el error hasta 2018-12 y NO por el del período completo, a propósito: la
+# referencia se calculó sobre el observado de la compilación del Min. de Economía, que de 2019 en
+# adelante corre ~1% por debajo del primario que ingestamos (ver schema.sql). Ese ~1% está en el
+# insumo, no en la receta: ninguna combinación de parámetros lo cierra. Hasta 2018 las dos fuentes
+# coinciden y ahí la comparación mide de verdad.
+#
+# El salto entre las dos ventanas confirma el diagnóstico: en gas el error casi no se mueve
+# (0.061% -> 0.070%) porque las fuentes coinciden en todo el tramo; en petróleo se duplica
+# (0.190% -> 0.394%) que es exactamente donde entra el cambio de fuente.
+#
+# Sin `start`: las dos series arrancan en 1996-01 y son contiguas (367 meses, sin huecos).
+[hidrocarburos]
+table = "etl_hidrocarburos"
+desest = ["petroleo", "gas"]
+# add + td1coef + s3x5 es lo que MÁS se acerca en gas: 0.061% de error medio (2.05% máx) hasta
+# 2018. NO reproduce exacto (como aves o bovinos): la referencia se hizo con un método algo
+# distinto de X-13. Ojo con `mult`, que parece la elección natural para una serie de producción
+# estrictamente positiva: acá es 5x peor (0.34% medio, 8.09% máx). El pico de invierno del gas
+# es grande pero NO escala con el nivel — la calefacción la manda el clima y el parque de
+# usuarios, no cuánto se produce.
+mode = "add"
+td = "td1coef"
+seasonalma = "s3x5"
+
+# Petróleo NO lleva ajuste por días hábiles: `none` da 0.190% de error medio (1.04% máx) contra
+# 0.359% y 3.66% de máximo con td1coef. Tiene sentido físico y coincide con lo medido: el perfil
+# estacional de la serie es de -1.6% invierno/verano una vez sacado el efecto calendario, o sea
+# esencialmente plano. Un pozo no cierra los domingos ni rinde distinto un martes; el regresor de
+# trading-day no tiene nada que explicar y mete ruido. El gas sí lo lleva porque su demanda es de
+# consumo y ahí el calendario del mes pesa.
+[hidrocarburos.overrides.petroleo]
+td = "none"
+
 [patentamientos]
 table = "etl_patentamientos"
 desest = ["total_mercado", "autos", "comercial_liviano", "comercial_pesado",

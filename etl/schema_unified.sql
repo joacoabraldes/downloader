@@ -35,6 +35,12 @@ create or replace view series_actual as
   select 'demanda_energia'::text as dataset, serie, date, valor, estado, fuente, ingested_at
     from etl_demanda_energia_actual
   union all
+  -- hidrocarburos mezcla unidades entre sus series: `petroleo*` en miles de m3 y `gas*` en
+  -- millones de m3. Ademas conviven el total y su desagregado por tipo de recurso, asi que
+  -- sumar todas las series de este dataset cuenta doble: filtrar por serie in ('petroleo','gas').
+  select 'hidrocarburos'::text as dataset, serie, date, valor, estado, fuente, ingested_at
+    from etl_hidrocarburos_actual
+  union all
   select 'icc'::text as dataset, serie, date, valor, estado, fuente, ingested_at
     from etl_icc_actual
   union all
@@ -80,6 +86,11 @@ create or replace view series_desest as
   union all
   select 'demanda_energia'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
     from etl_demanda_energia_desest
+  union all
+  -- Solo los dos totales se desestacionalizan: `petroleo` (miles de m3) y `gas` (millones de
+  -- m3). El desagregado por tipo de recurso queda crudo.
+  select 'hidrocarburos'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
+    from etl_hidrocarburos_desest
   union all
   -- icc / icg no se desestacionalizan: estas dos ramas devuelven 0 filas. Se dejan para que
   -- sumar X-13 más adelante sea sólo agregar el bloque en etl/series_desest.toml.
