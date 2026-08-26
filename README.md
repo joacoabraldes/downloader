@@ -485,6 +485,9 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 | hidrocarburos | `gas` | `add` | `td1coef` | `s3x5` |
 | hidrocarburos | `petroleo` | `add` | **`none`** | `s3x5` |
 | escrituras_caba | `compraventa` | `mult` | `td1coef` | `s3x5` |
+| datos_gob | `ventas_supermercados`, `ventas_centros_compras` | `mult` | `td` | `s3x5` |
+| datos_gob | `expo_total`, `impo_total` | `mult` | `td1coef` | `s3x5` |
+| comex | las 6 de cantidad | `mult` | `td1coef` | `s3x5` |
 
 > **patentamientos** aún no tiene referencia de calibración: `mode=auto` deja que X-13 elija
 > add/mult por AIC. La desest arranca en **2022-12** (`start` en el cuadro): el informe de
