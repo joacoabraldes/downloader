@@ -28,11 +28,12 @@
 -- post y 1920 en la planilla de un informe posterior. Son revisiones de ±1, que
 -- `insert_if_changed` deja como snapshot nuevo dejando el anterior en la historia.
 --
--- NO se desestacionaliza (ver etl/series_desest.toml). Es una decisión, no un olvido: la
--- serie tiene 6 huecos que la fuente nunca publicó y X-13 exige meses contiguos, y además no
--- hay ninguna referencia oficial desestacionalizada contra la cual calibrar. La vista
--- `_desest` existe igual y devuelve 0 filas, para que el dataset tenga la misma forma que los
--- demás: sumarlo después es sólo agregar el bloque en el toml.
+-- Se desestacionaliza SOLO `compraventa` (mult + td1coef + s3x5; ver etl/series_desest.toml).
+-- Es la serie con la estacionalidad mas marcada del repo: enero esta 43% abajo de la tendencia
+-- y diciembre 34% arriba, y diciembre->enero cae ~55% en crudo todos los anios. X-13 dictamina
+-- IDENTIFIABLE SEASONALITY PRESENT con F=53,134** y los 11 estadisticos M en la region de
+-- aceptacion. Las otras 4 series quedan crudas: `hipotecas` y `monto_medio_usd` tienen huecos
+-- (X-13 exige meses contiguos) y las dos de pesos son nominales.
 
 create table if not exists etl_escrituras_caba (
   id          bigint generated always as identity primary key,
@@ -58,7 +59,7 @@ alter table etl_escrituras_caba add constraint etl_escrituras_caba_serie_check
 create index if not exists etl_escrituras_caba_serie_date_estado_idx
   on etl_escrituras_caba (serie, date, estado, ingested_at desc);
 
--- Una sola fila desestacionalizada por (serie, mes), si algún día se ajusta.
+-- Una sola fila desestacionalizada por (serie, mes) (UPSERT desde el núcleo X-13).
 create unique index if not exists etl_escrituras_caba_desest_uq
   on etl_escrituras_caba (serie, date)
   where estado = 'desestacionalizado';
@@ -78,8 +79,8 @@ order by serie, date,
          (case when estado = 'definitivo' then 0 when estado = 'relleno' then 1 else 2 end),
          ingested_at desc;
 
--- Serie desestacionalizada (X-13), un valor por (serie, mes). Hoy queda vacía a propósito
--- (ver el comentario del encabezado).
+-- Serie desestacionalizada (X-13), un valor por (serie, mes). Trae SOLO `compraventa`: las
+-- otras 4 series quedan crudas (ver el encabezado y etl/series_desest.toml).
 create or replace view etl_escrituras_caba_desest as
 select distinct on (serie, date)
     serie, date, valor, fuente, ingested_at, parametros

@@ -7,7 +7,9 @@ trae, las 4 series secundarias (monto, hipotecas, monto medio en pesos y en dól
 Como el listado viene completo en cada corrida, no hay endpoint "por mes" ni hace falta: la
 ventana se aplica en memoria.
 
-NO desestacionaliza: la serie no se ajusta (ver `schema.sql` y `etl/series_desest.toml`).
+Al final, sólo si hubo datos nuevos o actualizados, desestacionaliza `compraventa` (X-13).
+Las otras 4 series NO se ajustan: `hipotecas` y `monto_medio_usd` tienen huecos y X-13 exige
+meses contiguos, y las dos de pesos son nominales (ver `etl/series_desest.toml`).
 
 Ventana de meses: por default se pone al día desde el último mes que hay en la base
 (re-chequeando los últimos meses por revisiones) hasta hoy. Las revisiones existen: hay meses
@@ -18,15 +20,19 @@ Flags:
   --months-back N        últimos N meses a revisar (override de la ventana auto)
   --all                  procesar todos los informes publicados (backfill; ver load_history)
   --force                insertar snapshot aunque no haya cambiado
+  --no-desest            saltear la desestacionalización X-13
+  --x13-out DIR          guardar la salida completa de X-13 en DIR
 
 Un informe que no parsea se reporta como FALLA, no se saltea en silencio.
+
+Para recalcular la desestacionalización SIN bajar nada: `python -m etl redesest escrituras_caba`.
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
 
-from etl.core import db, report, window
+from etl.core import db, desest_params, report, seasonal, window
 from . import config, source
 
 
@@ -74,6 +80,10 @@ def main(argv=None) -> None:
     ap.add_argument("--all", action="store_true",
                     help="procesar todos los informes publicados")
     ap.add_argument("--force", action="store_true", help="insertar aunque no cambie")
+    ap.add_argument("--no-desest", action="store_true",
+                    help="saltear la desestacionalización X-13")
+    ap.add_argument("--x13-out", metavar="DIR",
+                    help="guardar la salida de X-13 (html/factores/diagnósticos) en DIR")
     args = ap.parse_args(argv)
 
     conn = db.get_conn()
@@ -114,6 +124,15 @@ def main(argv=None) -> None:
                 continue
             _guardar(conn, rep, fecha, p, p["url"], force=args.force)
         rep.summary()
+
+        if args.no_desest:
+            pass
+        elif not rep.changed:
+            print("sin datos nuevos: no se desestacionaliza")
+        else:
+            seasonal.run_desest(conn, "escrituras_caba",
+                                desest_params.build_jobs("escrituras_caba",
+                                                         keep_dir=args.x13_out))
     finally:
         conn.close()
 

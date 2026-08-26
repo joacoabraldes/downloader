@@ -11,6 +11,7 @@ Lee las vistas *_desest de la base y escribe un CSV por dataset:
   - bovinos        -> bovinos_d11.csv          (date, d11)
   - demanda_energia-> demanda_energia_d11.csv  (date, d11)  (serie no_residencial)
   - hidrocarburos  -> hidrocarburos_d11.csv    (formato ancho: date, petroleo, gas)
+  - escrituras_caba-> escrituras_caba_d11.csv  (date, d11)  (serie compraventa)
   - comex          -> comex_d11.csv            (formato ancho: date + las 6 series de cantidad)
 
 Uso: `python -m etl export [datasets...] [--dir CARPETA]` (sin datasets = todos).
@@ -25,7 +26,7 @@ from pathlib import Path
 from etl.core import db
 
 ALL = ["granos", "cemento", "automotriz", "patentamientos", "acero", "aves", "leche",
-       "bovinos", "demanda_energia", "hidrocarburos", "comex"]
+       "bovinos", "demanda_energia", "hidrocarburos", "escrituras_caba", "comex"]
 
 
 def _write(path: Path, header: list[str], rows: list) -> int:
@@ -106,6 +107,10 @@ def main(argv=None) -> None:
                 from .datasets.hidrocarburos import config as hc
                 path = out / "hidrocarburos_d11.csv"
                 n = export_wide(conn, "etl_hidrocarburos_desest", hc.TOTALES, path)
+            elif name == "escrituras_caba":
+                # Solo `compraventa` se desestacionaliza -> la vista _desest tiene una serie.
+                path = out / "escrituras_caba_d11.csv"
+                n = export_simple(conn, "etl_escrituras_caba_desest", path)
             elif name == "demanda_energia":
                 # Solo no_residencial se desestacionaliza -> la vista _desest tiene una serie.
                 path = out / "demanda_energia_d11.csv"

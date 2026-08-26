@@ -66,7 +66,7 @@ dataset:
   total ya desagregado por `concepto` y el total del mes es la suma de los tres.
 - **escrituras_caba**: escrituras de compraventa de inmuebles oficializadas por escribanos de
   CABA sobre inmuebles de esa demarcación (Colegio de Escribanos de la Ciudad de Buenos Aires).
-  Histórico 2016-02→. **No se desestacionaliza** (ver el cuadro). 5 series del mismo informe,
+  Histórico 2016-02→. 5 series del mismo informe,
   **con unidades distintas**: `compraventa` (cantidad de actos, la única con cobertura completa),
   `hipotecas` (cantidad de actos con hipoteca, **subconjunto** de `compraventa`), `monto` y
   `monto_medio` (**pesos** corrientes, nominales) y `monto_medio_usd` (**dólares**). Se cumple
@@ -174,7 +174,7 @@ de generar los miércoles: la fuente saltea semanas y algún link apunta a una p
 (`total`, `soja`, `girasol`, `mani`), automotriz las 3 (`produccion`, `ventas`,
 `expo`), cemento `despacho_nacional`, patentamientos las 7 categorías, acero `acero_crudo`,
 aves `faena`, demanda_energia `no_residencial`, hidrocarburos los 2 totales
-(`petroleo`, `gas`), comex las **6 de cantidad**
+(`petroleo`, `gas`), escrituras_caba `compraventa`, comex las **6 de cantidad**
 (`expo_cantidad_*` + `impo_cantidad_general`). `lino`, `algodon`, `cartamo`
 y `canola` **no** se desestacionalizan: su molienda es intermitente (mayormente ceros) y
 X-13 no puede ajustarlas; quedan solo como serie observada.
@@ -484,6 +484,7 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 | demanda_energia | `no_residencial` | `add` | `td1coef` | `s3x5` |
 | hidrocarburos | `gas` | `add` | `td1coef` | `s3x5` |
 | hidrocarburos | `petroleo` | `add` | **`none`** | `s3x5` |
+| escrituras_caba | `compraventa` | `mult` | `td1coef` | `s3x5` |
 
 > **patentamientos** aún no tiene referencia de calibración: `mode=auto` deja que X-13 elija
 > add/mult por AIC. La desest arranca en **2022-12** (`start` en el cuadro): el informe de
@@ -527,6 +528,24 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 >   medio, y 1.04% vs 3.66% de máximo). Coincide con lo medido: su perfil estacional es de
 >   −1.6% invierno/verano una vez sacado el calendario, o sea plano. Un pozo no cierra los
 >   domingos. Guión: `scripts/calibrar_hidrocarburos.py`.
+
+> **escrituras_caba** es la serie **más estacional del repo** y por eso se ajusta, aunque el
+> pedido original haya sido "cantidad por ahora". Con el efecto calendario removido, enero está
+> **43% abajo** de la tendencia y diciembre **34% arriba** (amplitud 71%; el pico de invierno del
+> gas, para comparar, es 6,4%). Diciembre→enero cae ~55% en crudo **todos los años**; en la serie
+> ajustada esos mismos pasos dan −1,0%, −15,1%, +1,6% y +4,4%. En enero-2026 el crudo marca
+> −55,2% y el ajustado **+4,4%**: signo opuesto. El ajuste saca el 66% del ruido mensual (desvío
+> del m/m: 24,9% → 8,6%). Leer esta serie cruda mes contra mes no es impreciso, es engañoso.
+>
+> `mult` no es preferencia: en aditivo X-13 reporta *"moving seasonality present"*, la firma de
+> forzar aditivo sobre una serie multiplicativa. Diagnósticos con `mult` + `td1coef` + `s3x5`:
+> **IDENTIFIABLE SEASONALITY PRESENT**, F de estacionalidad estable **53,134\*\***,
+> Kruskal-Wallis p=0,000%, sin estacionalidad móvil, los 11 estadísticos M dentro de la región de
+> aceptación (M7=0,223, Q=0,25). **Sin referencia de calibración**: el Colegio publica el conteo
+> crudo, así que los parámetros son los que los diagnósticos de X-13 señalan como correctos, no
+> los que reproducen un número oficial. El agujero de la cuarentena no rompe el ajuste (X-13
+> detecta LS en 2020.Mar y AO en abril, mayo y julio) y el d11 conserva el 7 de abril-2020: el
+> ajuste saca estacionalidad, no outliers.
 
 > **Guard de ceros:** aunque el cuadro diga `mult`/`auto`, si la serie tiene algún valor ≤ 0
 > (p.ej. `produccion` en **abril-2020**, COVID: producción 0) el núcleo la fuerza a **aditivo**

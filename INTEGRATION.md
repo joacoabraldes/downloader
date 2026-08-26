@@ -28,7 +28,7 @@ filas por `(serie, mes)`. Para consumir hay **dos vistas por dataset** que ya re
 | `bovinos` | `etl_bovinos` | `etl_bovinos_actual` | `etl_bovinos_desest` |
 | `demanda_energia` | `etl_demanda_energia` | `etl_demanda_energia_actual` | `etl_demanda_energia_desest` |
 | `hidrocarburos` | `etl_hidrocarburos` | `etl_hidrocarburos_actual` | `etl_hidrocarburos_desest` (sólo los 2 totales) |
-| `escrituras_caba` | `etl_escrituras_caba` | `etl_escrituras_caba_actual` | `etl_escrituras_caba_desest` (vacía: no se desestacionaliza) |
+| `escrituras_caba` | `etl_escrituras_caba` | `etl_escrituras_caba_actual` | `etl_escrituras_caba_desest` (sólo `compraventa`) |
 | `icc` | `etl_icc` | `etl_icc_actual` | `etl_icc_desest` (vacía: no se desestacionaliza) |
 | `icg` | `etl_icg` | `etl_icg_actual` | `etl_icg_desest` (vacía: no se desestacionaliza) |
 | `datos_gob` | `etl_datos_gob` + dimensión `etl_datos_gob_series` | `etl_datos_gob_actual` (+ `_real` y `_completo`) | `etl_datos_gob_desest` (las 2 de ventas + las 2 de comercio exterior) |
@@ -301,7 +301,7 @@ ETL corrió `ok` y `ultimo_dato` no se movió, es que MAGyP todavía no publicó
 | `bovinos` | `produccion` | `produccion` |
 | `demanda_energia` | `estacionalizada`, `residencial`, `no_res_estacionalizada`, `no_estacionalizada`, `gudi`, `gume`, `guma`, `mate_distribuidor`, `local`, `no_residencial` | `no_residencial` |
 | `hidrocarburos` | `petroleo`, `gas` (totales) + `<serie>_convencional`, `_shale`, `_tight` | `petroleo`, `gas` *(sólo los totales)* |
-| `escrituras_caba` | `compraventa`, `monto`, `hipotecas`, `monto_medio`, `monto_medio_usd` | *(ninguna)* |
+| `escrituras_caba` | `compraventa`, `monto`, `hipotecas`, `monto_medio`, `monto_medio_usd` | `compraventa` |
 | `icc` | `nacional`, `capital`, `gba`, `interior`, `situacion_personal`, `situacion_macro`, `bienes_durables` | *(ninguna)* |
 | `icg` | `icg` | *(ninguna)* |
 | `datos_gob` | las 14: `isac`, `ipi_manufacturero`, `ipc_nacional`, `expo_total`, `impo_total`, `ventas_supermercados`, `ventas_centros_compras`, `ripte`, `smvm`, `indice_salarios_total`, `indice_salarios_registrado`, `indice_salarios_priv_registrado`, `indice_salarios_publico`, `indice_salarios_priv_no_registrado` | `ventas_supermercados`, `ventas_centros_compras`, `expo_total`, `impo_total` *(las 4 sobre la serie real)* |
@@ -318,6 +318,9 @@ ETL corrió `ok` y `ultimo_dato` no se movió, es que MAGyP todavía no publicó
 > sirve de control cruzado. Las dos series en pesos son **nominales**: bajo inflación argentina no
 > se comparan mes contra mes sin deflactar. Sólo `compraventa` tiene cobertura completa (126
 > meses); las otras cuatro tienen huecos porque dependen de cómo estaba redactado cada informe.
+> **Sólo `compraventa` se desestacionaliza**, y conviene usarla: enero cae ~55% contra diciembre
+> todos los años por calendario puro, así que el m/m del crudo es engañoso. Las otras cuatro no
+> se ajustan (huecos, o pesos nominales).
 >
 > **`hidrocarburos` mezcla unidades y niveles**: `petroleo*` está en **miles de m3** y `gas*` en
 > **millones de m3**, así que no se suman entre sí. Además conviven el total y su desagregado por

@@ -170,20 +170,57 @@ seasonalma = "s3x5"
 # adelante (43 meses). Los meses ene..oct-2022 quedan guardados como observados, sin ajustar.
 start = 2022-12-01
 
-# escrituras_caba: NO se desestacionaliza, a propósito. Por dos razones independientes.
+# Escrituras de compraventa en CABA (Colegio de Escribanos). Se desestacionaliza SOLO
+# `compraventa`, la cantidad de actos.
 #
-# 1. La serie tiene HUECOS. La fuente no publicó informe para 6 meses (2016-04, 2016-09,
-#    2017-01, 2022-12, 2023-01, 2023-02) y X-13 exige meses contiguos. Los seis están
-#    rellenados desde planillas de informes posteriores, así que hoy la serie es contigua,
-#    pero el relleno es un parche de una fuente secundaria: no es base para un ajuste.
-# 2. No hay contra qué calibrar. Todas las series de este archivo se ajustaron contra una
-#    columna "desest" de una planilla de referencia hasta reproducirla. El Colegio de
-#    Escribanos publica el conteo crudo: cualquier receta que eligiéramos sería un número
-#    inventado por nosotros.
+# POR QUÉ SÍ, cuando el pedido original fue "cantidad por ahora": la serie tiene la
+# estacionalidad más marcada del repo y leerla cruda mes contra mes es engañoso, no impreciso.
+# Perfil por día con el calendario removido: enero 0,627 y diciembre 1,337 — enero está 43%
+# abajo de la tendencia y diciembre 34% arriba (amplitud 71%). Para comparar, el pico de
+# invierno del gas es 6,4%. Diciembre->enero cae ~55% en crudo TODOS los años; en la serie
+# ajustada esos mismos cuatro pasos dan -1,0%, -15,1%, +1,6% y +4,4%. En enero-2026 el crudo
+# marca -55,2% y el ajustado +4,4%: signo opuesto. El ajuste saca el 66% del ruido mensual
+# (desvío del m/m: 24,9% -> 8,6%).
 #
-# Además, el pedido explícito fue "cantidad por ahora". Si en algún momento se quiere ajustar,
-# sumarlo es agregar acá un bloque [escrituras_caba] con table/desest/mode/td/seasonalma; la
-# tabla y la vista etl_escrituras_caba_desest ya existen y hoy devuelven 0 filas.
+# mult, y no es preferencia: en aditivo X-13 reporta "moving seasonality present", que es
+# exactamente lo que pasa al forzar aditivo sobre una serie multiplicativa (la amplitud
+# estacional crece con el nivel). En multiplicativo la estacionalidad móvil desaparece. Además
+# el perfil de ratios es el mismo en 2016-2026, sacando 2020 y en 2021-2026, con la media anual
+# moviéndose de 1.563 a 5.788 actos: los ratios se sostienen, los niveles no.
+#
+# td1coef y no el td de 6 coeficientes: lo que mueve el conteo de un mes es cuántos días
+# HÁBILES tuvo. Una escribanía no atiende sábados, pero un martes no rinde distinto que un
+# jueves. Distinguir día de la semana serían 5 regresores más sin hipótesis detrás. El barrido
+# por Q lo confirma: td1coef 0,25 | td 0,26 | none 0,33 (los tres aditivos, 0,38 a 0,45).
+#
+# Diagnósticos de X-13 con esta receta: IDENTIFIABLE SEASONALITY PRESENT, F de estacionalidad
+# estable 53,134**, Kruskal-Wallis p=0,000%, sin estacionalidad móvil, los 11 estadísticos M
+# dentro de la región de aceptación (M7=0,223, Q=0,25).
+#
+# SIN REFERENCIA DE CALIBRACIÓN: el Colegio publica el conteo crudo, así que no existe una
+# columna oficial desestacionalizada contra la cual verificar que reproducimos su número. Los
+# parámetros de arriba son los que los diagnósticos de X-13 señalan como correctos para esta
+# serie, no los que reproducen un resultado oficial. Mismo criterio que datos_gob y comex.
+#
+# El agujero de la cuarentena NO rompe el ajuste: X-13 detecta LS en 2020.Mar y AO en 2020.Apr,
+# May y Jul. El d11 conserva el 7 de abril-2020 (queda en 7,2), que es lo correcto — el ajuste
+# saca estacionalidad, no outliers.
+#
+# LAS OTRAS 4 SERIES NO SE AJUSTAN, y no es olvido:
+#   - `hipotecas` tiene 109 de 126 meses y X-13 exige meses contiguos.
+#   - `monto` y `monto_medio` son pesos NOMINALES: bajo inflación argentina la estacionalidad
+#     queda tapada por la deriva de precios. Lo correcto es ajustar la serie deflactada, y ese
+#     deflactado es una decisión aparte (ver el `view` de datos_gob para el patrón del repo).
+#   - `monto_medio_usd` también tiene huecos (116 de 126).
+#
+# Sin `start`: la serie arranca en 2016-02 y es contigua (126 meses, con los 6 huecos de la
+# fuente ya rellenados desde planillas posteriores; ver el load_history del dataset).
+[escrituras_caba]
+table = "etl_escrituras_caba"
+desest = ["compraventa"]
+mode = "mult"
+td = "td1coef"
+seasonalma = "s3x5"
 
 # icc / icg (UTDT): NO se desestacionalizan, a propósito. No es un olvido.
 #
