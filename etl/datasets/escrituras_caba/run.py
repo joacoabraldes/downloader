@@ -1,8 +1,11 @@
 """ETL incremental de escrituras de compraventa en CABA (Colegio de Escribanos -> Supabase).
 
 Baja la categoría entera por la API REST del WordPress (2 requests, ~120 informes) y snapshotea
-con estado='definitivo' los meses de la ventana. Como el listado viene completo en cada corrida,
-no hay endpoint "por mes" ni hace falta: la ventana se aplica en memoria.
+con estado='definitivo' los meses de la ventana: la cantidad de actos y, cuando el informe las
+trae, las 4 series secundarias (monto, hipotecas, monto medio en pesos y en dólares).
+
+Como el listado viene completo en cada corrida, no hay endpoint "por mes" ni hace falta: la
+ventana se aplica en memoria.
 
 NO desestacionaliza: la serie no se ajusta (ver `schema.sql` y `etl/series_desest.toml`).
 
@@ -27,15 +30,38 @@ from etl.core import db, report, window
 from . import config, source
 
 
-def _guardar(conn, rep, fecha, actos, fuente, *, estado="definitivo", force=False) -> str:
-    status = db.insert_if_changed(
+def _una(conn, serie, fecha, valor, fuente, *, estado, force) -> str:
+    return db.insert_if_changed(
         conn, table=config.TABLE, key_cols=config.KEY_COLS,
-        key_vals=[config.MAIN_SERIE, fecha], value_cols=config.VALUE_COLS,
-        row={"valor": float(actos)},
+        key_vals=[serie, fecha], value_cols=config.VALUE_COLS,
+        row={"valor": float(valor)},
         estado=estado, fuente=fuente, force=force,
     )
-    rep.item(f"{fecha:%Y-%m}", status, actos=actos)
-    return status
+
+
+def _guardar(conn, rep, fecha, informe, fuente, *, estado="definitivo", force=False) -> None:
+    """Guarda la cantidad de actos y las series secundarias que el informe traiga.
+
+    La cantidad se imprime como ítem; las secundarias se cuentan (`tally`) y sólo se listan en
+    la línea del mes. Una secundaria ausente NO es falla: la redacción cambió mucho en 10 años
+    y hay informes que son sólo la lista de descargas (ver `source.extras_del_texto`).
+    """
+    extras = informe.get("extras") or {}
+    status = _una(conn, config.MAIN_SERIE, fecha, informe["actos"], fuente,
+                  estado=estado, force=force)
+    presentes = []
+    for serie in config.EXTRAS:
+        if serie not in extras:
+            continue
+        rep.tally(_una(conn, serie, fecha, extras[serie], fuente, estado=estado, force=force))
+        presentes.append(serie)
+    rep.item(f"{fecha:%Y-%m}", status, actos=informe["actos"],
+             extras=",".join(presentes) or None)
+    # El monto medio que la fuente publicó con un typo de escala (ver source): se avisa y no entra.
+    if "monto_medio_descartado" in extras:
+        rep.info(f"AVISO {fecha:%Y-%m}: monto_medio del texto "
+                 f"({extras['monto_medio_descartado']:.0f}) no cierra contra monto/cantidad; "
+                 f"no se guarda")
 
 
 def main(argv=None) -> None:
@@ -86,7 +112,7 @@ def main(argv=None) -> None:
                 if fecha >= source.INICIO:
                     rep.note(f"{fecha:%Y-%m}", "no publicado")
                 continue
-            _guardar(conn, rep, fecha, p["actos"], p["url"], force=args.force)
+            _guardar(conn, rep, fecha, p, p["url"], force=args.force)
         rep.summary()
     finally:
         conn.close()

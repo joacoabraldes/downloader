@@ -14,11 +14,23 @@ KEY_COLS = ["serie", "date"]
 VALUE_COLS = ["valor"]
 ACTUAL_VIEW = "etl_escrituras_caba_actual"
 
-# Por ahora una sola serie: la CANTIDAD de actos del mes.
+# Las 5 series salen del MISMO texto del informe mensual.
 #
-# El informe trae además, en el mismo texto, el monto involucrado, la cantidad de escrituras
-# con hipoteca y el monto medio (en pesos y en dólares). Quedan afuera a propósito: sumarlas
-# es agregar un regex en `source.py` y un nombre acá, pero el monto en pesos corrientes bajo
-# inflación argentina no se compara mes contra mes sin deflactar, y eso es una decisión aparte.
-SERIES = ["compraventa"]
+# OJO CON LAS UNIDADES: no las comparten.
+#   compraventa      cantidad de actos
+#   hipotecas        cantidad de actos formalizados con hipoteca (subconjunto de compraventa)
+#   monto            PESOS corrientes (el informe lo publica en millones; se guarda x1e6)
+#   monto_medio      PESOS corrientes
+#   monto_medio_usd  DÓLARES (al tipo de cambio oficial promedio del mes, según la fuente)
+#
+# Las dos series en pesos son NOMINALES. Bajo inflación argentina no se comparan mes contra mes
+# sin deflactar: eso queda del lado del consumidor (ver `etl_datos_gob_real` para el patrón que
+# usa el repo cuando el deflactado es parte del ETL).
+#
+# `compraventa` es la única con cobertura completa. Las otras cuatro dependen de cómo estaba
+# redactado el informe de ese mes y tienen huecos; ver el docstring de `source.py`.
+SERIES = ["compraventa", "monto", "hipotecas", "monto_medio", "monto_medio_usd"]
 MAIN_SERIE = "compraventa"
+
+# Series secundarias, en el orden en que se reportan. Su ausencia en un mes NO es una falla.
+EXTRAS = ["monto", "hipotecas", "monto_medio", "monto_medio_usd"]

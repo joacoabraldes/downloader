@@ -2,9 +2,12 @@
 
 Hace dos cosas que el incremental no:
 
-1. **Carga todos los informes** publicados (2016-02 → hoy), con `estado='definitivo'`.
+1. **Carga todos los informes** publicados (2016-02 → hoy), con `estado='definitivo'`: la
+   cantidad de actos y las 4 series secundarias que el informe traiga (monto, hipotecas,
+   monto medio en pesos y en dólares). Las secundarias tienen huecos y eso NO es una falla.
 2. **Rellena los meses que la fuente nunca publicó** leyendo las planillas rodantes de un
-   informe posterior, con `estado='relleno'`.
+   informe posterior, con `estado='relleno'`. El relleno es sólo de la CANTIDAD de actos: las
+   planillas rodantes no traen las series secundarias.
 
 Los 6 huecos conocidos al 2026-08 son 2016-04, 2016-09, 2017-01, 2022-12, 2023-01 y 2023-02.
 No son un error de parseo: esos posts no existen en la categoría. Los seis se recuperan de las
@@ -101,12 +104,22 @@ def main(argv=None) -> None:
     try:
         for fecha in sorted(datos):
             p = datos[fecha]
-            rep.tally(db.insert_if_changed(
-                conn, table=config.TABLE, key_cols=config.KEY_COLS,
-                key_vals=[config.MAIN_SERIE, fecha], value_cols=config.VALUE_COLS,
-                row={"valor": float(p["actos"])},
-                estado="definitivo", fuente=p["url"], force=args.force,
-            ))
+            valores = {config.MAIN_SERIE: p["actos"], **{k: v for k, v in p["extras"].items()
+                                                         if k in config.EXTRAS}}
+            for serie, valor in valores.items():
+                rep.tally(db.insert_if_changed(
+                    conn, table=config.TABLE, key_cols=config.KEY_COLS,
+                    key_vals=[serie, fecha], value_cols=config.VALUE_COLS,
+                    row={"valor": float(valor)},
+                    estado="definitivo", fuente=p["url"], force=args.force,
+                ))
+            if "monto_medio_descartado" in p["extras"]:
+                rep.info(f"AVISO {fecha:%Y-%m}: monto_medio del texto "
+                         f"({p['extras']['monto_medio_descartado']:.0f}) no cierra contra "
+                         f"monto/cantidad; no se guarda")
+        for serie in config.EXTRAS:
+            n = sum(1 for p in datos.values() if serie in p["extras"])
+            rep.info(f"{serie}: {n}/{len(datos)} informes lo traen")
         if not args.no_relleno:
             for hueco in faltan:
                 rellenar(conn, rep, hueco, datos, force=args.force)

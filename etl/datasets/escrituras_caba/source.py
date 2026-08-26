@@ -85,8 +85,47 @@ MESES["setiembre"] = 9  # variante ortográfica que la fuente usa a veces
 # "...realizadas en julio 2026" / "...realizadas en el mes de julio de 2026"
 _TITULO = re.compile(r"realizadas?\s+en\s+(?:el\s+mes\s+de\s+)?([a-z]+)\s*(?:de\s*)?(\d{4})")
 
+# Número en formato argentino: punto de miles, coma decimal ("1.068.467" / "2.668,6" / "6051").
+#
+# La primera alternativa EXIGE al menos un grupo `.ddd` (con `+`, no `*`). Con `*` el motor
+# matchea "605" de "6051" y se detiene: la rama de 1-3 dígitos tiene éxito sin consumir el
+# resto, y nunca llega a probar la segunda. El resultado era una serie con los actos divididos
+# por diez, plausible a simple vista.
+_NUM = r"\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:,\d+)?"
+
 # "Actos de escrituras de compraventa 6051" y la variante de 2019 sin el "Actos de".
-_ACTOS = re.compile(r"(?:actos\s+de\s+)?escrituras?\s+de\s+compraventa\s*:?\s*([\d][\d.]*)")
+_ACTOS = re.compile(r"(?:actos\s+de\s+)?escrituras?\s+de\s+compraventa\s*:?\s*(" + _NUM + r")")
+
+# "Monto involucrado $ 1.068.467 millones". El sufijo "millones" es OBLIGATORIO en el patrón:
+# está en los 120 informes y es lo que fija la escala. Sin él, "20.442" podrían ser 20 mil
+# pesos o 20 mil millones, y el error no se ve mirando el número.
+_MONTO = re.compile(r"monto\s+involucrado\s*:?\s*\$?\s*(" + _NUM + r")\s*millon")
+
+# Escrituras con hipoteca. Dos formas según la época del informe:
+#   "959 escrituras formalizadas con hipoteca"                        -> número ANTES
+#   "...con hipoteca bancaria totalizaron 613 casos"                  -> número DESPUÉS
+_HIPO_ANTES = re.compile(r"(" + _NUM + r")\s+escrituras?\s+(?:formalizadas?\s+)?"
+                         r"con\s+(?:constitucion\s+de\s+)?hipoteca")
+_HIPO_DESPUES = re.compile(r"hipoteca(?:\s+bancaria)?\s+(?:\S+\s+){0,5}?(" + _NUM + r")\s+casos")
+# Abril-2020 (cuarentena): "no hubo escrituras formalizadas con hipoteca bancaria". El valor
+# es CERO, no un dato ausente: la fuente lo está diciendo explícitamente.
+_HIPO_CERO = re.compile(r"no\s+hubo\s+escrituras?\s+(?:formalizadas?\s+)?"
+                        r"con\s+(?:constitucion\s+de\s+)?hipoteca")
+
+# "El monto medio de los actos fue de $176.577.070" / "con un valor promedio de $1.390.603".
+_MEDIO = re.compile(r"(?:monto|valor)\s+(?:medio|promedio)\s+"
+                    r"(?:de\s+(?:los\s+actos|las\s+escrituras|cada\s+acto)\s*)?"
+                    r"(?:fue|ascendio|se\s+ubico|alcanzo)?\s*(?:de|a|en)?\s*\$\s*(" + _NUM + r")")
+# "(116.967 dólares de acuerdo al tipo de cambio oficial)" / "a unos 93.706 dolares".
+_MEDIO_USD = re.compile(r"\(?\s*(?:a\s+unos\s+)?(" + _NUM + r")\s*dolares")
+
+# Cuántos caracteres antes del número se miran para detectar que la frase habla de OTRO mes.
+_VENTANA_MES = 100
+
+# Tolerancia de la identidad monto_involucrado / cantidad == monto_medio. Los desvíos legítimos
+# llegan a ~3% (monto_involucrado viene redondeado al millón); el informe de octubre-2022 tiene
+# un typo de la fuente que da 99.898%. Con 20% se separan sin ambigüedad.
+_TOL_MEDIO = 0.20
 
 # Planillas con una fila por mes (las que sirven para rellenar). Excluye a propósito las de
 # hipotecas, montos y cotización, que tienen otra forma.
@@ -111,12 +150,92 @@ def mes_del_titulo(titulo: str) -> dt.date:
     return dt.date(int(m.group(2)), MESES[m.group(1)], 1)
 
 
+def _num(s: str) -> float:
+    """'1.068.467' -> 1068467.0 | '2.668,6' -> 2668.6 (formato argentino)."""
+    return float(s.replace(".", "").replace(",", "."))
+
+
 def actos_del_texto(texto: str) -> int:
     """Cantidad de actos del cuerpo del informe. Corta si no está."""
     m = _ACTOS.search(_norm(texto))
     if not m:
         raise FormatoInesperado("no se encontró 'escrituras de compraventa <N>' en el informe")
-    return int(m.group(1).replace(".", ""))
+    return int(_num(m.group(1)))
+
+
+def _habla_de_otro_mes(texto: str, pos: int, mes: int) -> bool:
+    """True si la frase que precede a `pos` nombra un mes distinto al del informe.
+
+    Existe por el informe de octubre-2017, que dice "en SEPTIEMBRE, las escrituras formalizadas
+    con hipoteca bancaria totalizaron 1.907 casos". Sin esta guarda, el dato de septiembre se
+    guardaba como si fuera de octubre: un número plausible en el mes equivocado, que es
+    justamente lo que no se detecta mirando la serie.
+
+    Criterio: si en la ventana previa no se nombra ningún mes, se acepta (no hay evidencia en
+    contra). Si se nombra el mes del informe, se acepta. Si sólo se nombran otros, se rechaza.
+
+    La ventana se corta en el punto anterior: sólo cuenta la ORACIÓN en curso. Mirando 100
+    caracteres a secas, una frase como "...comparado con el mismo período de 2025. El monto
+    medio de los actos fue de $176.577.070" arrastraba el mes de la oración de al lado y
+    rechazaba un valor perfectamente bueno. Se busca ". " y no "." porque el punto también es
+    separador de miles, y ahí no hay espacio después.
+    """
+    desde = max(0, pos - _VENTANA_MES)
+    corte = texto.rfind(". ", desde, pos)
+    ventana = texto[corte + 2 if corte != -1 else desde:pos]
+    nombrados = {MESES[w] for w in MESES if re.search(rf"\b{w}\b", ventana)}
+    return bool(nombrados) and mes not in nombrados
+
+
+def _buscar(texto: str, mes: int, *regexes):
+    """Primer match de `regexes` cuya frase no hable de otro mes. None si no hay."""
+    for rx in regexes:
+        for m in rx.finditer(texto):
+            if not _habla_de_otro_mes(texto, m.start(), mes):
+                return m
+    return None
+
+
+def extras_del_texto(texto: str, fecha: dt.date, actos: int) -> dict[str, float]:
+    """Series secundarias del informe: monto, hipotecas y monto medio (pesos y dólares).
+
+    A diferencia de `actos_del_texto`, acá un valor ausente NO es un error: la redacción cambió
+    mucho en 10 años y hay informes (p.ej. abril-2021) que son sólo la lista de descargas, sin
+    texto. Lo que no se encuentra simplemente no se guarda; inventarlo sería peor.
+
+    `monto` se devuelve en PESOS (el informe lo publica en millones) para que las dos series de
+    monto compartan unidad.
+    """
+    t = _norm(texto)
+    out: dict[str, float] = {}
+
+    m = _buscar(t, fecha.month, _MONTO)
+    if m:
+        out["monto"] = _num(m.group(1)) * 1e6
+
+    if _HIPO_CERO.search(t):
+        out["hipotecas"] = 0.0          # "no hubo escrituras con hipoteca": es un cero informado
+    else:
+        m = _buscar(t, fecha.month, _HIPO_ANTES, _HIPO_DESPUES)
+        if m:
+            out["hipotecas"] = _num(m.group(1))
+
+    m = _buscar(t, fecha.month, _MEDIO_USD)
+    if m:
+        out["monto_medio_usd"] = _num(m.group(1))
+
+    # El monto medio se valida contra la identidad monto / cantidad, que se cumple con mediana
+    # 0,001% sobre 118 informes. El de octubre-2022 dice "$13.633" donde la cuenta da 13.632.818
+    # (la fuente se comió los miles): guardarlo dejaría un valor mil veces menor en la serie.
+    m = _buscar(t, fecha.month, _MEDIO)
+    if m:
+        valor = _num(m.group(1))
+        esperado = out["monto"] / actos if out.get("monto") and actos else None
+        if esperado and abs(valor - esperado) / esperado > _TOL_MEDIO:
+            out["monto_medio_descartado"] = valor   # el caller lo reporta; no entra a la base
+        else:
+            out["monto_medio"] = valor
+    return out
 
 
 def get_posts() -> list[dict]:
@@ -145,10 +264,13 @@ def get_posts() -> list[dict]:
         titulo = _texto(p.get("title", {}).get("rendered", ""))
         html = p.get("content", {}).get("rendered", "")
         item = {"url": p.get("link"), "publicado": (p.get("date") or "")[:10],
-                "titulo": titulo, "html": html, "date": None, "actos": None, "error": None}
+                "titulo": titulo, "html": html, "date": None, "actos": None,
+                "extras": {}, "error": None}
         try:
+            texto = _texto(html)
             item["date"] = mes_del_titulo(titulo)
-            item["actos"] = actos_del_texto(_texto(html))
+            item["actos"] = actos_del_texto(texto)
+            item["extras"] = extras_del_texto(texto, item["date"], item["actos"])
         except FormatoInesperado as e:
             item["error"] = str(e)
         out.append(item)

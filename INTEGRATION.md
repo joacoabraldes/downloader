@@ -301,7 +301,7 @@ ETL corrió `ok` y `ultimo_dato` no se movió, es que MAGyP todavía no publicó
 | `bovinos` | `produccion` | `produccion` |
 | `demanda_energia` | `estacionalizada`, `residencial`, `no_res_estacionalizada`, `no_estacionalizada`, `gudi`, `gume`, `guma`, `mate_distribuidor`, `local`, `no_residencial` | `no_residencial` |
 | `hidrocarburos` | `petroleo`, `gas` (totales) + `<serie>_convencional`, `_shale`, `_tight` | `petroleo`, `gas` *(sólo los totales)* |
-| `escrituras_caba` | `compraventa` | *(ninguna)* |
+| `escrituras_caba` | `compraventa`, `monto`, `hipotecas`, `monto_medio`, `monto_medio_usd` | *(ninguna)* |
 | `icc` | `nacional`, `capital`, `gba`, `interior`, `situacion_personal`, `situacion_macro`, `bienes_durables` | *(ninguna)* |
 | `icg` | `icg` | *(ninguna)* |
 | `datos_gob` | las 14: `isac`, `ipi_manufacturero`, `ipc_nacional`, `expo_total`, `impo_total`, `ventas_supermercados`, `ventas_centros_compras`, `ripte`, `smvm`, `indice_salarios_total`, `indice_salarios_registrado`, `indice_salarios_priv_registrado`, `indice_salarios_publico`, `indice_salarios_priv_no_registrado` | `ventas_supermercados`, `ventas_centros_compras`, `expo_total`, `impo_total` *(las 4 sobre la serie real)* |
@@ -310,6 +310,14 @@ ETL corrió `ok` y `ultimo_dato` no se movió, es que MAGyP todavía no publicó
 > Las series que **no** están en `_desest` (p.ej. `lino`/`algodon`/`cartamo`/`canola` de granos, o
 > las componentes de `demanda_energia`) quedan solo como observadas: X-13 no las ajusta (molienda
 > intermitente, o son insumos de una serie derivada). Ver `etl/series_desest.toml`.
+>
+> **`escrituras_caba` mezcla unidades entre sus series y NO se suman entre sí.** `compraventa` e
+> `hipotecas` son conteos de actos (y `hipotecas` es un **subconjunto** de `compraventa`, no algo
+> aparte que se sume); `monto` y `monto_medio` están en **pesos corrientes**; `monto_medio_usd` en
+> **dólares**. Se cumple `monto / compraventa = monto_medio` con 0,0009% de error mediano, así que
+> sirve de control cruzado. Las dos series en pesos son **nominales**: bajo inflación argentina no
+> se comparan mes contra mes sin deflactar. Sólo `compraventa` tiene cobertura completa (126
+> meses); las otras cuatro tienen huecos porque dependen de cómo estaba redactado cada informe.
 >
 > **`hidrocarburos` mezcla unidades y niveles**: `petroleo*` está en **miles de m3** y `gas*` en
 > **millones de m3**, así que no se suman entre sí. Además conviven el total y su desagregado por

@@ -64,11 +64,13 @@ dataset:
   tienen histórico 1996→ (Excel); el desagregado arranca en 2009, que es donde arranca el dato
   por pozo del capítulo IV. Sólo se desestacionalizan los dos totales. La fuente publica el
   total ya desagregado por `concepto` y el total del mes es la suma de los tres.
-- **escrituras_caba**: `compraventa`, cantidad de escrituras de compraventa de inmuebles
-  oficializadas por escribanos de CABA sobre inmuebles de esa demarcación (Colegio de
-  Escribanos de la Ciudad de Buenos Aires). Histórico 2016-02→. Es un **conteo de actos**, no
-  una magnitud física ni un índice. **No se desestacionaliza** (ver el cuadro). El informe trae
-  además monto involucrado, escrituras con hipoteca y monto medio: quedan afuera por ahora.
+- **escrituras_caba**: escrituras de compraventa de inmuebles oficializadas por escribanos de
+  CABA sobre inmuebles de esa demarcación (Colegio de Escribanos de la Ciudad de Buenos Aires).
+  Histórico 2016-02→. **No se desestacionaliza** (ver el cuadro). 5 series del mismo informe,
+  **con unidades distintas**: `compraventa` (cantidad de actos, la única con cobertura completa),
+  `hipotecas` (cantidad de actos con hipoteca, **subconjunto** de `compraventa`), `monto` y
+  `monto_medio` (**pesos** corrientes, nominales) y `monto_medio_usd` (**dólares**). Se cumple
+  `monto / compraventa = monto_medio` con 0,0009% de error mediano: sirve de control cruzado.
 - **icc**: Índice de Confianza del Consumidor (UTDT), escala 0-100. 7 series: `nacional`, sus
   3 aperturas geográficas (`capital`, `gba`, `interior`) y sus 3 subíndices
   (`situacion_personal`, `situacion_macro`, `bienes_durables`). `capital` arranca en 1998-07 y
@@ -949,11 +951,33 @@ pasa a mandar en la vista `_actual` sin que haya que borrar nada.
 > de un informe posterior. Son diferencias de ±1 que el modelo append-only absorbe como
 > snapshot nuevo.
 
+### Las 4 series secundarias y sus guardas
+
+Del mismo texto salen `monto` (el informe lo publica en millones; se guarda **en pesos**, x1e6),
+`hipotecas`, `monto_medio` y `monto_medio_usd`. Tienen huecos (109-120 de 120 meses) porque
+dependen de la redacción de cada informe, y eso **no** es una falla. Tres guardas:
+
+- **Guarda de mes.** El informe de octubre-2017 dice *"en **septiembre**, las escrituras
+  formalizadas con hipoteca bancaria totalizaron 1.907 casos"*. Sin guarda, el dato de septiembre
+  se guardaba como si fuera de octubre. Si la oración nombra un mes distinto al del informe, el
+  valor se descarta.
+- **Guarda de identidad.** `monto / compraventa` debe dar `monto_medio` (mediana 0,0009% sobre
+  117 meses). El informe de octubre-2022 dice `$13.633` donde la cuenta da 13.632.818 — la fuente
+  se comió los miles. Si el desvío supera el 20%, el valor **no entra** y la corrida lo avisa.
+- **Cero informado.** Abril-2020 dice *"no hubo escrituras formalizadas con hipoteca bancaria"*:
+  eso es un **0**, no un dato ausente.
+
+> **Anomalía conocida.** El cociente `monto_medio / monto_medio_usd` reconstruye el tipo de
+> cambio y da una serie coherente (14,8 en feb-2016 → 1.509,6 en jul-2026, con el salto de
+> dic-2023 en su lugar) **salvo noviembre-2020**, donde da 192 $/USD contra ~80 del oficial. El
+> texto dice `$15.367.022 (79.920 dólares ... tipo de cambio oficial)`: el parseo es correcto y la
+> inconsistencia es de la fuente. El valor se guarda tal como se publicó.
+
 ### Backfill
 
 ```bash
 python -m etl init-db escrituras_caba
-python -m etl escrituras_caba load-history   # 120 informes + 6 rellenos = 126 meses, sin huecos
+python -m etl escrituras_caba load-history   # 126 meses de compraventa + las 4 secundarias
 ```
 
 Este host **sí** tiene el certificado bien: va con verificación TLS activada, a diferencia de
