@@ -170,6 +170,69 @@ seasonalma = "s3x5"
 # adelante (43 meses). Los meses ene..oct-2022 quedan guardados como observados, sin ajustar.
 start = 2022-12-01
 
+# Ventas de derivados al mercado interno (Secretaria de Energia). Se desestacionalizan
+# `gasoil`, `nafta` y `glp` -- los AGREGADOS por familia, no los 51 productos sueltos.
+#
+# `view` apunta a la vista de totales y no a `_actual`: las series que se ajustan son agregados
+# derivados (gasoil = los 4 tipos de gasoil), no productos individuales. Mismo mecanismo que usa
+# datos_gob para ajustar sobre la serie real en vez de la nominal.
+#
+# ## total_automotor NO se ajusta directo: se deriva sumando gasoil + nafta (ajuste INDIRECTO)
+#
+# Y es la decision importante de este bloque. Las dos componentes tienen estacionalidad OPUESTA:
+# nafta pica en enero-febrero y diciembre (vacaciones, valle en mayo, amplitud 19,1%) y gasoil
+# hace lo contrario -- valle en enero, pico en noviembre por cosecha y transporte, amplitud 9,6%.
+# Al sumarlas se cancelan y el total queda en 7,1% de amplitud.
+#
+# Correr X-13 sobre el agregado tendria dos problemas. Uno: rompe la identidad
+# total_automotor = gasoil + nafta, porque el ajuste directo del total no da la suma de los
+# ajustes de las partes. Es el mismo motivo por el que comex no ajusta su indice de valor. Dos:
+# cuando las componentes se cancelan de forma imperfecta, el ajuste directo del agregado suele
+# dejar estacionalidad residual que el indirecto no deja. El ajuste indirecto es la practica
+# estandar justamente para este caso.
+#
+# La suma se hace en la vista `etl_ventas_combustibles_desest`, marcada con
+# parametros->>'metodo' = 'indirecto' para que se distinga de las tres directas.
+#
+# ## Por que estos parametros
+#
+# `add` en las tres: en ninguna el modo multiplicativo mejora, y en gasoil y nafta lo empeora.
+#
+# gasoil lleva `td` de 6 coeficientes y no td1coef: con td1coef el estadistico M3 se va arriba de
+# 1 (fuera de la region de aceptacion) y el Q sube de 0,50 a 0,61. Tiene sentido: en el gasoil
+# pesa la composicion del calendario (cuantos dias de cada tipo), no solo cuantos habiles hubo.
+#
+# nafta lleva `td1coef` AUNQUE no sea el de menor Q. `add + td` da Q=0,30 contra 0,37, pero trae
+# ESTACIONALIDAD MOVIL, y `mult + td` (Q=0,32) deja M2 arriba de 1. `add + td1coef` es la mejor
+# configuracion LIMPIA: Q=0,37, M7=0,198, sin movil y sin ningun M fuera de rango. Elegir por Q a
+# secas habria metido una serie con el patron estacional a la deriva.
+#
+# ## glp: se ajusta, pero es la mas debil y hay que saberlo
+#
+# Es la de estacionalidad mas fuerte y menos discutible del dataset -- pico en julio (1,392),
+# valle en enero (0,720), amplitud 67,2%, F de estacionalidad estable 225,9** -- pero NINGUNA de
+# las 30 configuraciones probadas (3 modos x 3 td x 5 filtros) queda limpia: todas reportan
+# estacionalidad movil y dejan M3 y M5 arriba de 1. El patron se mueve de verdad: en 15 anios
+# cambio la red de gas natural y la sustitucion en calefaccion. Q=0,77 sigue debajo del umbral de
+# aceptacion (1,0), asi que la serie ajustada es utilizable, pero es la de menor calidad de las
+# tres y conviene mirarla con eso en mente.
+#
+# SIN REFERENCIA DE CALIBRACION: la Secretaria publica las ventas crudas. Los parametros salen de
+# los diagnosticos de X-13, no de reproducir un numero oficial. Mismo criterio que datos_gob y comex.
+#
+# Sin `start`: las series arrancan en 2010-01 y son contiguas (199 meses).
+[ventas_combustibles]
+table = "etl_ventas_combustibles"
+view = "etl_ventas_combustibles_totales"
+desest = ["gasoil", "nafta", "glp"]
+mode = "add"
+td = "td1coef"
+seasonalma = "s3x5"
+
+# Ver arriba: con td1coef, M3 se va arriba de 1 y el Q sube de 0,50 a 0,61.
+[ventas_combustibles.overrides.gasoil]
+td = "td"
+
 # Escrituras de compraventa en CABA (Colegio de Escribanos). Se desestacionaliza SOLO
 # `compraventa`, la cantidad de actos.
 #

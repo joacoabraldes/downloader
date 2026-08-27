@@ -804,11 +804,24 @@ clasificación **nuestra**, no la de la fuente. `nafta_virgen` es petroquímica 
 `solventes`; `diesel_oil` y `kerosene` están en `otros`, no en `gasoil`. Si tu definición difiere,
 mirá `etl_ventas_combustibles_series` antes de asumir.
 
-**4. Este dataset NO se desestacionaliza (todavía).** `etl_ventas_combustibles_desest` existe y
-devuelve 0 filas. Las ventas de combustible tienen estacionalidad (verano/invierno, cosecha en el
-gasoil), así que probablemente valga la pena; cuando se decida, es agregar el bloque en
-`etl/series_desest.toml`. Mientras tanto, para comparar contra el mes anterior usá variación
-interanual, no mes contra mes.
+**4. Para comparar mes contra mes, usá `etl_ventas_combustibles_desest`.** Se ajustan `gasoil`,
+`nafta` y `glp`, y `total_automotor` sale de **sumar las dos primeras ya ajustadas** (ajuste
+indirecto): nafta pica en verano y gasoil en primavera, así que al sumarlas en crudo se cancelan
+y el ajuste directo del agregado rompería la identidad `total_automotor = gasoil + nafta`. La
+identidad se cumple **exacta** en los 199 meses; las filas derivadas se distinguen por
+`parametros->>'metodo' = 'indirecto'`.
+
+```sql
+-- Consumo de surtidor sin estacionalidad
+select date, valor from etl_ventas_combustibles_desest
+where serie = 'total_automotor' order by date;
+```
+
+Cuánto trabaja el ajuste (|d11 − obs| / obs): `glp` 21,0% medio, `nafta` 4,0%, `gasoil` 3,6%,
+`total_automotor` 2,9%. Vale la pena: diciembre→enero-2026 el crudo marca **−5,3%** y el ajustado
+**+1,2%** — signo opuesto. Ojo con `glp`: es la de estacionalidad más fuerte (amplitud 67%) pero
+**ninguna** configuración de X-13 sale limpia (todas reportan estacionalidad móvil, y M3 y M5
+quedan fuera de rango). Q=0,77 es usable, pero es la de menor calidad de las tres.
 
 > El último mes que publica la fuente aparece **con 0 en todos los productos** antes de estar
 > listo. El ETL descarta esos meses (un mes entero en cero es el placeholder, no un derrumbe del

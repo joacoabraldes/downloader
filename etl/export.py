@@ -11,6 +11,7 @@ Lee las vistas *_desest de la base y escribe un CSV por dataset:
   - bovinos        -> bovinos_d11.csv          (date, d11)
   - demanda_energia-> demanda_energia_d11.csv  (date, d11)  (serie no_residencial)
   - hidrocarburos  -> hidrocarburos_d11.csv    (formato ancho: date, petroleo, gas)
+  - ventas_combustibles -> ventas_combustibles_d11.csv (ancho: date, gasoil, nafta, glp, total_automotor)
   - escrituras_caba-> escrituras_caba_d11.csv  (date, d11)  (serie compraventa)
   - comex          -> comex_d11.csv            (formato ancho: date + las 6 series de cantidad)
 
@@ -26,7 +27,8 @@ from pathlib import Path
 from etl.core import db
 
 ALL = ["granos", "cemento", "automotriz", "patentamientos", "acero", "aves", "leche",
-       "bovinos", "demanda_energia", "hidrocarburos", "escrituras_caba", "comex"]
+       "bovinos", "demanda_energia", "hidrocarburos", "ventas_combustibles",
+       "escrituras_caba", "comex"]
 
 
 def _write(path: Path, header: list[str], rows: list) -> int:
@@ -107,6 +109,11 @@ def main(argv=None) -> None:
                 from .datasets.hidrocarburos import config as hc
                 path = out / "hidrocarburos_d11.csv"
                 n = export_wide(conn, "etl_hidrocarburos_desest", hc.TOTALES, path)
+            elif name == "ventas_combustibles":
+                # gasoil/nafta/glp ajustadas directo + total_automotor derivado (indirecto).
+                path = out / "ventas_combustibles_d11.csv"
+                n = export_wide(conn, "etl_ventas_combustibles_desest",
+                                ["gasoil", "nafta", "glp", "total_automotor"], path)
             elif name == "escrituras_caba":
                 # Solo `compraventa` se desestacionaliza -> la vista _desest tiene una serie.
                 path = out / "escrituras_caba_d11.csv"

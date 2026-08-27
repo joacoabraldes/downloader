@@ -3,15 +3,23 @@
 Un solo POST trae los 51 productos por mes desde 2010-01, así que se baja una vez y la ventana
 de meses se aplica en memoria (ver `source.py`).
 
-NO desestacionaliza: este dataset todavía no está en `etl/series_desest.toml`. Los totales
-(`total_automotor`, `gasoil`, `nafta`, ...) NO se guardan como filas: se derivan en la vista
-`etl_ventas_combustibles_totales`, que es lo que permite redefinir un total sin backfill.
+Los totales (`total_automotor`, `gasoil`, `nafta`, ...) NO se guardan como filas: se derivan en
+la vista `etl_ventas_combustibles_totales`, que es lo que permite redefinir un total sin backfill.
+
+Al final, sólo si hubo datos nuevos, desestacionaliza `gasoil`, `nafta` y `glp` (X-13) leyendo de
+esa misma vista de totales. `total_automotor` NO se ajusta directo: se deriva sumando las dos
+componentes ajustadas, porque tienen estacionalidad opuesta y el ajuste directo del agregado
+rompería la identidad (ver `etl/series_desest.toml` y `schema.sql`).
 
 Flags:
   --month YYYY-MM        procesar solo ese mes
   --months-back N        últimos N meses a revisar (override de la ventana auto)
   --all                  procesar todos los meses que trae la fuente (backfill inicial)
   --force                insertar snapshot aunque no haya cambiado
+  --no-desest            saltear la desestacionalización X-13
+  --x13-out DIR          guardar la salida completa de X-13 en DIR
+
+Para recalcular la desest SIN bajar nada: `python -m etl redesest ventas_combustibles`.
 """
 from __future__ import annotations
 
@@ -20,7 +28,7 @@ import datetime as dt
 
 import urllib3
 
-from etl.core import db, report, window
+from etl.core import db, desest_params, report, seasonal, window
 from . import config, source
 
 
@@ -53,6 +61,10 @@ def main(argv=None) -> None:
     ap.add_argument("--all", action="store_true",
                     help="procesar todos los meses que trae la fuente (backfill inicial)")
     ap.add_argument("--force", action="store_true", help="insertar aunque no cambie")
+    ap.add_argument("--no-desest", action="store_true",
+                    help="saltear la desestacionalización X-13")
+    ap.add_argument("--x13-out", metavar="DIR",
+                    help="guardar la salida de X-13 (html/factores/diagnósticos) en DIR")
     args = ap.parse_args(argv)
     urllib3.disable_warnings()  # cert incompleto de estadisticas.energia.gob.ar (verify=False)
 
@@ -93,6 +105,15 @@ def main(argv=None) -> None:
                 continue
             _guardar(conn, rep, fecha, productos, fuente, force=args.force)
         rep.summary()
+
+        if args.no_desest:
+            pass
+        elif not rep.changed:
+            print("sin datos nuevos: no se desestacionaliza")
+        else:
+            seasonal.run_desest(conn, "ventas_combustibles",
+                                desest_params.build_jobs("ventas_combustibles",
+                                                         keep_dir=args.x13_out))
     finally:
         conn.close()
 

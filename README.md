@@ -72,6 +72,8 @@ dataset:
   (m3 / Ton / miles de m3) y **15 de los 51 productos son crudo por cuenca**, no refinados: van
   marcados `tipo='crudo'` y fuera de todos los totales. Los agregados (`total_automotor`,
   `gasoil`, `nafta`, …) se derivan en la vista `etl_ventas_combustibles_totales`, no se guardan.
+  Se desestacionalizan `gasoil`, `nafta` y `glp`; `total_automotor` sale de **sumar las dos
+  primeras ya ajustadas** (ajuste indirecto, ver el cuadro).
 - **escrituras_caba**: escrituras de compraventa de inmuebles oficializadas por escribanos de
   CABA sobre inmuebles de esa demarcación (Colegio de Escribanos de la Ciudad de Buenos Aires).
   Histórico 2016-02→. 5 series del mismo informe,
@@ -182,7 +184,8 @@ de generar los miércoles: la fuente saltea semanas y algún link apunta a una p
 (`total`, `soja`, `girasol`, `mani`), automotriz las 3 (`produccion`, `ventas`,
 `expo`), cemento `despacho_nacional`, patentamientos las 7 categorías, acero `acero_crudo`,
 aves `faena`, demanda_energia `no_residencial`, hidrocarburos los 2 totales
-(`petroleo`, `gas`), escrituras_caba `compraventa`, comex las **6 de cantidad**
+(`petroleo`, `gas`), ventas_combustibles `gasoil`/`nafta`/`glp`, escrituras_caba
+`compraventa`, comex las **6 de cantidad**
 (`expo_cantidad_*` + `impo_cantidad_general`). `lino`, `algodon`, `cartamo`
 y `canola` **no** se desestacionalizan: su molienda es intermitente (mayormente ceros) y
 X-13 no puede ajustarlas; quedan solo como serie observada.
@@ -494,6 +497,8 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 | demanda_energia | `no_residencial` | `add` | `td1coef` | `s3x5` |
 | hidrocarburos | `gas` | `add` | `td1coef` | `s3x5` |
 | hidrocarburos | `petroleo` | `add` | **`none`** | `s3x5` |
+| ventas_combustibles | `gasoil` | `add` | **`td`** | `s3x5` |
+| ventas_combustibles | `nafta`, `glp` | `add` | `td1coef` | `s3x5` |
 | escrituras_caba | `compraventa` | `mult` | `td1coef` | `s3x5` |
 | datos_gob | `ventas_supermercados`, `ventas_centros_compras` | `mult` | `td` | `s3x5` |
 | datos_gob | `expo_total`, `impo_total` | `mult` | `td1coef` | `s3x5` |
@@ -541,6 +546,28 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 >   medio, y 1.04% vs 3.66% de máximo). Coincide con lo medido: su perfil estacional es de
 >   −1.6% invierno/verano una vez sacado el calendario, o sea plano. Un pozo no cierra los
 >   domingos. Guión: `scripts/calibrar_hidrocarburos.py`.
+
+> **ventas_combustibles** tiene el caso más interesante del cuadro: **`total_automotor` NO se
+> ajusta directo, se DERIVA sumando `gasoil` + `nafta` ya ajustadas** (ajuste indirecto). Las dos
+> componentes tienen estacionalidad **opuesta** —nafta pica en enero-febrero y diciembre por
+> vacaciones (amplitud 19,1%), gasoil hace lo contrario con valle en enero y pico en noviembre por
+> cosecha (9,6%)— y al sumarlas en crudo se cancelan: el agregado queda en 7,1%. Correr X-13 sobre
+> el total rompería la identidad `total_automotor = gasoil + nafta` (mismo motivo por el que comex
+> no ajusta su índice de valor) y, con componentes que se cancelan de forma imperfecta, suele
+> dejar estacionalidad residual. La identidad se cumple **exacta** en los 199 meses.
+>
+> `gasoil` lleva `td` de 6 coeficientes y no `td1coef` porque con éste M3 se va arriba de 1 y el Q
+> sube de 0,50 a 0,61. `nafta` lleva `td1coef` **aunque no sea el de menor Q**: `add+td` da 0,30
+> contra 0,37 pero trae **estacionalidad móvil**, y `mult+td` deja M2 fuera de rango — `add+td1coef`
+> es la mejor configuración *limpia*. Elegir por Q a secas habría metido una serie con el patrón
+> estacional a la deriva.
+>
+> **`glp` se ajusta pero es la más débil, y hay que saberlo.** Tiene la estacionalidad más fuerte
+> y menos discutible (pico en julio, valle en enero, amplitud 67,2%, F=225,9\*\*), pero **ninguna**
+> de las 30 configuraciones probadas queda limpia: todas reportan estacionalidad móvil y dejan M3
+> y M5 arriba de 1. El patrón se mueve de verdad —en 15 años cambió la red de gas natural y la
+> sustitución en calefacción—. Q=0,77 sigue debajo del umbral, así que es usable, pero es la de
+> menor calidad de las tres.
 
 > **escrituras_caba** es la serie **más estacional del repo** y por eso se ajusta, aunque el
 > pedido original haya sido "cantidad por ahora". Con el efecto calendario removido, enero está
