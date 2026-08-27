@@ -83,7 +83,7 @@ dataset:
   son entradas, no productos terminados. 36 conceptos en star-schema; `crudo_procesado` (los 15 de
   crudo) es la serie que se sigue y **no** es `total_procesado`: el crudo pasó de 85,5% de lo
   procesado en 2010 a 78,9% en 2026, por los biocombustibles. La `familia` del crudo es la cuenca
-  de origen.
+  de origen. **No se desestacionaliza**, y se decidió midiéndolo (ver el cuadro).
 - **escrituras_caba**: escrituras de compraventa de inmuebles oficializadas por escribanos de
   CABA sobre inmuebles de esa demarcación (Colegio de Escribanos de la Ciudad de Buenos Aires).
   Histórico 2016-02→. 5 series del mismo informe,

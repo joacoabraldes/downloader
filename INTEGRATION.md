@@ -917,7 +917,14 @@ where tipo = 'crudo'
 group by date, familia order by date, familia;
 ```
 
-> Este dataset **no se desestacionaliza todavía**: `etl_refinacion_desest` existe y devuelve 0
-> filas. El procesamiento en refinería tiene paradas de mantenimiento programadas, así que
-> probablemente tenga estacionalidad; cuando se decida, es agregar el bloque en
-> `etl/series_desest.toml`.
+> **Este dataset no se desestacionaliza, y se decidió midiéndolo.** `crudo_procesado` tiene una
+> estacionalidad chica (amplitud 5,5%) y **que se muda de mes**: el pico está en septiembre en
+> 2010-2015 y en diciembre después. Los diagnósticos de X-13 dan F de estacionalidad estable 8,1
+> —un orden de magnitud por debajo del resto del repo— y **M1 falla en las seis configuraciones
+> probadas**, o sea que el irregular le gana a la señal estacional. La causa es física: las
+> refinerías paran por mantenimiento, pero no en el mismo mes cada año, y eso produce un irregular
+> grande, no un patrón estacional. El ajuste movería los valores 2,8% y sacaría apenas el 24% del
+> ruido mensual. `etl_refinacion_desest` existe y devuelve 0 filas; el razonamiento completo está
+> en `etl/series_desest.toml`.
+>
+> **Para comparar contra el mes anterior**, entonces, usá variación interanual.

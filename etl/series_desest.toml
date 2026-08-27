@@ -170,6 +170,39 @@ seasonalma = "s3x5"
 # adelante (43 meses). Los meses ene..oct-2022 quedan guardados como observados, sin ajustar.
 start = 2022-12-01
 
+# refinacion (insumos procesados en refineria): NO se desestacionaliza, y esta vez la decision
+# salio de MEDIRLO, no de suponerlo. Se evaluo `crudo_procesado` con el mismo metodo que las
+# demas y el resultado fue negativo. Queda escrito para no re-litigarlo.
+#
+# 1. La estacionalidad es CHICA: amplitud 5,5% (enero 1,024, abril 0,974) con el efecto calendario
+#    removido. Para comparar: escrituras 71%, glp 67%, nafta 19%.
+#
+# 2. Y es INESTABLE. El pico se muda entre sub-periodos -- septiembre en 2010-2015, diciembre en
+#    2016-2020 y en 2021-2026 -- y el valle tambien (abril, abril, octubre). Un patron estacional
+#    de verdad no se muda de mes.
+#
+# 3. Los diagnosticos de X-13 lo confirman. F de estacionalidad estable = 8,1, un ORDEN DE
+#    MAGNITUD por debajo del resto del repo (escrituras 53,1 | nafta 74,7 | glp 225,9). M7=0,628
+#    contra 0,156-0,223 de las que si se ajustan. Q entre 0,82 y 0,96, pegado al umbral de
+#    rechazo (1,0). Y lo decisivo: **M1 falla en las SEIS configuraciones probadas** (3 td x 2
+#    modos), en varias acompaniado de M5, M8 y M10. M1 mide cuanto pesa el componente irregular:
+#    que falle siempre significa que el ruido le gana a la senial estacional.
+#
+#    X-13 igual dictamina "IDENTIFIABLE SEASONALITY PRESENT", pero de forma marginal, y ese
+#    veredicto solo no alcanza: lo dio tambien para una serie cuyo ajuste no sirve.
+#
+# 4. No ganariamos casi nada. El ajuste moveria los valores 2,81% en promedio (escrituras 16,8%,
+#    glp 21,0%) y sacaria apenas el 24% del ruido mensual (escrituras: 66%).
+#
+# EXPLICACION FISICA, que es la que cierra el caso: las refinerias SI tienen paradas de
+# mantenimiento programadas, pero no en el mismo mes todos los anios. Una planta que para en abril
+# un anio y en octubre el siguiente produce un IRREGULAR grande, no un patron estacional. Eso es
+# exactamente lo que reportan el M1 que falla y el pico que se muda.
+#
+# Si en algun momento cambia (mas anios, o un calendario de paradas mas regular), sumarlo es
+# agregar aca un bloque [refinacion] con table/desest/mode/td/seasonalma; la vista
+# etl_refinacion_desest ya existe y hoy devuelve 0 filas.
+
 # Ventas de derivados al mercado interno (Secretaria de Energia). Se desestacionalizan
 # `gasoil`, `nafta` y `glp` -- los AGREGADOS por familia, no los 51 productos sueltos.
 #
