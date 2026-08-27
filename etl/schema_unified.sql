@@ -48,8 +48,9 @@ create or replace view series_actual as
   union all
   -- ventas_combustibles son 51 PRODUCTOS con TRES unidades distintas (m3 / Ton / miles de m3) y
   -- 15 de ellos son crudo, no refinados. Sumar todo este dataset no da nada: para los totales
-  -- usar la vista etl_ventas_combustibles_totales, y para el grano etl_ventas_combustibles_actual,
-  -- que trae la dimension (unidad, tipo, familia) pegada.
+  -- usar etl_ventas_combustibles_totales (solo agregados) o etl_ventas_combustibles_productos
+  -- (solo los 51 productos). `_actual` trae LOS DOS -- grano y agregados, como granos o comex --
+  -- con la dimension (unidad, tipo, familia) pegada y `tipo='agregado'` distinguiendolos.
   select 'ventas_combustibles'::text as dataset, serie, date, valor, estado, fuente, ingested_at
     from etl_ventas_combustibles_actual
   union all
