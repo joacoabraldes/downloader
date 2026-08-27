@@ -28,6 +28,7 @@ filas por `(serie, mes)`. Para consumir hay **dos vistas por dataset** que ya re
 | `bovinos` | `etl_bovinos` | `etl_bovinos_actual` | `etl_bovinos_desest` |
 | `demanda_energia` | `etl_demanda_energia` | `etl_demanda_energia_actual` | `etl_demanda_energia_desest` |
 | `hidrocarburos` | `etl_hidrocarburos` | `etl_hidrocarburos_actual` | `etl_hidrocarburos_desest` (sólo los 2 totales) |
+| `refinacion` | `etl_refinacion` + dimensión `etl_refinacion_series` | `etl_refinacion_actual` (+ `_conceptos` y `_totales`) | `etl_refinacion_desest` (vacía: no se desestacionaliza) |
 | `escrituras_caba` | `etl_escrituras_caba` | `etl_escrituras_caba_actual` | `etl_escrituras_caba_desest` (sólo `compraventa`) |
 | `icc` | `etl_icc` | `etl_icc_actual` | `etl_icc_desest` (vacía: no se desestacionaliza) |
 | `icg` | `etl_icg` | `etl_icg_actual` | `etl_icg_desest` (vacía: no se desestacionaliza) |
@@ -46,7 +47,7 @@ Unen todos los datasets en una sola forma, agregando una columna `dataset`:
 
 | Vista | Contenido |
 |---|---|
-| `series_actual` | serie **observada** de los 15 datasets mensuales (`dataset, serie, date, valor, estado, fuente, ingested_at`) |
+| `series_actual` | serie **observada** de los 16 datasets mensuales (`dataset, serie, date, valor, estado, fuente, ingested_at`) |
 | `series_desest` | serie **desestacionalizada** (`dataset, serie, date, valor, fuente, ingested_at, parametros`). `icc` e `icg` no aportan filas: se publican sin ajuste estacional. De `datos_gob` se ajustan las 2 de ventas y las 2 de comercio exterior (sobre su serie real); de `comex`, sólo las seis de cantidad |
 
 ```sql
@@ -861,3 +862,62 @@ quedan fuera de rango). Q=0,77 es usable, pero es la de menor calidad de las tre
 > El último mes que publica la fuente aparece **con 0 en todos los productos** antes de estar
 > listo. El ETL descarta esos meses (un mes entero en cero es el placeholder, no un derrumbe del
 > consumo), así que en la base no vas a verlo — pero si consultás el dashboard directo, sí.
+
+## `refinacion` (Sec. Energía) — cómo consumirlo
+
+**Insumos que entran a las refinerías**, mensual desde **2010-01**: crudo por cuenca más el resto
+de las corrientes que se procesan (biocombustibles, cortes, mejoradores de octano). Unidad única:
+**metros cúbicos**.
+
+> **El dashboard de la fuente se llama "Productos procesados" y son INSUMOS, no productos
+> terminados.** Lo que *sale* de la refinería está en otro dataset de la Secretaría (dashboard 97,
+> "Subproductos obtenidos") y **no** está en este repo. Se distinguen por los conceptos: acá dicen
+> `Cuenca Neuquina - Neuquen (Medanito)` y `Biodiesel`; allá, `Gasoil Grado 2 (Común)`.
+
+### La vista que probablemente querés
+
+```sql
+-- Crudo procesado, la serie que se sigue
+select date, valor from etl_refinacion_totales
+where serie = 'crudo_procesado' order by date;
+```
+
+Agregados disponibles en `etl_refinacion_totales`:
+
+| serie | qué suma |
+|---|---|
+| `crudo_procesado` | los 15 conceptos de crudo — el *crude run* clásico |
+| `otros_insumos` | los 21 restantes: biocombustibles, cortes, mejoradores |
+| `total_procesado` | todo lo que entró a refinería |
+| `crudo_neuquina`, `crudo_golfo_san_jorge`, `crudo_austral`, `crudo_noroeste`, `crudo_cuyana`, `crudo_importado` | el crudo abierto por cuenca de origen |
+
+Como en el resto del repo, **`etl_refinacion_actual` trae el grano Y los agregados**, distinguidos
+por `tipo='agregado'` (y `estado='derivado'`). `etl_refinacion_conceptos` es el atajo al grano solo.
+
+### Tres cosas que hay que saber
+
+**1. `crudo_procesado` NO es `total_procesado`, y la brecha crece.** El crudo era el **85,5%** de
+lo procesado en 2010 y es el **78,9%** en julio-2026. La diferencia la explican los
+biocombustibles, que crecieron con los cortes obligatorios. Usar el total como si fuera crudo
+procesado sobreestima, y cada año un poco más. Son series distintas a propósito.
+
+**2. Nunca sumes `etl_refinacion_actual` entero.** Conviven grano y agregados: `sum(valor)` sin
+filtrar cuenta doble, y los agregados por cuenca cuentan triple (están dentro de
+`crudo_procesado`, que está dentro de `total_procesado`). Filtrá `tipo='agregado'` y una serie
+puntual, o `tipo <> 'agregado'` para el grano.
+
+**3. La `familia` del crudo es la cuenca de origen**, que deja ver el corrimiento de la dieta de
+las refinerías:
+
+```sql
+-- Participación de cada cuenca en el crudo procesado
+select date, familia, sum(valor) as m3
+from etl_refinacion_actual
+where tipo = 'crudo'
+group by date, familia order by date, familia;
+```
+
+> Este dataset **no se desestacionaliza todavía**: `etl_refinacion_desest` existe y devuelve 0
+> filas. El procesamiento en refinería tiene paradas de mantenimiento programadas, así que
+> probablemente tenga estacionalidad; cuando se decida, es agregar el bloque en
+> `etl/series_desest.toml`.

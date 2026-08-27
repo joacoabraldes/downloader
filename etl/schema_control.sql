@@ -57,7 +57,7 @@ from etl_control_ejecucion
 where comando <> 'load-history'   -- carga manual one-off, no es señal de que el cron viva
 order by dataset, inicio desc;
 
--- LA vista para la app: los 18 datasets SIEMPRE, hayan corrido o no.
+-- LA vista para la app: los 19 datasets SIEMPRE, hayan corrido o no.
 --
 --   select * from etl_control_salud where estado <> 'ok';        -- el PROCESO esta roto
 --   select * from etl_control_salud where estado_dato <> 'ok';   -- la FUENTE dejo de publicar
@@ -144,6 +144,9 @@ with esperado(dataset, horas_max, dias_max_dato) as (values
     ('demanda_energia',  80, 105),   -- cron diario -> hueco max viernes 12:00 a lunes 12:00 ~72 h:
                                      --   la VM esta apagada el finde (con 26 h daba SIN_CORRER los lunes)
                                      --   dato: edad del label al publicar 60 d (jun visto 31-jul)
+    ('refinacion',       260, 105),   -- cron 20-31,1-10, misma fuente que hidrocarburos y ventas
+                                     --   dato: mismo borde (jul-2026 disponible al 26-ago).
+                                     --   ESTIMADO, no medido: reajustar con incremental real.
     ('ventas_combustibles', 260, 105),  -- cron 20-31,1-10 -> hueco max ~10 dias, igual que hidrocarburos
                                      --   dato: misma fuente y mismo borde que hidrocarburos (jul-2026
                                      --   disponible al 26-ago) -> edad del label ~50-56 d + 31 de

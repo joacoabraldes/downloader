@@ -1,4 +1,4 @@
-# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia · hidrocarburos · ventas_combustibles · escrituras_caba · icc · icg · datos_gob · comex)
+# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia · hidrocarburos · ventas_combustibles · refinacion · escrituras_caba · icc · icg · datos_gob · comex)
 
 Monorepo de ETLs de series mensuales argentinas. Un **núcleo compartido** + un paquete por
 serie, todo detrás de un solo CLI (`python -m etl ...`). Modelo de datos **append-only**
@@ -20,6 +20,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `demanda_energia` | `etl_demanda_energia` | `energia.xlsx` (2005→) | **xlsx CAMMESA** (URL fija) |
 | `hidrocarburos` | `etl_hidrocarburos` | `petroleo.xlsx` + `Gas.xlsx` (1996→) | **API Superset** Sec. Energía (CSV por chart) |
 | `ventas_combustibles` | `etl_ventas_combustibles` | — (la fuente trae 2010→) | **API Superset** Sec. Energía (POST por producto) |
+| `refinacion` | `etl_refinacion` | — (la fuente trae 2010→) | **API Superset** Sec. Energía (POST por concepto) |
 | `escrituras_caba` | `etl_escrituras_caba` | — (los informes traen 2016-02→) | **API REST de WordPress** del Colegio de Escribanos |
 | `icc` | `etl_icc` | — (la planilla trae 1998→) | **.xls UTDT** (link resuelto por scrape) |
 | `icg` | `etl_icg` | — (la planilla trae 2001→) | **.xls UTDT** (link resuelto por scrape) |
@@ -77,6 +78,12 @@ dataset:
   contra `_desest` funcionando. Atajos: `_totales` (sólo agregados) y `_productos` (sólo grano).
   Se desestacionalizan `gasoil`, `nafta` y `glp`; `gasoil_mas_nafta` sale de **sumar las dos
   primeras ya ajustadas** (ajuste indirecto, ver el cuadro).
+- **refinacion**: **insumos** que entran a las refinerías (Secretaría de Energía), mensual desde
+  2010-01, en m3. Ojo con el nombre de la fuente: su dashboard se llama "Productos procesados" y
+  son entradas, no productos terminados. 36 conceptos en star-schema; `crudo_procesado` (los 15 de
+  crudo) es la serie que se sigue y **no** es `total_procesado`: el crudo pasó de 85,5% de lo
+  procesado en 2010 a 78,9% en 2026, por los biocombustibles. La `familia` del crudo es la cuenca
+  de origen.
 - **escrituras_caba**: escrituras de compraventa de inmuebles oficializadas por escribanos de
   CABA sobre inmuebles de esa demarcación (Colegio de Escribanos de la Ciudad de Buenos Aires).
   Histórico 2016-02→. 5 series del mismo informe,
@@ -341,6 +348,8 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 0  12 20-31,1-10 * * /home/jmt/dev/downloader/scripts/run_etl.sh hidrocarburos
 # ventas_combustibles: misma fuente y mismo borde que hidrocarburos.
 0  13 20-31,1-10 * * /home/jmt/dev/downloader/scripts/run_etl.sh ventas_combustibles
+# refinacion: misma fuente y mismo borde que los dos de arriba.
+0  14 20-31,1-10 * * /home/jmt/dev/downloader/scripts/run_etl.sh refinacion
 # comex: INDEC publica el ICA a mediados del mes siguiente (junio-2026 quedo en las planillas el
 # 20-jul). Ventana 18-31, igual que granos. La corrida re-lee siempre los meses de los anios que
 # INDEC todavia marca provisorios, asi que ademas capta las revisiones sin pedirselo.
@@ -400,7 +409,7 @@ Para consumir desde una app, dos vistas:
 | Vista | Para qué |
 |---|---|
 | `etl_control_ultima` | última corrida de cada dataset que alguna vez corrió |
-| **`etl_control_salud`** | los 18 datasets **siempre**, con dos veredictos: proceso y dato |
+| **`etl_control_salud`** | los 19 datasets **siempre**, con dos veredictos: proceso y dato |
 
 ```sql
 -- ¿Hay algo roto de nuestro lado? Si vuelve vacío, está todo bien.
