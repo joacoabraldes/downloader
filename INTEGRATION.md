@@ -716,3 +716,100 @@ salto de nivel sin marcar es peor que un dato faltante.
 > Las importaciones sólo están a **nivel general**: INDEC no abre los grandes rubros del lado
 > importador en esta serie mensual (los agrupa por uso económico, que es otro cuadro y otra
 > planilla). Si algún día hace falta, es un dataset nuevo, no una columna más acá.
+
+## `ventas_combustibles` (Sec. Energía) — cómo consumirlo
+
+Ventas al mercado interno de derivados del petróleo, mensual desde **2010-01**. Es la contracara
+de `hidrocarburos`: aquél mide **producción** de crudo y gas, éste mide **qué se comercializa**.
+
+Se guardan los **51 productos** que publica la fuente, no un total precalculado. El agregado se
+deriva; el grano no. Eso es lo que te deja armar cualquier total sin esperar un backfill.
+
+### La vista que probablemente querés
+
+**`etl_ventas_combustibles_totales`** trae los agregados ya armados, cada uno con su unidad:
+
+| serie | qué suma | unidad |
+|---|---|---|
+| `total_automotor` | gasoil + nafta — el consumo de surtidor | m3 |
+| `gasoil` | los 4 tipos de gasoil | m3 |
+| `nafta` | los 4 tipos de nafta | m3 |
+| `total_refinados_m3` | los 26 refinados que se miden en volumen | m3 |
+| `total_refinados_ton` | los que se venden por peso (fueloil, coque, asfaltos, GLP…) | Ton |
+| `glp` | butano + propano | Ton |
+
+```sql
+-- Consumo de combustible de surtidor, últimos 24 meses
+select date, valor
+from etl_ventas_combustibles_totales
+where serie = 'total_automotor'
+order by date desc limit 24;
+
+-- Gasoil vs nafta, para ver quién arrastra
+select date,
+       max(valor) filter (where serie = 'gasoil') as gasoil,
+       max(valor) filter (where serie = 'nafta')  as nafta
+from etl_ventas_combustibles_totales
+where serie in ('gasoil','nafta')
+group by date order by date;
+```
+
+`total_automotor` **excluye aviación** (el aerokerosene no es consumo automotor) y **excluye
+solventes**, donde vive la nafta virgen, que es materia prima petroquímica y no se quema en un
+motor. Si querés otro criterio, armalo vos — es para lo que está la dimensión.
+
+### Armar tu propio total
+
+**`etl_ventas_combustibles_actual`** es el grano, con la dimensión ya pegada por JOIN: cada fila
+trae `nombre`, `unidad`, `tipo` (`refinado` / `crudo` / `gaseoso`) y `familia` (`gasoil`, `nafta`,
+`aviacion`, `glp`, `pesados`, `lubricantes`, `solventes`, `otros`, `gas`, `crudo`).
+
+```sql
+-- Tu total: refinados en m3, incluyendo aviación pero sin solventes ni lubricantes
+select date, sum(valor) as m3
+from etl_ventas_combustibles_actual
+where unidad = '(m3)'
+  and tipo   = 'refinado'
+  and familia in ('gasoil','nafta','aviacion','otros','pesados')
+group by date order by date;
+
+-- Qué productos hay y cómo están clasificados
+select serie, nombre, unidad, tipo, familia
+from etl_ventas_combustibles_series order by orden;
+
+-- Un producto puntual
+select date, valor from etl_ventas_combustibles_actual
+where serie = 'gasoil_g2_comun' order by date;
+```
+
+**La regla:** todo total filtra **siempre** por `unidad`, y salvo que quieras crudo, también por
+`tipo = 'refinado'`.
+
+### Cuatro cosas que hay que saber
+
+**1. Hay CRUDO adentro del dataset de ventas, y el chart oficial lo suma.** 15 de los 51
+"productos" son petróleo por cuenca (`Cuenca Neuquina - Neuquen (Medanito)`, …) más
+`Crudo importado`. Pesan hasta **6,6% del total en 2010**, ~1,5% en 2022 y **0 desde 2025-01**.
+Están guardados —son un dato— con `tipo = 'crudo'` y **fuera de todos los totales de arriba**. Si
+tomás el total del dashboard tal cual, la serie 2010-2024 te queda inflada y con una baja
+tendencial falsa, producida por la desaparición del crudo y no por el consumo. Como hoy es cero,
+mirando sólo los meses recientes no lo detectás nunca.
+
+**2. Conviven TRES unidades en la misma columna `valor`:** `(m3)` los líquidos, `(Ton)` los
+pesados y el GLP, `(miles/m3)` los gaseosos. Un `sum(valor)` sin filtrar por `unidad` suma metros
+cúbicos con toneladas. La unidad está en la dimensión, nunca en el nombre de la serie.
+
+**3. `nafta_virgen` no es nafta.** Los nombres de familia son la
+clasificación **nuestra**, no la de la fuente. `nafta_virgen` es petroquímica y está en
+`solventes`; `diesel_oil` y `kerosene` están en `otros`, no en `gasoil`. Si tu definición difiere,
+mirá `etl_ventas_combustibles_series` antes de asumir.
+
+**4. Este dataset NO se desestacionaliza (todavía).** `etl_ventas_combustibles_desest` existe y
+devuelve 0 filas. Las ventas de combustible tienen estacionalidad (verano/invierno, cosecha en el
+gasoil), así que probablemente valga la pena; cuando se decida, es agregar el bloque en
+`etl/series_desest.toml`. Mientras tanto, para comparar contra el mes anterior usá variación
+interanual, no mes contra mes.
+
+> El último mes que publica la fuente aparece **con 0 en todos los productos** antes de estar
+> listo. El ETL descarta esos meses (un mes entero en cero es el placeholder, no un derrumbe del
+> consumo), así que en la base no vas a verlo — pero si consultás el dashboard directo, sí.

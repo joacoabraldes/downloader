@@ -1,4 +1,4 @@
-# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia · hidrocarburos · escrituras_caba · icc · icg · datos_gob · comex)
+# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia · hidrocarburos · ventas_combustibles · escrituras_caba · icc · icg · datos_gob · comex)
 
 Monorepo de ETLs de series mensuales argentinas. Un **núcleo compartido** + un paquete por
 serie, todo detrás de un solo CLI (`python -m etl ...`). Modelo de datos **append-only**
@@ -19,6 +19,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `bovinos` | `etl_bovinos` | `Bovinos.xlsx` (1998→) + planilla MAGyP (1990-1997) | **.xls MAGyP** (link dentro de un PDF) |
 | `demanda_energia` | `etl_demanda_energia` | `energia.xlsx` (2005→) | **xlsx CAMMESA** (URL fija) |
 | `hidrocarburos` | `etl_hidrocarburos` | `petroleo.xlsx` + `Gas.xlsx` (1996→) | **API Superset** Sec. Energía (CSV por chart) |
+| `ventas_combustibles` | `etl_ventas_combustibles` | — (la fuente trae 2010→) | **API Superset** Sec. Energía (POST por producto) |
 | `escrituras_caba` | `etl_escrituras_caba` | — (los informes traen 2016-02→) | **API REST de WordPress** del Colegio de Escribanos |
 | `icc` | `etl_icc` | — (la planilla trae 1998→) | **.xls UTDT** (link resuelto por scrape) |
 | `icg` | `etl_icg` | — (la planilla trae 2001→) | **.xls UTDT** (link resuelto por scrape) |
@@ -64,6 +65,13 @@ dataset:
   tienen histórico 1996→ (Excel); el desagregado arranca en 2009, que es donde arranca el dato
   por pozo del capítulo IV. Sólo se desestacionalizan los dos totales. La fuente publica el
   total ya desagregado por `concepto` y el total del mes es la suma de los tres.
+- **ventas_combustibles**: ventas al mercado interno de derivados del petróleo (Secretaría de
+  Energía), mensual desde 2010-01. Contracara de `hidrocarburos`: aquél mide producción, éste
+  comercialización. **51 productos** en formato star-schema (hechos + dimensión
+  `etl_ventas_combustibles_series` con unidad/tipo/familia). **Tres unidades que no se suman**
+  (m3 / Ton / miles de m3) y **15 de los 51 productos son crudo por cuenca**, no refinados: van
+  marcados `tipo='crudo'` y fuera de todos los totales. Los agregados (`total_automotor`,
+  `gasoil`, `nafta`, …) se derivan en la vista `etl_ventas_combustibles_totales`, no se guardan.
 - **escrituras_caba**: escrituras de compraventa de inmuebles oficializadas por escribanos de
   CABA sobre inmuebles de esa demarcación (Colegio de Escribanos de la Ciudad de Buenos Aires).
   Histórico 2016-02→. 5 series del mismo informe,
@@ -325,6 +333,8 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # (julio-2026 ya estaba el 26-ago). Ventana 20-31,1-10 como leche. La corrida son 2 GET de ~9 KB
 # a la API de Superset y es idempotente.
 0  12 20-31,1-10 * * /home/jmt/dev/downloader/scripts/run_etl.sh hidrocarburos
+# ventas_combustibles: misma fuente y mismo borde que hidrocarburos.
+0  13 20-31,1-10 * * /home/jmt/dev/downloader/scripts/run_etl.sh ventas_combustibles
 # comex: INDEC publica el ICA a mediados del mes siguiente (junio-2026 quedo en las planillas el
 # 20-jul). Ventana 18-31, igual que granos. La corrida re-lee siempre los meses de los anios que
 # INDEC todavia marca provisorios, asi que ademas capta las revisiones sin pedirselo.
@@ -384,7 +394,7 @@ Para consumir desde una app, dos vistas:
 | Vista | Para qué |
 |---|---|
 | `etl_control_ultima` | última corrida de cada dataset que alguna vez corrió |
-| **`etl_control_salud`** | los 17 datasets **siempre**, con dos veredictos: proceso y dato |
+| **`etl_control_salud`** | los 18 datasets **siempre**, con dos veredictos: proceso y dato |
 
 ```sql
 -- ¿Hay algo roto de nuestro lado? Si vuelve vacío, está todo bien.
@@ -436,7 +446,7 @@ solo si el valor es nuevo o cambió respecto del último de ese `(clave, estado)
 
 Y dos vistas que **homogeneízan el consumo** de todos los datasets en una sola forma (agregan
 una columna `dataset`):
-- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves + leche + bovinos + demanda_energia + hidrocarburos + escrituras_caba + icc + icg + datos_gob.
+- `series_actual`: serie observada actual de granos + cemento + automotriz + patentamientos + acero + aves + leche + bovinos + demanda_energia + hidrocarburos + ventas_combustibles + escrituras_caba + icc + icg + datos_gob.
 - `series_desest`: serie desestacionalizada de los nueve.
 
 Y para el **carril diario** (BCRA), una vista aparte que NO se mezcla con las mensuales:
@@ -920,6 +930,53 @@ python -m etl redesest hidrocarburos
 
 Sin el `--all`, la ventana automática sólo mira los últimos meses y la vista `_actual` se queda
 sirviendo el histórico del Excel en todo 2009-2026.
+
+## La fuente de ventas_combustibles (Secretaría de Energía)
+
+Mismo servidor Superset que `hidrocarburos`, pero por otro camino: acá **no alcanza un chart
+guardado**. Los charts de los dashboards 4, 5 y 6 traen el total del mes sin abrir por producto, y
+el único que abre (`slice=31`) llega truncado por `row_limit`. El desagregado se pide con un
+`query_context` propio:
+
+```
+POST /api/v1/chart/data     columns = [indice_tiempo, producto, unidad]
+```
+
+Un solo request trae los 51 productos por mes desde 2010-01 (~380 KB). El endpoint acepta la
+consulta sin login ni CSRF, igual que el GET. **Va con reintentos**: `http.fetch` es sólo GET, así
+que `source._post_con_reintentos` importa la política de `etl.core.http` (intentos, backoff,
+códigos reintentables) en vez de copiar los números — si se ajusta el backoff del repo, esto lo
+hereda.
+
+### Las tres trampas
+
+**Hay crudo adentro del dataset de ventas.** 15 de los 51 productos son petróleo por cuenca más
+`Crudo importado`, y **entran en el total que muestra el chart oficial**: 6,6% del total en 2010,
+~1,5% en 2022, 0 desde 2025-01. Se guardan marcados `tipo='crudo'` y quedan fuera de todos los
+totales. Tomar el total del chart deja la serie 2010-2024 inflada y con una baja tendencial falsa
+producida por la desaparición del crudo. Como hoy vale cero, mirando sólo los meses recientes no
+se detecta.
+
+**El mes en curso viene con `0.0`, no ausente.** El parser descarta los meses cuyo total es cero:
+un mes entero en cero es el placeholder de la fuente, no un derrumbe del consumo.
+
+**Tres unidades en la misma columna.** `(m3)`, `(Ton)` y `(miles/m3)` conviven en `cantidad`. La
+unidad viene como columna aparte y vive en la dimensión; todos los totales filtran por ella.
+
+### Producto nuevo: se ingesta Y se avisa
+
+A diferencia de `hidrocarburos` —donde un concepto desconocido corta la corrida— acá el producto
+se **guarda igual** con un slug derivado, porque perder el dato es peor, y además se registra como
+**falla** para que la corrida salga con código != 0. Un refinado nuevo sin clasificar quedaría
+fuera de los totales y los subestimaría en silencio. La `serie` no tiene CHECK ni FK, por el mismo
+motivo que `comex`.
+
+### Backfill
+
+```bash
+python -m etl init-db ventas_combustibles
+python -m etl ventas_combustibles --all     # 199 meses x 51 series
+```
 
 ## La fuente de escrituras_caba (Colegio de Escribanos)
 

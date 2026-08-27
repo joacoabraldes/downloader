@@ -46,6 +46,13 @@ create or replace view series_actual as
   select 'escrituras_caba'::text as dataset, serie, date, valor, estado, fuente, ingested_at
     from etl_escrituras_caba_actual
   union all
+  -- ventas_combustibles son 51 PRODUCTOS con TRES unidades distintas (m3 / Ton / miles de m3) y
+  -- 15 de ellos son crudo, no refinados. Sumar todo este dataset no da nada: para los totales
+  -- usar la vista etl_ventas_combustibles_totales, y para el grano etl_ventas_combustibles_actual,
+  -- que trae la dimension (unidad, tipo, familia) pegada.
+  select 'ventas_combustibles'::text as dataset, serie, date, valor, estado, fuente, ingested_at
+    from etl_ventas_combustibles_actual
+  union all
   select 'icc'::text as dataset, serie, date, valor, estado, fuente, ingested_at
     from etl_icc_actual
   union all
@@ -100,6 +107,10 @@ create or replace view series_desest as
   -- escrituras_caba no se desestacionaliza: esta vista aporta 0 filas (igual que icc / icg).
   select 'escrituras_caba'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
     from etl_escrituras_caba_desest
+  union all
+  -- ventas_combustibles no se desestacionaliza todavia: aporta 0 filas.
+  select 'ventas_combustibles'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
+    from etl_ventas_combustibles_desest
   union all
   -- icc / icg no se desestacionalizan: estas dos ramas devuelven 0 filas. Se dejan para que
   -- sumar X-13 más adelante sea sólo agregar el bloque en etl/series_desest.toml.
