@@ -3,11 +3,11 @@
 Un solo POST trae los 51 productos por mes desde 2010-01, así que se baja una vez y la ventana
 de meses se aplica en memoria (ver `source.py`).
 
-Los totales (`total_automotor`, `gasoil`, `nafta`, ...) NO se guardan como filas: se derivan en
+Los totales (`gasoil_mas_nafta`, `gasoil`, `nafta`, ...) NO se guardan como filas: se derivan en
 la vista `etl_ventas_combustibles_totales`, que es lo que permite redefinir un total sin backfill.
 
 Al final, sólo si hubo datos nuevos, desestacionaliza `gasoil`, `nafta` y `glp` (X-13) leyendo de
-esa misma vista de totales. `total_automotor` NO se ajusta directo: se deriva sumando las dos
+esa misma vista de totales. `gasoil_mas_nafta` NO se ajusta directo: se deriva sumando las dos
 componentes ajustadas, porque tienen estacionalidad opuesta y el ajuste directo del agregado
 rompería la identidad (ver `etl/series_desest.toml` y `schema.sql`).
 

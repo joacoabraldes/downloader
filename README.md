@@ -70,9 +70,9 @@ dataset:
   comercialización. **51 productos** en formato star-schema (hechos + dimensión
   `etl_ventas_combustibles_series` con unidad/tipo/familia). **Tres unidades que no se suman**
   (m3 / Ton / miles de m3) y **15 de los 51 productos son crudo por cuenca**, no refinados: van
-  marcados `tipo='crudo'` y fuera de todos los totales. Los agregados (`total_automotor`,
+  marcados `tipo='crudo'` y fuera de todos los totales. Los agregados (`gasoil_mas_nafta`,
   `gasoil`, `nafta`, …) se derivan en la vista `etl_ventas_combustibles_totales`, no se guardan.
-  Se desestacionalizan `gasoil`, `nafta` y `glp`; `total_automotor` sale de **sumar las dos
+  Se desestacionalizan `gasoil`, `nafta` y `glp`; `gasoil_mas_nafta` sale de **sumar las dos
   primeras ya ajustadas** (ajuste indirecto, ver el cuadro).
 - **escrituras_caba**: escrituras de compraventa de inmuebles oficializadas por escribanos de
   CABA sobre inmuebles de esa demarcación (Colegio de Escribanos de la Ciudad de Buenos Aires).
@@ -547,12 +547,12 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 >   −1.6% invierno/verano una vez sacado el calendario, o sea plano. Un pozo no cierra los
 >   domingos. Guión: `scripts/calibrar_hidrocarburos.py`.
 
-> **ventas_combustibles** tiene el caso más interesante del cuadro: **`total_automotor` NO se
+> **ventas_combustibles** tiene el caso más interesante del cuadro: **`gasoil_mas_nafta` NO se
 > ajusta directo, se DERIVA sumando `gasoil` + `nafta` ya ajustadas** (ajuste indirecto). Las dos
 > componentes tienen estacionalidad **opuesta** —nafta pica en enero-febrero y diciembre por
 > vacaciones (amplitud 19,1%), gasoil hace lo contrario con valle en enero y pico en noviembre por
 > cosecha (9,6%)— y al sumarlas en crudo se cancelan: el agregado queda en 7,1%. Correr X-13 sobre
-> el total rompería la identidad `total_automotor = gasoil + nafta` (mismo motivo por el que comex
+> el total rompería la identidad `gasoil_mas_nafta = gasoil + nafta` (mismo motivo por el que comex
 > no ajusta su índice de valor) y, con componentes que se cancelan de forma imperfecta, suele
 > dejar estacionalidad residual. La identidad se cumple **exacta** en los 199 meses.
 >
@@ -565,9 +565,14 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 > **`glp` se ajusta pero es la más débil, y hay que saberlo.** Tiene la estacionalidad más fuerte
 > y menos discutible (pico en julio, valle en enero, amplitud 67,2%, F=225,9\*\*), pero **ninguna**
 > de las 30 configuraciones probadas queda limpia: todas reportan estacionalidad móvil y dejan M3
-> y M5 arriba de 1. El patrón se mueve de verdad —en 15 años cambió la red de gas natural y la
-> sustitución en calefacción—. Q=0,77 sigue debajo del umbral, así que es usable, pero es la de
-> menor calidad de las tres.
+> y M5 arriba de 1. El patrón se mueve de verdad: en 15 años se expandió la red de gas natural y
+> hogares que calefaccionaban con garrafa pasaron a gas de red, lo que corre el perfil estacional
+> del GLP año a año. Q=0,77 sigue debajo del umbral, así que es usable, pero es la de menor
+> calidad de las tres.
+>
+> **`glp` es gas licuado de petróleo** (butano + propano, en toneladas): garrafa y granel, **no**
+> el gas natural de red. El gas de red vive en la familia `gas`, se mide en miles de m3 y no entra
+> en ningún total.
 
 > **escrituras_caba** es la serie **más estacional del repo** y por eso se ajusta, aunque el
 > pedido original haya sido "cantidad por ahora". Con el efecto calendario removido, enero está

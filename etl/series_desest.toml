@@ -177,7 +177,7 @@ start = 2022-12-01
 # derivados (gasoil = los 4 tipos de gasoil), no productos individuales. Mismo mecanismo que usa
 # datos_gob para ajustar sobre la serie real en vez de la nominal.
 #
-# ## total_automotor NO se ajusta directo: se deriva sumando gasoil + nafta (ajuste INDIRECTO)
+# ## gasoil_mas_nafta NO se ajusta directo: se deriva sumando gasoil + nafta (ajuste INDIRECTO)
 #
 # Y es la decision importante de este bloque. Las dos componentes tienen estacionalidad OPUESTA:
 # nafta pica en enero-febrero y diciembre (vacaciones, valle en mayo, amplitud 19,1%) y gasoil
@@ -185,7 +185,7 @@ start = 2022-12-01
 # Al sumarlas se cancelan y el total queda en 7,1% de amplitud.
 #
 # Correr X-13 sobre el agregado tendria dos problemas. Uno: rompe la identidad
-# total_automotor = gasoil + nafta, porque el ajuste directo del total no da la suma de los
+# gasoil_mas_nafta = gasoil + nafta, porque el ajuste directo del total no da la suma de los
 # ajustes de las partes. Es el mismo motivo por el que comex no ajusta su indice de valor. Dos:
 # cuando las componentes se cancelan de forma imperfecta, el ajuste directo del agregado suele
 # dejar estacionalidad residual que el indirecto no deja. El ajuste indirecto es la practica
@@ -209,13 +209,18 @@ start = 2022-12-01
 #
 # ## glp: se ajusta, pero es la mas debil y hay que saberlo
 #
+# ATENCION: `glp` es GAS LICUADO DE PETROLEO (butano + propano, en toneladas) -- garrafa y granel
+# --, NO el gas natural de red. El gas de red esta en la familia `gas` (`gas_natural`,
+# `gas_refineria`, `gnl`), se mide en miles de m3 y NO entra en ningun total de este dataset.
+#
 # Es la de estacionalidad mas fuerte y menos discutible del dataset -- pico en julio (1,392),
 # valle en enero (0,720), amplitud 67,2%, F de estacionalidad estable 225,9** -- pero NINGUNA de
 # las 30 configuraciones probadas (3 modos x 3 td x 5 filtros) queda limpia: todas reportan
 # estacionalidad movil y dejan M3 y M5 arriba de 1. El patron se mueve de verdad: en 15 anios
-# cambio la red de gas natural y la sustitucion en calefaccion. Q=0,77 sigue debajo del umbral de
-# aceptacion (1,0), asi que la serie ajustada es utilizable, pero es la de menor calidad de las
-# tres y conviene mirarla con eso en mente.
+# se expandio la red de gas natural y hogares que calefaccionaban con garrafa pasaron a gas de red,
+# lo que corre el perfil estacional del GLP anio a anio. (El gas de red es la CAUSA del corrimiento,
+# no parte de la serie.) Q=0,77 sigue debajo del umbral de aceptacion (1,0), asi que la serie
+# ajustada es utilizable, pero es la de menor calidad de las tres y conviene mirarla con eso.
 #
 # SIN REFERENCIA DE CALIBRACION: la Secretaria publica las ventas crudas. Los parametros salen de
 # los diagnosticos de X-13, no de reproducir un numero oficial. Mismo criterio que datos_gob y comex.

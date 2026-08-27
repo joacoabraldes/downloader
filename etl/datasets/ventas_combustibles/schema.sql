@@ -126,7 +126,7 @@ select distinct on (c.serie, c.date)
 -- LOS TOTALES, definidos UNA sola vez y aca. Cada uno filtra por unidad ademas de por familia:
 -- sumar m3 con toneladas no da nada.
 --
---   total_automotor      gasoil + nafta, el consumo de surtidor. Excluye aviacion (el jet no es
+--   gasoil_mas_nafta      gasoil + nafta, el consumo de surtidor. Excluye aviacion (el jet no es
 --                        automotor) y excluye solventes, donde vive la nafta virgen, que es
 --                        materia prima petroquimica y no se quema en un motor.
 --   gasoil / nafta       cada familia por separado, sumando sus grados.
@@ -138,7 +138,7 @@ create or replace view etl_ventas_combustibles_totales as
 with base as (
   select date, valor, unidad, tipo, familia from etl_ventas_combustibles_actual
 )
-select 'total_automotor'::text as serie, date, sum(valor) as valor, '(m3)'::text as unidad
+select 'gasoil_mas_nafta'::text as serie, date, sum(valor) as valor, '(m3)'::text as unidad
   from base where unidad = '(m3)' and familia in ('gasoil','nafta') group by date
 union all
 select 'gasoil', date, sum(valor), '(m3)'
@@ -160,10 +160,10 @@ select 'glp', date, sum(valor), '(Ton)'
 -- ajustan `gasoil`, `nafta` y `glp` (ver etl/series_desest.toml), que se calculan sobre la vista
 -- de totales.
 --
--- `total_automotor` NO se ajusta directo: se DERIVA sumando gasoil + nafta (ajuste INDIRECTO).
+-- `gasoil_mas_nafta` NO se ajusta directo: se DERIVA sumando gasoil + nafta (ajuste INDIRECTO).
 -- Las dos componentes tienen estacionalidad OPUESTA -- nafta pica en verano (vacaciones) y gasoil
 -- en primavera (cosecha) -- y al sumarlas se cancelan. Correr X-13 sobre el agregado romperia la
--- identidad total_automotor = gasoil + nafta (mismo motivo por el que comex no ajusta su indice
+-- identidad gasoil_mas_nafta = gasoil + nafta (mismo motivo por el que comex no ajusta su indice
 -- de valor) y, con componentes que se cancelan de forma imperfecta, suele dejar estacionalidad
 -- residual que el indirecto no deja. Se marca con parametros->>'metodo' = 'indirecto'.
 create or replace view etl_ventas_combustibles_desest as
@@ -178,7 +178,7 @@ select serie, date, valor, fuente, ingested_at, parametros from directas
 union all
 -- El `having count(*) = 2` evita publicar un total con una sola componente presente: media suma
 -- se veria como un derrumbe del consumo.
-select 'total_automotor'::text, date, sum(valor),
+select 'gasoil_mas_nafta'::text, date, sum(valor),
        'suma indirecta (gasoil + nafta)'::text, max(ingested_at),
        jsonb_build_object('metodo', 'indirecto',
                           'componentes', jsonb_build_array('gasoil', 'nafta'))

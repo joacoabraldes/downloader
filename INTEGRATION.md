@@ -731,18 +731,18 @@ deriva; el grano no. Eso es lo que te deja armar cualquier total sin esperar un 
 
 | serie | qué suma | unidad |
 |---|---|---|
-| `total_automotor` | gasoil + nafta — el consumo de surtidor | m3 |
+| `gasoil_mas_nafta` | gasoil + nafta, las dos familias de combustible líquido | m3 |
 | `gasoil` | los 4 tipos de gasoil | m3 |
 | `nafta` | los 4 tipos de nafta | m3 |
 | `total_refinados_m3` | los 26 refinados que se miden en volumen | m3 |
 | `total_refinados_ton` | los que se venden por peso (fueloil, coque, asfaltos, GLP…) | Ton |
-| `glp` | butano + propano | Ton |
+| `glp` | butano + propano — **GLP de garrafa y granel, NO gas de red** | Ton |
 
 ```sql
 -- Consumo de combustible de surtidor, últimos 24 meses
 select date, valor
 from etl_ventas_combustibles_totales
-where serie = 'total_automotor'
+where serie = 'gasoil_mas_nafta'
 order by date desc limit 24;
 
 -- Gasoil vs nafta, para ver quién arrastra
@@ -754,9 +754,26 @@ where serie in ('gasoil','nafta')
 group by date order by date;
 ```
 
-`total_automotor` **excluye aviación** (el aerokerosene no es consumo automotor) y **excluye
-solventes**, donde vive la nafta virgen, que es materia prima petroquímica y no se quema en un
-motor. Si querés otro criterio, armalo vos — es para lo que está la dimensión.
+`gasoil_mas_nafta` se llama así y no "automotor" a propósito: adentro está el `gasoil_g1_agro`
+(agrogasoil, que va a tractores y cosechadoras) y buena parte del gasoil común se consume en
+transporte de carga, agro e industria. No es "combustible de autos", es la suma de las dos
+familias de combustible líquido. Excluye aviación y excluye solventes, donde vive la nafta
+virgen —materia prima petroquímica, no combustible—.
+
+> **Casi siempre vas a querer `gasoil` y `nafta` por separado, no la suma.** Tienen estacionalidad
+> **opuesta**: en enero el gasoil está 3,5% por DEBAJO de su tendencia y la nafta 3,6% por ENCIMA.
+> El agregado esconde eso. Las dos están disponibles como series propias, observadas
+> (`etl_ventas_combustibles_totales`) y desestacionalizadas (`etl_ventas_combustibles_desest`).
+
+```sql
+-- Gasoil y nafta desestacionalizadas, cada una por su lado
+select date,
+       max(valor) filter (where serie = 'gasoil') as gasoil,
+       max(valor) filter (where serie = 'nafta')  as nafta
+from etl_ventas_combustibles_desest
+where serie in ('gasoil','nafta')
+group by date order by date;
+```
 
 ### Armar tu propio total
 
@@ -785,7 +802,7 @@ where serie = 'gasoil_g2_comun' order by date;
 **La regla:** todo total filtra **siempre** por `unidad`, y salvo que quieras crudo, también por
 `tipo = 'refinado'`.
 
-### Cuatro cosas que hay que saber
+### Cinco cosas que hay que saber
 
 **1. Hay CRUDO adentro del dataset de ventas, y el chart oficial lo suma.** 15 de los 51
 "productos" son petróleo por cuenca (`Cuenca Neuquina - Neuquen (Medanito)`, …) más
@@ -799,26 +816,31 @@ mirando sólo los meses recientes no lo detectás nunca.
 pesados y el GLP, `(miles/m3)` los gaseosos. Un `sum(valor)` sin filtrar por `unidad` suma metros
 cúbicos con toneladas. La unidad está en la dimensión, nunca en el nombre de la serie.
 
-**3. `nafta_virgen` no es nafta.** Los nombres de familia son la
+**3. `glp` NO es el gas natural de red.** Es gas licuado de petróleo —butano + propano, en
+toneladas—: garrafa y granel. El gas de red está aparte, en la familia `gas` (`gas_natural`,
+`gas_refineria`, `gnl`), se mide en miles de m3 y **no entra en ningún total**. Verificado: `glp`
+suma exactamente butano + propano y nada más.
+
+**4. `nafta_virgen` no es nafta.** Los nombres de familia son la
 clasificación **nuestra**, no la de la fuente. `nafta_virgen` es petroquímica y está en
 `solventes`; `diesel_oil` y `kerosene` están en `otros`, no en `gasoil`. Si tu definición difiere,
 mirá `etl_ventas_combustibles_series` antes de asumir.
 
-**4. Para comparar mes contra mes, usá `etl_ventas_combustibles_desest`.** Se ajustan `gasoil`,
-`nafta` y `glp`, y `total_automotor` sale de **sumar las dos primeras ya ajustadas** (ajuste
+**5. Para comparar mes contra mes, usá `etl_ventas_combustibles_desest`.** Se ajustan `gasoil`,
+`nafta` y `glp`, y `gasoil_mas_nafta` sale de **sumar las dos primeras ya ajustadas** (ajuste
 indirecto): nafta pica en verano y gasoil en primavera, así que al sumarlas en crudo se cancelan
-y el ajuste directo del agregado rompería la identidad `total_automotor = gasoil + nafta`. La
+y el ajuste directo del agregado rompería la identidad `gasoil_mas_nafta = gasoil + nafta`. La
 identidad se cumple **exacta** en los 199 meses; las filas derivadas se distinguen por
 `parametros->>'metodo' = 'indirecto'`.
 
 ```sql
 -- Consumo de surtidor sin estacionalidad
 select date, valor from etl_ventas_combustibles_desest
-where serie = 'total_automotor' order by date;
+where serie = 'gasoil_mas_nafta' order by date;
 ```
 
 Cuánto trabaja el ajuste (|d11 − obs| / obs): `glp` 21,0% medio, `nafta` 4,0%, `gasoil` 3,6%,
-`total_automotor` 2,9%. Vale la pena: diciembre→enero-2026 el crudo marca **−5,3%** y el ajustado
+`gasoil_mas_nafta` 2,9%. Vale la pena: diciembre→enero-2026 el crudo marca **−5,3%** y el ajustado
 **+1,2%** — signo opuesto. Ojo con `glp`: es la de estacionalidad más fuerte (amplitud 67%) pero
 **ninguna** configuración de X-13 sale limpia (todas reportan estacionalidad móvil, y M3 y M5
 quedan fuera de rango). Q=0,77 es usable, pero es la de menor calidad de las tres.

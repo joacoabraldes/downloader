@@ -126,7 +126,7 @@ CATALOGO = {
 
 # Familias que componen el total de combustibles de surtidor. Excluye `aviacion` a propósito
 # (el jet no es consumo automotor) y excluye `solventes`, donde vive la nafta virgen.
-FAMILIAS_AUTOMOTOR = ("gasoil", "nafta")
+FAMILIAS_DEL_TOTAL = ("gasoil", "nafta")
 
 # Serie de referencia del dataset, para el control de "hasta dónde llega el dato".
 MAIN_SERIE = "gasoil_g2_comun"
