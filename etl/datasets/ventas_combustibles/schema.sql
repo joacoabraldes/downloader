@@ -112,9 +112,9 @@ on conflict (serie) do update set
   nombre = excluded.nombre, unidad = excluded.unidad,
   tipo = excluded.tipo, familia = excluded.familia, orden = excluded.orden;
 
--- Serie observada "actual" por (serie, mes), con la dimension pegada por JOIN. Un producto que
+-- EL GRANO: un producto por (serie, mes), con la dimension pegada por JOIN. Un producto que
 -- todavia no esta en el catalogo aparece igual, con nombre/unidad/tipo en NULL.
-create or replace view etl_ventas_combustibles_actual as
+create or replace view etl_ventas_combustibles_productos as
 select distinct on (c.serie, c.date)
        c.serie, c.date, c.valor, c.estado, c.fuente, c.ingested_at,
        d.nombre, d.unidad, d.tipo, d.familia
@@ -126,35 +126,74 @@ select distinct on (c.serie, c.date)
 -- LOS TOTALES, definidos UNA sola vez y aca. Cada uno filtra por unidad ademas de por familia:
 -- sumar m3 con toneladas no da nada.
 --
---   gasoil_mas_nafta      gasoil + nafta, el consumo de surtidor. Excluye aviacion (el jet no es
---                        automotor) y excluye solventes, donde vive la nafta virgen, que es
---                        materia prima petroquimica y no se quema en un motor.
---   gasoil / nafta       cada familia por separado, sumando sus grados.
+--   gasoil_mas_nafta     las dos familias de combustible liquido. Se llama asi y no "automotor"
+--                        porque adentro esta el agrogasoil (tractores, cosechadoras) y buena parte
+--                        del gasoil comun va a transporte de carga, agro e industria. Excluye
+--                        aviacion y excluye solventes, donde vive la nafta virgen (materia prima
+--                        petroquimica, no combustible).
+--   gasoil / nafta       cada familia por separado, sumando sus grados. Casi siempre es lo que se
+--                        quiere: tienen estacionalidad OPUESTA y el agregado la esconde.
 --   total_refinados_m3   los 26 refinados que se miden en m3 (de los 33 refinados, 7 van por
 --                        peso). NO incluye crudo ni gaseosos.
 --   total_refinados_ton  los refinados que se venden por peso (fueloil, coque, asfaltos, GLP...).
---   glp                  butano + propano, en toneladas.
+--   glp                  butano + propano, en toneladas. Es GAS LICUADO DE PETROLEO (garrafa y
+--                        granel), NO el gas natural de red: ese esta en la familia `gas`, se mide
+--                        en miles de m3 y no entra en ningun total.
 create or replace view etl_ventas_combustibles_totales as
 with base as (
-  select date, valor, unidad, tipo, familia from etl_ventas_combustibles_actual
+  select date, valor, unidad, tipo, familia, ingested_at
+    from etl_ventas_combustibles_productos
 )
-select 'gasoil_mas_nafta'::text as serie, date, sum(valor) as valor, '(m3)'::text as unidad
+select 'gasoil_mas_nafta'::text as serie, date, sum(valor) as valor, '(m3)'::text as unidad,
+       max(ingested_at) as ingested_at
   from base where unidad = '(m3)' and familia in ('gasoil','nafta') group by date
 union all
-select 'gasoil', date, sum(valor), '(m3)'
+select 'gasoil', date, sum(valor), '(m3)', max(ingested_at)
   from base where unidad = '(m3)' and familia = 'gasoil' group by date
 union all
-select 'nafta', date, sum(valor), '(m3)'
+select 'nafta', date, sum(valor), '(m3)', max(ingested_at)
   from base where unidad = '(m3)' and familia = 'nafta' group by date
 union all
-select 'total_refinados_m3', date, sum(valor), '(m3)'
+select 'total_refinados_m3', date, sum(valor), '(m3)', max(ingested_at)
   from base where unidad = '(m3)' and tipo = 'refinado' group by date
 union all
-select 'total_refinados_ton', date, sum(valor), '(Ton)'
+select 'total_refinados_ton', date, sum(valor), '(Ton)', max(ingested_at)
   from base where unidad = '(Ton)' and tipo = 'refinado' group by date
 union all
-select 'glp', date, sum(valor), '(Ton)'
+select 'glp', date, sum(valor), '(Ton)', max(ingested_at)
   from base where unidad = '(Ton)' and familia = 'glp' group by date;
+
+-- Serie observada "actual": EL GRANO **MAS** LOS AGREGADOS, que es la forma que tienen todos los
+-- demas datasets del repo.
+--
+-- Por que asi y no solo el grano: en granos, comex, patentamientos y demanda_energia los
+-- agregados (`total`, `expo_cantidad_general`, `total_mercado`, `no_residencial`) SON filas de la
+-- tabla y por lo tanto aparecen en su `_actual`. Aca los agregados se derivan, y dejarlos afuera
+-- rompia la convencion en un punto concreto: el join `series_actual` <-> `series_desest` por
+-- (dataset, serie, date) devolvia CERO filas para este dataset, porque las 4 series ajustadas no
+-- tenian contraparte observada. Con esta union, matchean.
+--
+-- Las filas derivadas se distinguen por `tipo = 'agregado'` y `estado = 'derivado'`. Como en el
+-- resto del repo, agregados y componentes conviven en la misma vista: `sum(valor)` sobre todo el
+-- dataset CUENTA DOBLE y siempre hay que filtrar (ver INTEGRATION.md).
+create or replace view etl_ventas_combustibles_actual as
+select serie, date, valor, estado, fuente, ingested_at, nombre, unidad, tipo, familia
+  from etl_ventas_combustibles_productos
+union all
+select serie, date, valor,
+       'derivado'::text,
+       'suma de productos (ver etl_ventas_combustibles_series)'::text,
+       ingested_at,
+       case serie when 'gasoil_mas_nafta'    then 'Gasoil + nafta'
+                  when 'gasoil'              then 'Gasoil (todos los grados)'
+                  when 'nafta'               then 'Nafta (todos los grados)'
+                  when 'glp'                 then 'GLP (butano + propano)'
+                  when 'total_refinados_m3'  then 'Refinados en m3'
+                  when 'total_refinados_ton' then 'Refinados en toneladas'
+       end,
+       unidad, 'agregado'::text,
+       case when serie in ('gasoil','nafta','glp') then serie else 'total' end
+  from etl_ventas_combustibles_totales;
 
 -- Serie desestacionalizada (X-13). Trae los AGREGADOS por familia, no los 51 productos: se
 -- ajustan `gasoil`, `nafta` y `glp` (ver etl/series_desest.toml), que se calculan sobre la vista

@@ -727,7 +727,14 @@ deriva; el grano no. Eso es lo que te deja armar cualquier total sin esperar un 
 
 ### La vista que probablemente querés
 
-**`etl_ventas_combustibles_totales`** trae los agregados ya armados, cada uno con su unidad:
+Como en el resto del repo, **`etl_ventas_combustibles_actual` trae el grano Y los agregados**, y
+se distinguen por `tipo`: los 51 productos vienen con `tipo` en `refinado`/`crudo`/`gaseoso` y los
+6 agregados con **`tipo = 'agregado'`** (y `estado = 'derivado'`, porque se calculan, no se
+ingestan). Eso es lo que hace que `series_actual` y `series_desest` se puedan unir por
+`(dataset, serie, date)` igual que en cualquier otro dataset.
+
+**`etl_ventas_combustibles_totales`** es el atajo: sólo los agregados, cada uno con su unidad.
+Y **`etl_ventas_combustibles_productos`** es el atajo contrario: sólo el grano.
 
 | serie | qué suma | unidad |
 |---|---|---|
@@ -801,6 +808,12 @@ where serie = 'gasoil_g2_comun' order by date;
 
 **La regla:** todo total filtra **siempre** por `unidad`, y salvo que quieras crudo, también por
 `tipo = 'refinado'`.
+
+> **Y nunca sumes `etl_ventas_combustibles_actual` entero.** Ahí conviven el grano y los
+> agregados, así que un `sum(valor)` sin filtrar cuenta doble — es la misma situación que `granos`
+> (donde `total` convive con los 7 granos) o `comex` (donde el nivel general convive con sus
+> rubros). Filtrá `tipo = 'agregado'` para quedarte con los totales, o `tipo <> 'agregado'` para
+> el grano. O usá directamente `_totales` / `_productos`.
 
 ### Cinco cosas que hay que saber
 

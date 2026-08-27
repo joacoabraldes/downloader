@@ -71,7 +71,10 @@ dataset:
   `etl_ventas_combustibles_series` con unidad/tipo/familia). **Tres unidades que no se suman**
   (m3 / Ton / miles de m3) y **15 de los 51 productos son crudo por cuenca**, no refinados: van
   marcados `tipo='crudo'` y fuera de todos los totales. Los agregados (`gasoil_mas_nafta`,
-  `gasoil`, `nafta`, …) se derivan en la vista `etl_ventas_combustibles_totales`, no se guardan.
+  `gasoil`, `nafta`, …) se **derivan**, no se guardan como filas, pero aparecen en
+  `etl_ventas_combustibles_actual` junto al grano —marcados `tipo='agregado'`— para que el
+  dataset tenga la misma forma que los demás: `_actual` con agregados y componentes, y el join
+  contra `_desest` funcionando. Atajos: `_totales` (sólo agregados) y `_productos` (sólo grano).
   Se desestacionalizan `gasoil`, `nafta` y `glp`; `gasoil_mas_nafta` sale de **sumar las dos
   primeras ya ajustadas** (ajuste indirecto, ver el cuadro).
 - **escrituras_caba**: escrituras de compraventa de inmuebles oficializadas por escribanos de
@@ -1002,6 +1005,20 @@ se **guarda igual** con un slug derivado, porque perder el dato es peor, y adem�
 **falla** para que la corrida salga con código != 0. Un refinado nuevo sin clasificar quedaría
 fuera de los totales y los subestimaría en silencio. La `serie` no tiene CHECK ni FK, por el mismo
 motivo que `comex`.
+
+### Las cuatro vistas
+
+| vista | qué trae |
+|---|---|
+| `_productos` | el grano: los 51 productos con su dimensión |
+| `_totales` | los 6 agregados derivados |
+| `_actual` | **grano + agregados**, como en el resto del repo (`tipo='agregado'` los distingue) |
+| `_desest` | `gasoil`, `nafta`, `glp` ajustadas + `gasoil_mas_nafta` derivada |
+
+`_actual` incluye los agregados a propósito. Dejarlos afuera rompía la convención del repo en un
+punto concreto y medible: el join `series_actual` ↔ `series_desest` por `(dataset, serie, date)`
+devolvía **cero** filas para este dataset, porque las 4 series ajustadas no tenían contraparte
+observada. Con la unión, matchean 796.
 
 ### Backfill
 
