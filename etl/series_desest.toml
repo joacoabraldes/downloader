@@ -203,12 +203,15 @@ start = 2022-12-01
 # agregar aca un bloque [refinacion] con table/desest/mode/td/seasonalma; la vista
 # etl_refinacion_desest ya existe y hoy devuelve 0 filas.
 
-# Ventas de derivados al mercado interno (Secretaria de Energia). Se desestacionalizan
-# `gasoil`, `nafta` y `glp` -- los AGREGADOS por familia, no los 51 productos sueltos.
+# Ventas de derivados al mercado interno (Secretaria de Energia). Se desestacionalizan cuatro
+# series: los AGREGADOS por familia `gasoil`, `nafta` y `glp`, mas el producto suelto `asfaltos`.
+# Los otros 50 productos quedan crudos (ver el cierre del bloque).
 #
-# `view` apunta a la vista de totales y no a `_actual`: las series que se ajustan son agregados
-# derivados (gasoil = los 4 tipos de gasoil), no productos individuales. Mismo mecanismo que usa
-# datos_gob para ajustar sobre la serie real en vez de la nominal.
+# `view` apunta a `_actual` y no a la vista de totales porque las cuatro no salen del mismo lado:
+# `_actual` es la union del grano con los agregados derivados, asi que ahi conviven `gasoil` (la
+# suma de los 4 tipos) y `asfaltos` (un producto). Con `_totales` sola, ningun producto individual
+# era ajustable. Para los tres agregados el insumo no cambia: `_actual` los toma de `_totales`
+# tal cual (mismos 199 meses, mismos valores).
 #
 # ## gasoil_mas_nafta NO se ajusta directo: se deriva sumando gasoil + nafta (ajuste INDIRECTO)
 #
@@ -225,9 +228,9 @@ start = 2022-12-01
 # estandar justamente para este caso.
 #
 # La suma se hace en la vista `etl_ventas_combustibles_desest`, marcada con
-# parametros->>'metodo' = 'indirecto' para que se distinga de las tres directas.
+# parametros->>'metodo' = 'indirecto' para que se distinga de las directas.
 #
-# ## Por que estos parametros
+# ## Por que estos parametros (gasoil, nafta, glp)
 #
 # `add` en las tres: en ninguna el modo multiplicativo mejora, y en gasoil y nafta lo empeora.
 #
@@ -253,7 +256,43 @@ start = 2022-12-01
 # se expandio la red de gas natural y hogares que calefaccionaban con garrafa pasaron a gas de red,
 # lo que corre el perfil estacional del GLP anio a anio. (El gas de red es la CAUSA del corrimiento,
 # no parte de la serie.) Q=0,77 sigue debajo del umbral de aceptacion (1,0), asi que la serie
-# ajustada es utilizable, pero es la de menor calidad de las tres y conviene mirarla con eso.
+# ajustada es utilizable, pero es la de menor calidad de las cuatro y conviene mirarla con eso.
+#
+# ## asfaltos: el unico PRODUCTO suelto que se ajusta
+#
+# `asfaltos` (toneladas, familia `pesados`) no mide consumo de nadie: es insumo de obra vial, y
+# lo que sigue es el calendario de obra. Ese calendario tiene un parate de fin de anio muy
+# marcado -- diciembre 0,831 y enero 0,867 contra picos en septiembre (1,093), agosto (1,089) y
+# noviembre (1,087), amplitud pico-valle 31,5%. Leer diciembre contra noviembre en crudo muestra
+# una caida que pasa TODOS los anios y que no dice nada del nivel de obra.
+#
+# Que hay estacionalidad no esta en discusion: F de estacionalidad estable 23,4 (p=0,00%),
+# Kruskal-Wallis 112,8 (p=0,00%), sin estacionalidad movil (F=1,29, p=21,6%), y las 45
+# configuraciones probadas (3 modos x 3 td x 5 filtros) dan IDENTIFIABLE SEASONALITY PRESENT.
+#
+# La receta -- `mult` + `td` + `s3x9` -- es la UNICA de las 45 que deja los once estadisticos M
+# dentro de la region de aceptacion (Q=0,48, Q2=0,46, M7=0,481). Las tres piezas, una por una:
+#
+#   `mult` y no `add`: en 11 de los 15 pares (td x filtro) el multiplicativo da Q igual o menor,
+#   y los 4 pares donde gana el aditivo son todos filtros cortos (s3x1/s3x3) que fallan M8/M10/M11
+#   igual. En el par ganador, `add + td + s3x9` da Q=0,51 y deja M1 arriba de 1.
+#
+#   `td` de 6 coeficientes y no td1coef, y aca lo dice el TEST y no el Q: el F de los regresores
+#   de trading-day da F(6,177)=7,61 con p=0,00%. Importa la COMPOSICION del calendario, no solo
+#   cuantos habiles hubo -- razonable para despacho de camiones a obra. Con td1coef el Q empata
+#   (0,48) pero M1 se va arriba de 1.
+#
+#   `s3x9` y no el s3x5 del dataset: con s3x5 quedan M8, M10 y M11 arriba de 1, los tres miden el
+#   tamanio y el cambio de las fluctuaciones estacionales (M10 y M11, en los anios recientes). El
+#   patron de asfaltos es chico frente al ruido de la serie -- aporta 3,6% de la varianza
+#   estacionaria contra 10,7% del gasoil -- y el filtro corto lo sobreestima. El filtro largo lo
+#   estabiliza sin borrarlo: la estacionalidad sigue siendo identificable y no aparece movil.
+#
+# NO se ajustan los otros 50 productos, y no es olvido: la lectura util del dataset es por
+# familia, y bajar a producto multiplica por 17 las series ajustadas sin que nadie las mire.
+# `asfaltos` es la excepcion porque ningun agregado lo representa: su familia (`pesados`) mezcla
+# fueloil, coque y destilado de vacio, que no tienen nada que ver con obra vial, y el unico total
+# que lo contiene es `total_refinados_ton`, que ademas lleva el GLP adentro.
 #
 # SIN REFERENCIA DE CALIBRACION: la Secretaria publica las ventas crudas. Los parametros salen de
 # los diagnosticos de X-13, no de reproducir un numero oficial. Mismo criterio que datos_gob y comex.
@@ -261,8 +300,8 @@ start = 2022-12-01
 # Sin `start`: las series arrancan en 2010-01 y son contiguas (199 meses).
 [ventas_combustibles]
 table = "etl_ventas_combustibles"
-view = "etl_ventas_combustibles_totales"
-desest = ["gasoil", "nafta", "glp"]
+view = "etl_ventas_combustibles_actual"
+desest = ["gasoil", "nafta", "glp", "asfaltos"]
 mode = "add"
 td = "td1coef"
 seasonalma = "s3x5"
@@ -270,6 +309,13 @@ seasonalma = "s3x5"
 # Ver arriba: con td1coef, M3 se va arriba de 1 y el Q sube de 0,50 a 0,61.
 [ventas_combustibles.overrides.gasoil]
 td = "td"
+
+# Ver arriba: la unica de las 45 configuraciones con los once M dentro de la region de
+# aceptacion. El filtro largo es lo que baja M8/M10/M11; el td de 6 coef lo pide el F(6,177)=7,61.
+[ventas_combustibles.overrides.asfaltos]
+mode = "mult"
+td = "td"
+seasonalma = "s3x9"
 
 # Escrituras de compraventa en CABA (Colegio de Escribanos). Se desestacionaliza SOLO
 # `compraventa`, la cantidad de actos.

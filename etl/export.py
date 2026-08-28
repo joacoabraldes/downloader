@@ -11,7 +11,8 @@ Lee las vistas *_desest de la base y escribe un CSV por dataset:
   - bovinos        -> bovinos_d11.csv          (date, d11)
   - demanda_energia-> demanda_energia_d11.csv  (date, d11)  (serie no_residencial)
   - hidrocarburos  -> hidrocarburos_d11.csv    (formato ancho: date, petroleo, gas)
-  - ventas_combustibles -> ventas_combustibles_d11.csv (ancho: date, gasoil, nafta, glp, gasoil_mas_nafta)
+  - ventas_combustibles -> ventas_combustibles_d11.csv (ancho: date, gasoil, nafta, glp,
+    gasoil_mas_nafta, asfaltos)
   - escrituras_caba-> escrituras_caba_d11.csv  (date, d11)  (serie compraventa)
   - comex          -> comex_d11.csv            (formato ancho: date + las 6 series de cantidad)
 
@@ -110,10 +111,12 @@ def main(argv=None) -> None:
                 path = out / "hidrocarburos_d11.csv"
                 n = export_wide(conn, "etl_hidrocarburos_desest", hc.TOTALES, path)
             elif name == "ventas_combustibles":
-                # gasoil/nafta/glp ajustadas directo + gasoil_mas_nafta derivado (indirecto).
+                # gasoil/nafta/glp/asfaltos ajustadas directo + gasoil_mas_nafta derivado
+                # (indirecto). `asfaltos` es el unico producto suelto que se ajusta.
                 path = out / "ventas_combustibles_d11.csv"
                 n = export_wide(conn, "etl_ventas_combustibles_desest",
-                                ["gasoil", "nafta", "glp", "gasoil_mas_nafta"], path)
+                                ["gasoil", "nafta", "glp", "gasoil_mas_nafta", "asfaltos"],
+                                path)
             elif name == "escrituras_caba":
                 # Solo `compraventa` se desestacionaliza -> la vista _desest tiene una serie.
                 path = out / "escrituras_caba_d11.csv"

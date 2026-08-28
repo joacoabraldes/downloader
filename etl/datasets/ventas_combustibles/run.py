@@ -6,10 +6,12 @@ de meses se aplica en memoria (ver `source.py`).
 Los totales (`gasoil_mas_nafta`, `gasoil`, `nafta`, ...) NO se guardan como filas: se derivan en
 la vista `etl_ventas_combustibles_totales`, que es lo que permite redefinir un total sin backfill.
 
-Al final, sólo si hubo datos nuevos, desestacionaliza `gasoil`, `nafta` y `glp` (X-13) leyendo de
-esa misma vista de totales. `gasoil_mas_nafta` NO se ajusta directo: se deriva sumando las dos
-componentes ajustadas, porque tienen estacionalidad opuesta y el ajuste directo del agregado
-rompería la identidad (ver `etl/series_desest.toml` y `schema.sql`).
+Al final, sólo si hubo datos nuevos, desestacionaliza `gasoil`, `nafta`, `glp` y `asfaltos`
+(X-13) leyendo de la vista `_actual`, que une el grano con esos totales derivados.
+`gasoil_mas_nafta` NO se ajusta directo: se deriva sumando las dos componentes ajustadas, porque
+tienen estacionalidad opuesta y el ajuste directo del agregado rompería la identidad.
+`asfaltos` es el único producto suelto que se ajusta, porque ningún agregado lo representa
+(ver `etl/series_desest.toml` y `schema.sql`).
 
 Flags:
   --month YYYY-MM        procesar solo ese mes

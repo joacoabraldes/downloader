@@ -76,8 +76,9 @@ dataset:
   `etl_ventas_combustibles_actual` junto al grano —marcados `tipo='agregado'`— para que el
   dataset tenga la misma forma que los demás: `_actual` con agregados y componentes, y el join
   contra `_desest` funcionando. Atajos: `_totales` (sólo agregados) y `_productos` (sólo grano).
-  Se desestacionalizan `gasoil`, `nafta` y `glp`; `gasoil_mas_nafta` sale de **sumar las dos
-  primeras ya ajustadas** (ajuste indirecto, ver el cuadro).
+  Se desestacionalizan `gasoil`, `nafta`, `glp` y —único producto suelto— `asfaltos`;
+  `gasoil_mas_nafta` sale de **sumar las dos primeras ya ajustadas** (ajuste indirecto, ver
+  el cuadro).
 - **refinacion**: **insumos** que entran a las refinerías (Secretaría de Energía), mensual desde
   2010-01, en m3. Ojo con el nombre de la fuente: su dashboard se llama "Productos procesados" y
   son entradas, no productos terminados. 36 conceptos en star-schema; `crudo_procesado` (los 15 de
@@ -194,7 +195,7 @@ de generar los miércoles: la fuente saltea semanas y algún link apunta a una p
 (`total`, `soja`, `girasol`, `mani`), automotriz las 3 (`produccion`, `ventas`,
 `expo`), cemento `despacho_nacional`, patentamientos las 7 categorías, acero `acero_crudo`,
 aves `faena`, demanda_energia `no_residencial`, hidrocarburos los 2 totales
-(`petroleo`, `gas`), ventas_combustibles `gasoil`/`nafta`/`glp`, escrituras_caba
+(`petroleo`, `gas`), ventas_combustibles `gasoil`/`nafta`/`glp`/`asfaltos`, escrituras_caba
 `compraventa`, comex las **6 de cantidad**
 (`expo_cantidad_*` + `impo_cantidad_general`). `lino`, `algodon`, `cartamo`
 y `canola` **no** se desestacionalizan: su molienda es intermitente (mayormente ceros) y
@@ -511,6 +512,7 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 | hidrocarburos | `petroleo` | `add` | **`none`** | `s3x5` |
 | ventas_combustibles | `gasoil` | `add` | **`td`** | `s3x5` |
 | ventas_combustibles | `nafta`, `glp` | `add` | `td1coef` | `s3x5` |
+| ventas_combustibles | `asfaltos` | **`mult`** | **`td`** | **`s3x9`** |
 | escrituras_caba | `compraventa` | `mult` | `td1coef` | `s3x5` |
 | datos_gob | `ventas_supermercados`, `ventas_centros_compras` | `mult` | `td` | `s3x5` |
 | datos_gob | `expo_total`, `impo_total` | `mult` | `td1coef` | `s3x5` |
@@ -1022,7 +1024,7 @@ motivo que `comex`.
 | `_productos` | el grano: los 51 productos con su dimensión |
 | `_totales` | los 6 agregados derivados |
 | `_actual` | **grano + agregados**, como en el resto del repo (`tipo='agregado'` los distingue) |
-| `_desest` | `gasoil`, `nafta`, `glp` ajustadas + `gasoil_mas_nafta` derivada |
+| `_desest` | `gasoil`, `nafta`, `glp`, `asfaltos` ajustadas + `gasoil_mas_nafta` derivada |
 
 `_actual` incluye los agregados a propósito. Dejarlos afuera rompía la convención del repo en un
 punto concreto y medible: el join `series_actual` ↔ `series_desest` por `(dataset, serie, date)`

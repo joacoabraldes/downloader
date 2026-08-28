@@ -195,9 +195,15 @@ select serie, date, valor,
        case when serie in ('gasoil','nafta','glp') then serie else 'total' end
   from etl_ventas_combustibles_totales;
 
--- Serie desestacionalizada (X-13). Trae los AGREGADOS por familia, no los 51 productos: se
--- ajustan `gasoil`, `nafta` y `glp` (ver etl/series_desest.toml), que se calculan sobre la vista
--- de totales.
+-- Serie desestacionalizada (X-13). Trae los AGREGADOS por familia mas UN producto suelto: se
+-- ajustan `gasoil`, `nafta`, `glp` y `asfaltos` (ver etl/series_desest.toml). Los tres primeros
+-- salen de la vista de totales; `asfaltos` es un producto del grano y entra por `_actual`, que
+-- es la union de los dos (por eso el cuadro apunta ahi y no a `_totales`).
+--
+-- `asfaltos` es la unica excepcion al criterio de ajustar solo agregados, y tiene motivo: es
+-- insumo de obra vial, sigue el calendario de obra (parate de diciembre-enero, amplitud 31,5%) y
+-- ningun agregado lo representa -- su familia `pesados` mezcla fueloil, coque y destilado de
+-- vacio. Los otros 50 productos quedan crudos.
 --
 -- `gasoil_mas_nafta` NO se ajusta directo: se DERIVA sumando gasoil + nafta (ajuste INDIRECTO).
 -- Las dos componentes tienen estacionalidad OPUESTA -- nafta pica en verano (vacaciones) y gasoil

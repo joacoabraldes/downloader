@@ -841,8 +841,8 @@ clasificación **nuestra**, no la de la fuente. `nafta_virgen` es petroquímica 
 mirá `etl_ventas_combustibles_series` antes de asumir.
 
 **5. Para comparar mes contra mes, usá `etl_ventas_combustibles_desest`.** Se ajustan `gasoil`,
-`nafta` y `glp`, y `gasoil_mas_nafta` sale de **sumar las dos primeras ya ajustadas** (ajuste
-indirecto): nafta pica en verano y gasoil en primavera, así que al sumarlas en crudo se cancelan
+`nafta`, `glp` y `asfaltos`, y `gasoil_mas_nafta` sale de **sumar las dos primeras ya
+ajustadas** (ajuste indirecto): nafta pica en verano y gasoil en primavera, así que al sumarlas en crudo se cancelan
 y el ajuste directo del agregado rompería la identidad `gasoil_mas_nafta = gasoil + nafta`. La
 identidad se cumple **exacta** en los 199 meses; las filas derivadas se distinguen por
 `parametros->>'metodo' = 'indirecto'`.
@@ -853,11 +853,20 @@ select date, valor from etl_ventas_combustibles_desest
 where serie = 'gasoil_mas_nafta' order by date;
 ```
 
-Cuánto trabaja el ajuste (|d11 − obs| / obs): `glp` 21,0% medio, `nafta` 4,0%, `gasoil` 3,6%,
-`gasoil_mas_nafta` 2,9%. Vale la pena: diciembre→enero-2026 el crudo marca **−5,3%** y el ajustado
-**+1,2%** — signo opuesto. Ojo con `glp`: es la de estacionalidad más fuerte (amplitud 67%) pero
-**ninguna** configuración de X-13 sale limpia (todas reportan estacionalidad móvil, y M3 y M5
-quedan fuera de rango). Q=0,77 es usable, pero es la de menor calidad de las tres.
+Cuánto trabaja el ajuste (|d11 − obs| / obs): `glp` 21,0% medio, `asfaltos` 8,6%, `nafta` 4,0%,
+`gasoil` 3,6%, `gasoil_mas_nafta` 2,9%. Vale la pena: diciembre→enero-2026 el crudo marca
+**−5,3%** y el ajustado **+1,2%** — signo opuesto. Ojo con `glp`: es la de estacionalidad más
+fuerte (amplitud 67%) pero **ninguna** configuración de X-13 sale limpia (todas reportan
+estacionalidad móvil, y M3 y M5 quedan fuera de rango). Q=0,77 es usable, pero es la de menor
+calidad de las cuatro.
+
+**`asfaltos` es el único producto suelto que se ajusta**, y no mide consumo: es insumo de obra
+vial, así que sigue el calendario de obra. El parate de fin de año es enorme —diciembre 0,831 y
+enero 0,867 contra picos en septiembre (1,093) y agosto (1,089), amplitud 31,5%— y en crudo
+aparece todos los años: noviembre→diciembre-2025 marca **−30,1%**, y ajustado **−12,5%**.
+Ninguno de los otros 50 productos se ajusta: la lectura útil del dataset es por familia, y la
+familia de `asfaltos` (`pesados`) mezcla fueloil, coque y destilado de vacío, que no tienen nada
+que ver con obra vial.
 
 > El último mes que publica la fuente aparece **con 0 en todos los productos** antes de estar
 > listo. El ETL descarta esos meses (un mes entero en cero es el placeholder, no un derrumbe del
