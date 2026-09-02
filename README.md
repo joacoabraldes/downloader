@@ -856,8 +856,9 @@ criterio que `hidrocarburos`): no hay nada que ahorrar pidiendo menos.
 ### Un mes sin publicar viene como 0
 
 La tabla siempre tiene las 12 columnas; los meses que todavía no salieron valen `0`. Un cero no
-es un dato — el total país nunca bajó de 40.000 en 30 años — así que se descarta y el mes queda
-como *no publicado*. Cargarlo dejaría ceros al final de la serie y X-13 no podría ajustarla.
+es un dato: en 380 meses el mínimo del total país es **18.034** (abril-2020, cuarentena) y el
+siguiente más bajo 33.874 (diciembre-2001). Así que el 0 se descarta y el mes queda como *no
+publicado*; cargarlo dejaría ceros al final de la serie y arrastraría el ajuste.
 
 Como control de lectura se verifica que **los 12 meses sumen la columna `Total`** del propio
 cuadro, y la fila TOTAL se busca por su etiqueta y no por posición. Si algo no cierra, se corta:

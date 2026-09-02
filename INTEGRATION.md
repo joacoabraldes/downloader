@@ -271,7 +271,7 @@ ETL corrió `ok` y `ultimo_dato` no se movió, es que MAGyP todavía no publicó
 | `serie` | serie dentro del dataset (ver tabla siguiente) |
 | `date` | primer día del mes |
 | `valor` | valor observado (unidad según dataset) |
-| `estado` | `NULL` = histórico (Excel) · `provisorio`/`definitivo` = fuente mensual |
+| `estado` | `NULL` = histórico (Excel) · `provisorio`/`definitivo` = fuente mensual. **No todos los datasets usan los tres**: `transferencias` es siempre `provisorio` porque la DNRPA nunca cierra un mes, y `escrituras_caba` agrega `relleno`. Si filtrás por `estado = 'definitivo'` vas a perder datasets enteros — filtrá por lo que **no** querés (`estado is distinct from 'desestacionalizado'`) o usá la vista `_actual`, que ya resuelve la prioridad |
 | `fuente` | origen del dato (Excel histórico / URL de la fuente) |
 | `ingested_at` | timestamp del snapshot |
 
@@ -946,3 +946,56 @@ group by date, familia order by date, familia;
 > en `etl/series_desest.toml`.
 >
 > **Para comparar contra el mes anterior**, entonces, usá variación interanual.
+
+## `transferencias` (DNRPA) — cómo consumirlo
+
+**Transferencias de automotores**: cambio de titular de un vehículo que ya estaba en el parque, o
+sea el **mercado de usados**. Total país, mensual desde **1995-01** (380 meses). Unidad:
+trámites.
+
+```sql
+-- La serie, cruda y ajustada
+select a.date, a.valor as tramites, d.valor as desest
+from etl_transferencias_actual a
+left join etl_transferencias_desest d using (serie, date)
+where a.serie = 'autos' order by a.date;
+```
+
+### Los tres datasets de autos no se pisan
+
+| Dataset | Qué mide | Fuente | Desde |
+|---|---|---|---|
+| `automotriz` | producción, ventas **mayoristas** y expo de **fábrica** | ADEFA | 1994-01 |
+| `patentamientos` | registraciones **0km** | SIOMAA | 2022-01 |
+| `transferencias` | **usados**: cambio de titular | DNRPA | 1995-01 |
+
+Son universos distintos y se pueden mirar juntos sin contar dos veces. El ratio
+`transferencias / patentamientos` es la lectura clásica de cuántos usados se venden por cada 0km
+patentado, pero ojo con el arranque: `patentamientos` sólo llega a 2022.
+
+### Tres cosas que hay que saber
+
+**1. Todo es `provisorio`, y no es un dataset a medio hacer.** La DNRPA no marca ningún mes como
+cerrado: los registros seccionales siguen informando después del cierre y el cuadro se corrige
+**hacia arriba**. Medido, la revisión toca **sólo el último mes** y es chica — agosto-2026 pasó de
+155.246 a 155.717 (+0,3%) mientras los 375 meses anteriores no se movieron ni un trámite. No hay
+`definitivo` que esperar; si filtrás por ese estado te llevás cero filas.
+
+**2. Usá la desestacionalizada para el m/m.** El efecto calendario es real: con el perfil implícito
+(observado ÷ d11) agosto está 9,2% arriba y febrero 12,4% abajo — amplitud pico-valle **24,7%**.
+Diciembre→enero sube **+8,1%** en crudo todos los años (mediana de 31 pares) y **+0,3%** en la
+ajustada: casi todo ese salto es calendario, no mercado. El ajuste saca un tercio del ruido
+mensual (desvío del m/m 12,9% → 8,6%, excluyendo 2020).
+
+**3. Abril-2020 rompe cualquier escala, y el ajuste no lo tapa.** La cuarentena dejó el mes en
+**18.034** trámites contra 95.198 en marzo y ~130.000 en un mes normal: es el mínimo histórico por
+lejos (el siguiente es 33.874, dic-2001). En la ajustada queda en **25.119** — el ajuste corrige lo
+que le corresponde (calendario y Pascua, que en 2020 cayó justo en abril) y **no** suaviza el
+shock, que es lo correcto: X-13 saca estacionalidad, no outliers. Así que el pozo está en las dos
+series. Si tu gráfico necesita una escala legible, ese punto es el que la rompe.
+
+> **Es la única serie del repo con regresor de Pascua** (`easter[1]` en el cuadro). Semana Santa se
+> mueve entre marzo y abril, así que su efecto no es estacionalidad y el filtro no lo puede sacar:
+> transferir un auto es un trámite presencial y una semana con dos feriados se ve en el conteo. Sin
+> el regresor la calibración se queda en 0,98% de error contra la referencia; con él, en 0,0000%.
+> El detalle está en `etl/series_desest.toml`.

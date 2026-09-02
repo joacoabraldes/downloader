@@ -25,9 +25,9 @@ el parser ya la tiene delante: es cambiar `_fila_total` por un barrido de todas 
 ## Un mes sin publicar viene como 0, no como vacío
 
 La tabla tiene siempre las 12 columnas: los meses que todavía no salieron valen `0`. Un cero
-NO es un dato — el total país de transferencias de autos nunca bajó de 40.000 en 30 años — así
-que se descarta y el mes queda como "no publicado". Si se cargara tal cual, la serie tendría
-ceros al final y X-13 (multiplicativo) no la podría ajustar.
+NO es un dato: en 380 meses el mínimo del total país es **18.034** (abril-2020, cuarentena) y el
+siguiente más bajo 33.874 (diciembre-2001), así que el 0 se descarta y el mes queda como "no
+publicado". Si se cargara tal cual, la serie tendría ceros al final y arrastraría el ajuste.
 
 ## La fila TOTAL se lee por su etiqueta, no por posición
 
