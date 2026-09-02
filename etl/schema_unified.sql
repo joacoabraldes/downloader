@@ -20,6 +20,12 @@ create or replace view series_actual as
   select 'patentamientos'::text as dataset, serie, date, valor, estado, fuente, ingested_at
     from etl_patentamientos_actual
   union all
+  -- transferencias (DNRPA) es el mercado de USADOS: cambio de titular de un vehiculo que ya
+  -- estaba en el parque. No se solapa con automotriz (fabrica) ni con patentamientos (0km), asi
+  -- que los tres se pueden mirar juntos sin contar dos veces. Una sola serie: `autos`.
+  select 'transferencias'::text as dataset, serie, date, valor, estado, fuente, ingested_at
+    from etl_transferencias_actual
+  union all
   select 'acero'::text as dataset, serie, date, valor, estado, fuente, ingested_at
     from etl_acero_actual
   union all
@@ -90,6 +96,9 @@ create or replace view series_desest as
   union all
   select 'patentamientos'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
     from etl_patentamientos_desest
+  union all
+  select 'transferencias'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
+    from etl_transferencias_desest
   union all
   select 'acero'::text as dataset, serie, date, valor, fuente, ingested_at, parametros
     from etl_acero_desest

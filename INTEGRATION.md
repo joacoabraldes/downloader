@@ -22,6 +22,7 @@ filas por `(serie, mes)`. Para consumir hay **dos vistas por dataset** que ya re
 | `cemento` | `etl_cemento_despacho` | `etl_cemento_despacho_actual` | `etl_cemento_despacho_desest` |
 | `automotriz` | `etl_automotriz` | `etl_automotriz_actual` | `etl_automotriz_desest` |
 | `patentamientos` | `etl_patentamientos` | `etl_patentamientos_actual` | `etl_patentamientos_desest` |
+| `transferencias` | `etl_transferencias` | `etl_transferencias_actual` | `etl_transferencias_desest` |
 | `acero` | `etl_acero` | `etl_acero_actual` | `etl_acero_desest` |
 | `aves` | `etl_aves` | `etl_aves_actual` | `etl_aves_desest` |
 | `leche` | `etl_leche` | `etl_leche_actual` | `etl_leche_desest` |
@@ -47,7 +48,7 @@ Unen todos los datasets en una sola forma, agregando una columna `dataset`:
 
 | Vista | Contenido |
 |---|---|
-| `series_actual` | serie **observada** de los 16 datasets mensuales (`dataset, serie, date, valor, estado, fuente, ingested_at`) |
+| `series_actual` | serie **observada** de los 17 datasets mensuales (`dataset, serie, date, valor, estado, fuente, ingested_at`) |
 | `series_desest` | serie **desestacionalizada** (`dataset, serie, date, valor, fuente, ingested_at, parametros`). `icc` e `icg` no aportan filas: se publican sin ajuste estacional. De `datos_gob` se ajustan las 2 de ventas y las 2 de comercio exterior (sobre su serie real); de `comex`, sólo las seis de cantidad |
 
 ```sql
@@ -296,6 +297,7 @@ ETL corrió `ok` y `ultimo_dato` no se movió, es que MAGyP todavía no publicó
 | `cemento` | `despacho_nacional`, `exportacion`, `consumo_despacho_nacional`, `importaciones_propias` | `despacho_nacional` |
 | `automotriz` | `produccion`, `ventas`, `expo` | `produccion`, `ventas`, `expo` |
 | `patentamientos` | `total_mercado`, `autos`, `comercial_liviano`, `comercial_pesado`, `otros_pesados`, `autos_cl`, `autos_cl_cp` | *(las 7)* |
+| `transferencias` | `autos` | `autos` |
 | `acero` | `acero_crudo` | `acero_crudo` |
 | `aves` | `faena` | `faena` |
 | `leche` | `produccion` | `produccion` |
@@ -327,6 +329,13 @@ ETL corrió `ok` y `ultimo_dato` no se movió, es que MAGyP todavía no publicó
 > **millones de m3**, así que no se suman entre sí. Además conviven el total y su desagregado por
 > tipo de recurso: `sum(valor)` sobre todo el dataset **cuenta doble**. Para el total filtrá
 > `serie in ('petroleo','gas')`. Los totales arrancan en 1996-01 y el desagregado en 2009-01.
+>
+> **Los tres datasets de autos NO se solapan y se pueden sumar o mirar juntos sin miedo:**
+> `automotriz` es producción/ventas/exportación de **fábrica** (ADEFA), `patentamientos` son
+> registraciones de **0km** (SIOMAA) y `transferencias` es el mercado de **usados** — cambio de
+> titular de un vehículo que ya estaba en el parque (DNRPA). Ojo con la unidad de `automotriz`:
+> sus `ventas` son mayoristas (fábrica a concesionario), no ventas al público. `transferencias`
+> es la única de las tres con histórico desde 1995.
 >
 > `icc` e `icg` no tienen **ninguna** serie desestacionalizada, y es a propósito: UTDT los publica
 > crudos, así que no existe una referencia contra la cual calibrar el ajuste. Sus vistas `_desest`

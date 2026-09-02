@@ -57,7 +57,7 @@ from etl_control_ejecucion
 where comando <> 'load-history'   -- carga manual one-off, no es señal de que el cron viva
 order by dataset, inicio desc;
 
--- LA vista para la app: los 19 datasets SIEMPRE, hayan corrido o no.
+-- LA vista para la app: los 20 datasets SIEMPRE, hayan corrido o no.
 --
 --   select * from etl_control_salud where estado <> 'ok';        -- el PROCESO esta roto
 --   select * from etl_control_salud where estado_dato <> 'ok';   -- la FUENTE dejo de publicar
@@ -121,6 +121,13 @@ with esperado(dataset, horas_max, dias_max_dato) as (values
                                      --   el 11 y el 31.
     ('patentamientos',  530,  80),   -- cron 1-10
                                      --   dato: edad del label al publicar 31 d (jul visto 01-ago)
+    ('transferencias',  530,  75),   -- cron 1-10, igual que patentamientos -> hueco max ~22 dias
+                                     --   dato: la DNRPA carga el mes apenas cierra -- agosto-2026
+                                     --   ya estaba el 02-sep -> edad del label ~32 d. 32 + 31 de
+                                     --   periodo + margen = 75.
+                                     --   OJO: umbral ESTIMADO sobre UNA sola observacion, no medido.
+                                     --   Reajustar cuando haya varios meses de incremental real,
+                                     --   como se hizo con comex y reservas_pasivos.
     ('acero',           130, 105),   -- cron 15-31,1-10 -> hueco max 5 dias (del 10 al 15)
                                      --   dato: edad del label al publicar 60 d (jun visto 31-jul) -> 60+31 = 91 + margen
     ('granos',          450,  95),   -- cron 18-31  -> hueco max ~18 dias

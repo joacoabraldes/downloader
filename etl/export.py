@@ -3,6 +3,7 @@
 Lee las vistas *_desest de la base y escribe un CSV por dataset:
   - automotriz     -> automotriz_d11.csv      (formato ancho: date, produccion, ventas, expo)
   - patentamientos -> patentamientos_d11.csv  (formato ancho: date + una col por categoría)
+  - transferencias -> transferencias_d11.csv  (date, d11)  (serie autos)
   - granos         -> granos_d11.csv          (date, d11)
   - cemento        -> cemento_d11.csv          (date, d11)
   - acero          -> acero_d11.csv            (date, d11)
@@ -27,9 +28,9 @@ from pathlib import Path
 
 from etl.core import db
 
-ALL = ["granos", "cemento", "automotriz", "patentamientos", "acero", "aves", "leche",
-       "bovinos", "demanda_energia", "hidrocarburos", "ventas_combustibles",
-       "escrituras_caba", "comex"]
+ALL = ["granos", "cemento", "automotriz", "patentamientos", "transferencias", "acero",
+       "aves", "leche", "bovinos", "demanda_energia", "hidrocarburos",
+       "ventas_combustibles", "escrituras_caba", "comex"]
 
 
 def _write(path: Path, header: list[str], rows: list) -> int:
@@ -86,6 +87,10 @@ def main(argv=None) -> None:
                 from .datasets.patentamientos import config as pc
                 path = out / "patentamientos_d11.csv"
                 n = export_wide(conn, "etl_patentamientos_desest", pc.SERIES, path)
+            elif name == "transferencias":
+                # Una sola serie (`autos`) -> la vista _desest tiene una sola.
+                path = out / "transferencias_d11.csv"
+                n = export_simple(conn, "etl_transferencias_desest", path)
             elif name == "granos":
                 path = out / "granos_d11.csv"
                 n = export_simple(conn, "etl_molienda_granos_desest", path)

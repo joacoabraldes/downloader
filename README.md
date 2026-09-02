@@ -1,4 +1,4 @@
-# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · acero · aves · leche · bovinos · demanda_energia · hidrocarburos · ventas_combustibles · refinacion · escrituras_caba · icc · icg · datos_gob · comex)
+# ETLs mensuales → Postgres (granos · cemento · automotriz · patentamientos · transferencias · acero · aves · leche · bovinos · demanda_energia · hidrocarburos · ventas_combustibles · refinacion · escrituras_caba · icc · icg · datos_gob · comex)
 
 Monorepo de ETLs de series mensuales argentinas. Un **núcleo compartido** + un paquete por
 serie, todo detrás de un solo CLI (`python -m etl ...`). Modelo de datos **append-only**
@@ -13,6 +13,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `cemento` | `etl_cemento_despacho` | `cemento.xlsx` | HTML AFCP (provisorio/definitivo) |
 | `automotriz` | `etl_automotriz` | `ind_automotriz.xlsx` | **PDF ADEFA** (pdfplumber) |
 | `patentamientos` | `etl_patentamientos` | PDFs SIOMAA (backfill) | **PDF SIOMAA** (pdfplumber) |
+| `transferencias` | `etl_transferencias` | — (el mismo cuadro trae 1995→) | **HTML DNRPA** (cuadro anual por provincia) |
 | `acero` | `etl_acero` | `Acero.xlsx` (1993→) | **PDF CAA** (scrape + pdfplumber) |
 | `aves` | `etl_aves` | `Aves.xlsx` (1981→) | **xlsx MAGyP** (scrape) + **PDF** de faena (fallback) |
 | `leche` | `etl_leche` | `leche.xlsx` (2015→) | **xlsx MAGyP** (URL fija) |
@@ -39,6 +40,13 @@ dataset:
   `total_mercado`, `autos`, `comercial_liviano`, `comercial_pesado`, `otros_pesados`,
   `autos_cl` (autos + C.L.), `autos_cl_cp` (autos + C.L. + C.P.). De la Tabla 1 del informe
   se guardan **solo las unidades del mes**; las variaciones/acumulados son recalculables.
+- **transferencias**: `autos` — trámites de transferencia de automotores (DNRPA), total país,
+  mensual desde 1995-01. Es el mercado de **usados**: cambio de titular de un vehículo que ya
+  estaba en el parque, así que no se solapa ni con `automotriz` (fábrica) ni con
+  `patentamientos` (0km) y los tres se pueden mirar juntos. El cuadro de la fuente trae la
+  apertura por provincia y **no se persiste**: son 24 series más que nadie pidió. La fuente
+  ofrece además Motos y Maquinarias con el mismo cuadro; sumarlas es una entrada en
+  `config.SERIES_TIPO` (ver el dataset).
 - **acero**: producción de `acero_crudo` (Cámara Argentina del Acero), en miles de toneladas.
   El PDF mensual trae 8 series (arrabio, esponja, laminados, etc.); hoy se ingesta solo acero
   crudo, que es la única con histórico (1993→) y referencia de calibración.
@@ -268,6 +276,12 @@ python -m etl automotriz load-history
 ```
 Inserta el histórico con `estado = NULL`.
 
+> **transferencias no tiene `load-history`.** El mismo formulario de la DNRPA sirve el
+> histórico completo (1995→) con el mismo parser que el incremental, así que el backfill es
+> `python -m etl transferencias --all`. `transfer_autos.xlsx` está en `data/` como **referencia
+> de calibración** de X-13, no como fuente de datos — y tiene cuatro meses mal (ver la sección
+> de la fuente).
+
 > **Piso histórico de granos (1993-01).** El Excel de MAGyP arranca en 1965, pero ese tramo
 > (prefijo de ceros / cambio de escala) cuelga a X-13. Se recorta la ingesta a **1993-01 en
 > adelante** (`config.START_DATE`), aplicado en los dos caminos (`load-history` y `run`), así
@@ -320,6 +334,12 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 10 12 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh automotriz
 0  12 18-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh granos
 0  13 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh patentamientos
+# transferencias: la DNRPA carga el mes apenas cierra (agosto-2026 ya estaba el 02-sep) y
+# despues corrige ese ultimo mes hacia arriba mientras los registros seccionales terminan de
+# informar. La ventana 1-10 cubre las dos cosas: agarra la publicacion y vuelve a leer el mes
+# varias veces para captar la revision. UNA sola fecha observada: si aparece un mes que sale
+# despues del dia 10, ensanchar la ventana y ajustar `horas_max` en el mismo cambio.
+30 13 1-10      * * /home/jmt/dev/downloader/scripts/run_etl.sh transferencias
 # acero: ventana ancha a proposito. NO sabemos el dia real de publicacion de la CAA: la unica
 # publicacion observada es junio/2026, que aparecio el 31-jul (al 4-jul lo ultimo publicado era
 # mayo). Con un solo dato no se puede acotar, y la corrida es un no-op de segundos. Cuando haya
@@ -410,7 +430,7 @@ Para consumir desde una app, dos vistas:
 | Vista | Para qué |
 |---|---|
 | `etl_control_ultima` | última corrida de cada dataset que alguna vez corrió |
-| **`etl_control_salud`** | los 19 datasets **siempre**, con dos veredictos: proceso y dato |
+| **`etl_control_salud`** | los 20 datasets **siempre**, con dos veredictos: proceso y dato |
 
 ```sql
 -- ¿Hay algo roto de nuestro lado? Si vuelve vacío, está todo bien.
@@ -493,34 +513,54 @@ Los parámetros de X-13 **no son globales: son por serie**, y salen del cuadro c
   `transform=log`, requiere serie > 0) · `auto` (X-13 elige el modo por AIC).
 - **`td`** (trading-day): `td1coef` (1 coef) · `td` (6 coef) · `none` (sin ajuste).
 - **`seasonalma`**: filtro estacional del X-11 (`s3x5` estándar).
+- **`easter`** *(opcional, default `0`)*: ancho del regresor de **Pascua**, en días previos.
+  `0` = sin regresor, que es como corre todo el repo salvo `transferencias`. Semana Santa se
+  mueve entre marzo y abril: su efecto **no es estacionalidad** —cae en un mes distinto según el
+  año— así que el filtro estacional no lo puede sacar y queda entero en el irregular de marzo o
+  de abril. Sólo declararlo cuando se midió que la serie lo tiene.
 
 Parametrización actual (calibrada contra la referencia de cada serie, error ~0):
 
-| Dataset | Series | `mode` | `td` | `seasonalma` |
-|---|---|---|---|---|
-| granos | las 8 (`total` + 7 granos) | `add` | `none` | `s3x5` |
-| automotriz | `produccion`, `expo` | `add` | `td1coef` | `s3x5` |
-| automotriz | `ventas` | `auto` | `td` | `s3x5` |
-| cemento | `despacho_nacional` | `mult` | `td` | `s3x5` |
-| patentamientos | las 7 categorías | `auto` | `td1coef` | `s3x5` |
-| acero | `acero_crudo` | `add` | `td1coef` | `s3x5` |
-| aves | `faena` | `mult` | `td` | `s3x5` |
-| leche | `produccion` | `add` | `td1coef` | `s3x5` |
-| bovinos | `produccion` | `add` | `td1coef` | `s3x5` |
-| demanda_energia | `no_residencial` | `add` | `td1coef` | `s3x5` |
-| hidrocarburos | `gas` | `add` | `td1coef` | `s3x5` |
-| hidrocarburos | `petroleo` | `add` | **`none`** | `s3x5` |
-| ventas_combustibles | `gasoil` | `add` | **`td`** | `s3x5` |
-| ventas_combustibles | `nafta`, `glp` | `add` | `td1coef` | `s3x5` |
-| ventas_combustibles | `asfaltos` | **`mult`** | **`td`** | **`s3x9`** |
-| escrituras_caba | `compraventa` | `mult` | `td1coef` | `s3x5` |
-| datos_gob | `ventas_supermercados`, `ventas_centros_compras` | `mult` | `td` | `s3x5` |
-| datos_gob | `expo_total`, `impo_total` | `mult` | `td1coef` | `s3x5` |
-| comex | las 6 de cantidad | `mult` | `td1coef` | `s3x5` |
+| Dataset | Series | `mode` | `td` | `seasonalma` | `easter` |
+|---|---|---|---|---|---|
+| granos | las 8 (`total` + 7 granos) | `add` | `none` | `s3x5` | — |
+| automotriz | `produccion`, `expo` | `add` | `td1coef` | `s3x5` | — |
+| automotriz | `ventas` | `auto` | `td` | `s3x5` | — |
+| cemento | `despacho_nacional` | `mult` | `td` | `s3x5` | — |
+| patentamientos | las 7 categorías | `auto` | `td1coef` | `s3x5` | — |
+| transferencias | `autos` | `add` | `td1coef` | `s3x5` | **`1`** |
+| acero | `acero_crudo` | `add` | `td1coef` | `s3x5` | — |
+| aves | `faena` | `mult` | `td` | `s3x5` | — |
+| leche | `produccion` | `add` | `td1coef` | `s3x5` | — |
+| bovinos | `produccion` | `add` | `td1coef` | `s3x5` | — |
+| demanda_energia | `no_residencial` | `add` | `td1coef` | `s3x5` | — |
+| hidrocarburos | `gas` | `add` | `td1coef` | `s3x5` | — |
+| hidrocarburos | `petroleo` | `add` | **`none`** | `s3x5` | — |
+| ventas_combustibles | `gasoil` | `add` | **`td`** | `s3x5` | — |
+| ventas_combustibles | `nafta`, `glp` | `add` | `td1coef` | `s3x5` | — |
+| ventas_combustibles | `asfaltos` | **`mult`** | **`td`** | **`s3x9`** | — |
+| escrituras_caba | `compraventa` | `mult` | `td1coef` | `s3x5` | — |
+| datos_gob | `ventas_supermercados`, `ventas_centros_compras` | `mult` | `td` | `s3x5` | — |
+| datos_gob | `expo_total`, `impo_total` | `mult` | `td1coef` | `s3x5` | — |
+| comex | las 6 de cantidad | `mult` | `td1coef` | `s3x5` | — |
 
 > **patentamientos** aún no tiene referencia de calibración: `mode=auto` deja que X-13 elija
 > add/mult por AIC. La desest arranca en **2022-12** (`start` en el cuadro): el informe de
 > nov-2022 es pago y falta, y X-13 exige meses contiguos.
+
+> **transferencias es la única serie del repo con regresor de Pascua**, y ahí está el 100% de
+> la calibración: `add + td1coef + s3x5` sin Pascua se queda en **0,98%** de error medio (9,26%
+> máx), y con `easter[1]` cae a **0,0000%** (0,0002% máx sobre 380 meses). El residuo sin Pascua
+> caía todo en marzo y abril — 2002-03, 2002-04, 1996-04, 1995-04, 2005-03… — que es exactamente
+> donde se mueve Semana Santa. El **ancho** importa tanto como el regresor: `easter[8]` deja
+> 0,79% y `easter[15]` 0,97%, o sea casi lo mismo que no ponerlo. Tiene sentido físico: transferir
+> un auto es un trámite presencial en un registro seccional, y una semana con dos feriados y
+> mucha gente de viaje se ve en el conteo del mes.
+>
+> Ojo con la referencia: `transfer_autos.xlsx` tiene **cuatro eneros mal** (ver *La fuente de
+> transferencias*), así que el d11 que produce el ETL —que corre sobre el dato correcto de la
+> DNRPA— no coincide con la planilla alrededor de esos meses, y no tiene que coincidir. En los
+> 376 restantes la diferencia es 0,32% media. Con el MISMO insumo reproduce exacto.
 
 > **acero** está calibrado contra la referencia (`Acero.xlsx`, columna `desest`): `add` +
 > `td1coef` + `s3x5` reproduce el d11 con error ~0 (máx 0.001% sobre 401 meses). En `auto`
@@ -798,6 +838,61 @@ columna de la propia tabla (`Ene.2022` / `JUN.26`), robusto a las variantes LITE
 El histórico se cargó desde los ~53 PDFs ya bajados (ene-2022 en adelante) con
 `load-history --dir`. Esos PDFs **no se versionan** (viven en el repo original de scraping);
 para re-hacer el backfill hay que tenerlos a mano.
+
+## La fuente de transferencias (DNRPA)
+
+`etl/datasets/transferencias/source.py` consulta el **Boletín Estadístico** de la DNRPA
+(`tram_prov.php`), que devuelve el cuadro anual de trámites: 24 provincias x 12 meses más la
+fila TOTAL. Se guarda **sólo el total país**.
+
+### Un request trae el año entero, y el formulario POST anda por GET
+
+La página declara `<FORM METHOD=POST>`, pero el PHP lee los parámetros por `$_REQUEST`: la
+misma consulta por query string devuelve el mismo HTML. Se usa GET a propósito, para pasar por
+`etl/core/http.py` y heredar sus reintentos con backoff en vez de escribir un POST a mano sin
+tolerancia a un corte. Como un request cubre 12 meses, la ventana se agrupa por año (mismo
+criterio que `hidrocarburos`): no hay nada que ahorrar pidiendo menos.
+
+### Un mes sin publicar viene como 0
+
+La tabla siempre tiene las 12 columnas; los meses que todavía no salieron valen `0`. Un cero no
+es un dato — el total país nunca bajó de 40.000 en 30 años — así que se descarta y el mes queda
+como *no publicado*. Cargarlo dejaría ceros al final de la serie y X-13 no podría ajustarla.
+
+Como control de lectura se verifica que **los 12 meses sumen la columna `Total`** del propio
+cuadro, y la fila TOTAL se busca por su etiqueta y no por posición. Si algo no cierra, se corta:
+es la señal de que el layout cambió.
+
+### Todo entra como `provisorio`
+
+La DNRPA no marca ningún mes como cerrado. Los registros seccionales siguen informando después
+del cierre y el cuadro se corrige hacia arriba: agosto-2026 pasó de 155.246 a 155.717 (+0,3%)
+entre la planilla de referencia y la lectura del 02-sep, mientras los 375 meses anteriores no se
+movieron ni un trámite. Revisa el último mes, y sólo ése. Sin señal de la fuente, llamar
+`definitivo` a un valor sería inventarlo.
+
+### La planilla de referencia tiene CUATRO meses mal
+
+`transfer_autos.xlsx` está en `data/` como referencia de calibración de X-13, **no** como fuente
+de datos. Contrastada mes a mes contra el cuadro de la DNRPA (380 meses, 1995-01..2026-08),
+difiere en cinco, y cuatro son un error de la planilla:
+
+| Mes | Planilla | DNRPA | Diferencia |
+|---|---|---|---|
+| 2000-01 | 7.603 | 107.603 | −100.000 |
+| 2008-01 | 33.191 | 133.191 | −100.000 |
+| 2014-01 | 63.033 | 163.033 | −100.000 |
+| 2021-01 | 32.640 | 132.640 | −100.000 |
+| 2026-08 | 155.246 | 155.717 | +471 (revisión legítima) |
+
+Las cuatro primeras son **exactamente** −100.000: se perdió el dígito de las centenas de mil de
+un número de 6 cifras. Y las cuatro caen en **enero**, que es el pico estacional de la serie.
+Que el equivocado sea la planilla y no el sitio lo cierran tres cosas: el cuadro de la DNRPA
+cuadra su propio total anual con esos valores, los meses vecinos hacen absurda la caída
+(dic-1999 79.954 → ene-2000 7.603 → feb-2000 64.306) y los 375 meses restantes coinciden dígito
+a dígito. El ETL toma el dato de la DNRPA, así que la serie cargada está bien; lo que hay que
+saber es que el `d11` de la planilla se calculó sobre esos cuatro eneros rotos y por eso no se
+reproduce ahí (ver `scripts/calibrar_transferencias.py`).
 
 ## La fuente de acero (CAA)
 

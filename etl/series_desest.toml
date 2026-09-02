@@ -18,6 +18,11 @@
 #               auto = X-13 elige el modo por AIC (transform=auto)
 #   td          td1coef = trading-day 1 coef | td = trading-day 6 coef | none = sin ajuste
 #   seasonalma  filtro estacional del X-11 (s3x5 es el estándar).
+#   easter      (opcional, default 0) ancho del regresor de PASCUA, en días previos. 0 = sin
+#               regresor, que es como corre todo el repo salvo transferencias. Semana Santa se
+#               mueve entre marzo y abril: su efecto NO es estacionalidad —cae en un mes distinto
+#               según el año— y el filtro estacional no lo puede sacar. Sólo declararlo cuando se
+#               midió que la serie lo tiene.
 #   start       (opcional) fecha YYYY-MM-DD desde la que se desestacionaliza: recorta el
 #               histórico observado a >= start antes de correr X-13. Sirve para excluir un
 #               prefijo degenerado (ceros / cambios de escala) que cuelga a automdl/X-11.
@@ -68,6 +73,58 @@ seasonalma = "s3x5"
 # mensual, siempre positivas (histórico desde 2022, sin ceros). Sin referencia de
 # calibración: mode=auto deja que X-13 elija add/mult por AIC. Ajustar con overrides si
 # alguna categoría no matchea contra una referencia futura.
+# Transferencias de automotores (DNRPA), mercado de usados. Una sola serie: `autos`.
+#
+# CALIBRADO contra el d11 de transfer_autos.xlsx (scripts/calibrar_transferencias.py), y
+# reproduce la referencia EXACTO: error medio 0,0000% y máximo 0,0002% sobre los 380 meses
+# (1995-01..2026-08). Es el mismo nivel de acero, leche y demanda_energia.
+#
+# ## `easter = 1` es LA pieza, y es el primer uso del parámetro en el repo
+#
+# Sin regresor de Pascua, la mejor de las 27 combinaciones (mode x td x filtro) se queda en
+# 0,98% de error medio con 9,26% de máximo. Con `easter[1]` el error se va a CERO. No es un
+# ajuste fino: es el 100% de la diferencia.
+#
+# Y el residuo lo cantaba solo. Los peores meses sin Pascua, ordenados, son 2002-03, 2002-04,
+# 1996-04, 1995-04, 2005-03, 1995-03, 2020-03, 2014-03, 1996-03, 2016-04: **todos marzo o abril**.
+# Semana Santa cambia de mes según el año, así que su efecto no es estacional —el filtro no lo
+# puede sacar— y queda entero en el irregular de marzo o de abril. Tiene sentido para esta serie:
+# transferir un auto es un trámite presencial en un registro seccional, y una semana con dos
+# feriados y mucha gente de viaje se nota en el conteo del mes.
+#
+# El ancho 1 (el efecto concentrado en el día anterior a Pascua) es el que reproduce; con
+# `easter[8]` el error medio sube a 0,79% y con `easter[15]` a 0,97%, o sea casi lo mismo que no
+# poner nada. El ancho importa tanto como el regresor.
+#
+# ## El resto de la receta
+#
+# `add` + `td1coef` + `s3x5`. El multiplicativo es 2x peor incluso CON Pascua (2,12% de error
+# medio), lo que dice que la amplitud estacional no escala con el nivel: el pico de enero
+# —vacaciones, el mes de mayor movimiento del usado— es un corrimiento del calendario, no una
+# proporción del volumen. `td1coef` y no el td de 6 coeficientes: lo que mueve un trámite
+# presencial es cuántos días HÁBILES tuvo el mes; un martes no rinde distinto que un jueves.
+#
+# ## OJO: la referencia tiene cuatro meses mal, y el ETL NO los reproduce a propósito
+#
+# `transfer_autos.xlsx` trae 2000-01, 2008-01, 2014-01 y 2021-01 exactamente 100.000 abajo del
+# cuadro de la DNRPA (dígito de centenas de mil perdido, siempre en enero, que es el pico de la
+# serie). El d11 de la planilla se calculó sobre esa serie rota; el ETL corre sobre el dato
+# correcto que baja de la DNRPA, así que alrededor de esos cuatro eneros su d11 NO coincide con
+# la planilla — y no tiene que coincidir: ahí la diferencia llega a 900%, que es el error de la
+# planilla, no del ajuste. En los 376 meses restantes la diferencia media es 0,32% (máx 3,93%),
+# el arrastre de esos cuatro valores sobre los factores estacionales de la referencia. Con el
+# MISMO insumo el ajuste reproduce exacto (0,0000%), que es lo que mide la calibración.
+# Ver el README y el header del script de calibración.
+#
+# Sin `start`: la serie arranca en 1995-01 y es contigua (380 meses, sin huecos).
+[transferencias]
+table = "etl_transferencias"
+desest = ["autos"]
+mode = "add"
+td = "td1coef"
+seasonalma = "s3x5"
+easter = 1
+
 [bovinos]
 table = "etl_bovinos"
 desest = ["produccion"]
