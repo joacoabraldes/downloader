@@ -15,6 +15,12 @@ _TOML = os.path.join(os.path.dirname(__file__), os.pardir, "series_desest.toml")
 # claves— lo arma cada run.py desde su config).
 _PARAM_KEYS = ("mode", "td", "seasonalma")
 
+# Parámetros OPCIONALES, con su default. Van aparte de `_PARAM_KEYS` a propósito: los de arriba
+# son obligatorios y un bloque que se olvide de uno tiene que romper, mientras que éstos existen
+# para una serie sola y pedírselos a los 15 bloques ya escritos sería ruido. El default de cada
+# uno es "como corría el repo antes de que el parámetro existiera".
+_PARAM_OPCIONALES = {"easter": 0}   # ancho del regresor de Pascua; 0 = sin regresor
+
 
 def _load() -> dict:
     with open(_TOML, "rb") as f:
@@ -39,18 +45,20 @@ def table_for(dataset: str) -> str:
 
 
 def jobs_for(dataset: str) -> list[tuple[str, dict]]:
-    """[(serie, {mode, td, seasonalma}), ...] para las series a desestacionalizar del dataset.
+    """[(serie, {mode, td, seasonalma, easter}), ...] para las series a desestacionalizar.
 
     El default del dataset se aplica a todas las series de `desest`; cada override
     [<dataset>.overrides.<serie>] pisa solo las claves que redefine.
     """
     cfg = _cfg(dataset)
     base = {k: cfg[k] for k in _PARAM_KEYS}
+    base.update({k: cfg.get(k, d) for k, d in _PARAM_OPCIONALES.items()})
+    admitidas = set(_PARAM_KEYS) | set(_PARAM_OPCIONALES)
     overrides = cfg.get("overrides", {})
     jobs = []
     for serie in cfg["desest"]:
         params = dict(base)
-        params.update({k: v for k, v in overrides.get(serie, {}).items() if k in _PARAM_KEYS})
+        params.update({k: v for k, v in overrides.get(serie, {}).items() if k in admitidas})
         jobs.append((serie, params))
     return jobs
 

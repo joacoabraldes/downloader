@@ -52,7 +52,7 @@ def _es_contigua(dates) -> bool:
     return True
 
 
-def _write_spc(path, dates, values, mode="auto", td="td1coef", seasonalma="s3x5"):
+def _write_spc(path, dates, values, mode="auto", td="td1coef", seasonalma="s3x5", easter=0):
     """Escribe el .spc de X-13: regARIMA (modelo ARIMA auto + outliers) + trading-day + X-11.
 
     Los parámetros salen del cuadro por serie (series_desest.toml) y reproducen la referencia
@@ -61,6 +61,13 @@ def _write_spc(path, dates, values, mode="auto", td="td1coef", seasonalma="s3x5"
       - `regression`  ajuste por días hábiles. **Es por serie**: produccion `td1coef` (1 coef),
         cemento `td` (6 coef), soja `none` (sin ajuste). En modo auto se testea por AIC
         (`aictest`); si no, se fuerza como `variables`.
+      - `easter[w]`  regresor de **Pascua**, sólo si la serie lo declara (`easter > 0` en el
+        cuadro; default 0 = sin regresor, que es como corría todo el repo hasta 2026-09).
+        Semana Santa se mueve entre marzo y abril, así que su efecto NO es estacionalidad: cae
+        en un mes distinto según el año y el filtro estacional no lo puede sacar. `w` son los
+        días previos a Pascua sobre los que se reparte el efecto (`easter[1]` = el efecto se
+        concentra el día anterior). Va SIEMPRE como `variables` fijo, incluso en modo auto: si
+        se declara es porque se sabe que está, no algo a testear por AIC.
       - `automdl`  elige el modelo ARIMA; `outlier` detecta AO/LS/TC.
       - `x11{ seasonalma=<…> }`  filtro estacional (s3x5 es el estándar); leemos d11.
 
@@ -91,13 +98,18 @@ def _write_spc(path, dates, values, mode="auto", td="td1coef", seasonalma="s3x5"
     saves = "save=(d10 d11 d12 d13)"
     sma = f"seasonalma={seasonalma} "
     x11_opts = (f"mode=add {sma}" if mode == "add" else sma) + saves
-    # Trading-day: 'none' = sin bloque regression; en auto se testea por AIC, si no, fijo.
-    if td == "none":
-        reg = ""
-    elif mode == "auto":
-        reg = f"regression{{ aictest=({td}) }}\n"
-    else:
-        reg = f"regression{{ variables=({td}) }}\n"
+    # Regresores: trading-day ('none' = sin ajuste) + Pascua (sólo si la serie la declara).
+    # El td en modo auto se testea por AIC; Pascua va fija (ver el docstring). Sin ninguno de
+    # los dos no se escribe el bloque `regression`, igual que antes de que existiera `easter`.
+    fijas = [f"easter[{easter}]"] if easter else []
+    partes = []
+    if td != "none" and mode == "auto":
+        partes.append(f"aictest=({td})")
+    elif td != "none":
+        fijas.insert(0, td)
+    if fijas:
+        partes.insert(0, f"variables=({' '.join(fijas)})")
+    reg = f"regression{{ {' '.join(partes)} }}\n" if partes else ""
     spc = (
         f'series{{ title="serie" start={y}.{m:02d} period=12\n'
         f' data=(\n{data}\n ) }}\n'
@@ -167,7 +179,7 @@ def _result(tag, status, *, n=0, mode=None, reason="", outdir=None) -> dict:
 def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
                   extra_cols=None, where=None, where_params=(),
                   out_estado="desestacionalizado", fuente="census x13",
-                  mode="auto", td="td1coef", seasonalma="s3x5", start=None,
+                  mode="auto", td="td1coef", seasonalma="s3x5", easter=0, start=None,
                   keep_dir=None) -> dict:
     """Corre X-13 sobre la serie observada y hace UPSERT de la desestacionalizada.
 
@@ -176,6 +188,8 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
     - `extra_cols`    columnas fijas a setear en cada fila insertada (p.ej. {"serie": ...}).
     - `mode`/`td`/`seasonalma`  parámetros de X-13 del cuadro por serie (series_desest.toml):
                       modo (add/mult/auto), trading-day (td1coef/td/none) y filtro estacional.
+    - `easter`        ancho del regresor de Pascua (0 = sin regresor, el default de todo el
+                      repo). Ver `_write_spc`.
     - `conflict_cols` columnas del índice parcial único (target del ON CONFLICT).
     - `keep_dir`      si se pasa, guarda la salida completa de x13as (serie.html con el
                       modelo/factores/diagnósticos, + tablas d10/d11/d12/d13 y el .spc) en
@@ -223,7 +237,7 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
         workdir = tempfile.mkdtemp(prefix="x13_")
     base = "serie"
     _write_spc(os.path.join(workdir, base + ".spc"), dates, values, mode=mode,
-               td=td, seasonalma=seasonalma)
+               td=td, seasonalma=seasonalma, easter=easter)
     try:
         # 200s: el peor caso medido (jul-2026) es automotriz/produccion con 34s, seguido de
         # granos/mani con 28s; el resto corre en menos de 4s. El tiempo lo manda la dificultad
@@ -252,6 +266,7 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
         "automdl": True,
         "outliers": "auto",      # outlier{} detecta AO/LS/TC
         "trading_day": td,       # ajuste por días hábiles (por serie: td1coef / td / none)
+        "easter": easter,        # ancho del regresor de Pascua (0 = sin regresor)
         "seasonalma": seasonalma,  # filtro estacional (s3x5)
         "tabla": "d11",          # serie ajustada por X-11 que leemos
         "n_meses": len(rows),
