@@ -302,14 +302,22 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
                    outdir=workdir if keep_dir else None)
 
 
-def run_desest(conn, dataset: str, jobs) -> None:
+def run_desest(conn, dataset: str, jobs, *, extra=()) -> None:
     """Corre la desest de uno o más series y reporta el bloque `[dataset / desest]`.
 
     `jobs` = lista de (tag, kwargs_para_deseasonalize). X-13 nunca tumba el ETL: cualquier
     excepción se reporta como status=error.
+
+    `extra` = resultados YA calculados fuera de X-13, con la forma que devuelve `_result`. Existe
+    para las series cuya desestacionalizada publica el propio organismo (`datos_gob`): escriben en
+    el mismo carril `estado='desestacionalizado'`, así que sus upserts tienen que contarse en
+    `desest_upserts` igual que los del X-13. Reportarlas aparte dejaba 302 filas escritas sin
+    aparecer en ningún contador de `etl_control_ejecucion`.
     """
     from . import report  # import local: evita ciclo y solo se usa acá
     drep = report.DesestReport(dataset)
+    for res in extra:
+        drep.add(res)
     for tag, kwargs in jobs:
         try:
             res = deseasonalize(conn, **kwargs)

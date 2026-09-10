@@ -60,12 +60,29 @@ def _parse_fecha(texto: str) -> dt.date | None:
 
 
 def _parse_valor(texto: str) -> float | None:
-    """Coma decimal. `NA` y vacío son huecos legítimos, no errores."""
+    """Coma decimal, SIN separador de miles. `NA` y vacío son huecos legítimos, no errores.
+
+    El punto NO se acepta. Los cuadros del INDEC usan coma decimal y no agrupan miles: los
+    valores de cinco cifras vienen `10380,8`, sin un solo punto en todo el archivo (verificado
+    sobre indice_salarios.csv el 2026-09-10).
+
+    Antes esto hacía `t.replace(".", "").replace(",", ".")`, tratando el punto como separador de
+    miles. Eso no defendía de nada —la fuente no lo usa— y abría una falla silenciosa de un orden
+    de magnitud: si el organismo migrara a punto decimal, `9292.93` se leía `929293`. Un valor
+    diez o cien veces más grande, sin excepción y sin descarte, en la fuente PRIMARIA de cinco
+    series. Ante un formato que no reconocemos hay que fallar, no adivinar.
+    """
     t = texto.strip()
     if not t or t.upper() == "NA":
         return None
+    if "." in t:
+        raise ValueError(
+            f"valor {t!r} trae un punto. Los cuadros del INDEC usan coma decimal y no agrupan "
+            f"miles, así que un punto significa que la fuente cambió de formato. Se corta la "
+            f"corrida en vez de arriesgar un valor mal parseado: revisar el cuadro y actualizar "
+            f"`_parse_valor`.")
     try:
-        return float(t.replace(".", "").replace(",", "."))
+        return float(t.replace(",", "."))
     except ValueError:
         return None
 

@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 
+import requests
 from psycopg2.extras import Json
 
 from etl.core import db, desest_params, report, seasonal
@@ -100,11 +101,23 @@ def cargar_csv(conn, rep, series, *, desde=None, force=False) -> set[str]:
             continue
         try:
             por_serie, descartes = source_csv.get_cuadro(cuadro["url"], cuadro["columnas"])
-        except Exception as e:
-            # AVISO y no falla: la API cubre estas series más abajo. Marcarlo como falla haría
-            # que el cron mande mail por algo que se degrada solo y sin pérdida de dato.
-            rep.info(f"AVISO cuadro '{nombre}' no disponible ({e}); "
-                     f"caen a la API de respaldo: {', '.join(sorted(pedidas))}")
+        except (requests.RequestException, ValueError) as e:
+            # FALLA de la corrida, no un aviso suelto. Antes esto era `rep.info`, que sólo
+            # imprime: la caída no llegaba a `etl_control_ejecucion.fallas` ni al exit code, y el
+            # cron salía verde para siempre mientras las series volvían en silencio a la API
+            # atrasada —justo lo que este cambio existe para evitar—.
+            #
+            # Que la corrida quede en 'falla' NO significa que no entró nada: la API cubre estas
+            # series unas líneas más abajo y el dato sigue siendo válido, sólo más viejo. Es el
+            # mismo criterio que el resto del repo, donde una fuente caída marca falla aunque el
+            # dataset cargue parcialmente.
+            #
+            # El except es ACOTADO a propósito: `requests.RequestException` (red/HTTP) y el
+            # `ValueError` que levanta `get_cuadro` ante formato inesperado. Un TypeError o un
+            # KeyError son bugs NUESTROS y tienen que tumbar la corrida con su traceback, no
+            # disfrazarse de "el INDEC estaba caído".
+            rep.error(f"cuadro '{nombre}' no disponible ({e}); "
+                      f"caen a la API de respaldo: {', '.join(sorted(pedidas))}")
             continue
         for d in descartes:
             rep.info(f"csv/{nombre}: descartado -> {d}")
@@ -129,7 +142,7 @@ def cargar_csv(conn, rep, series, *, desde=None, force=False) -> set[str]:
     return cubiertas
 
 
-def cargar_desest_oficial(conn, rep, series, *, desde=None) -> None:
+def cargar_desest_oficial(conn, series, *, desde=None) -> list[dict]:
     """Baja las desestacionalizadas que publica el propio organismo (config.DESEST_OFICIAL).
 
     Entran por el mismo carril que el X-13 propio —estado='desestacionalizado' bajo el slug de la
@@ -138,22 +151,28 @@ def cargar_desest_oficial(conn, rep, series, *, desde=None) -> None:
 
     UPSERT y no `insert_if_changed`: sobre estado='desestacionalizado' hay un unique index parcial
     por (serie, date), así que este carril NO es append-only. Un snapshot nuevo lo violaría.
+
+    Devuelve resultados con la forma de `seasonal._result` para que los reporte el bloque
+    `[dataset / desest]`, que es donde se cuentan los upserts de ESE carril. Reportarlos con
+    `rep.info` dejaba las filas escritas sin aparecer en ningún contador de la corrida.
     """
+    resultados: list[dict] = []
     for serie, serie_id in config.DESEST_OFICIAL.items():
         if serie not in series:
             continue
         try:
             filas, descartes = source.get_serie(serie_id)
         except Exception as e:
-            rep.note(serie, f"ERROR bajando desest oficial {serie_id}: {e}",
-                     status="saltado", failure=True)
+            resultados.append(seasonal._result(serie, "error",
+                                               reason=f"bajando desest oficial {serie_id}: {e}"))
             continue
         for d in descartes:
-            rep.info(f"{serie} (desest oficial): descartado -> {d}")
+            print(f"  {serie} (desest oficial): descartado -> {d}")
         if desde:
             filas = [(f, v) for f, v in filas if f >= desde]
         if not filas:
-            rep.note(serie, "desest oficial sin datos", status="no_publicado")
+            resultados.append(seasonal._result(serie, "skipped",
+                                               reason="desest oficial sin datos"))
             continue
         params = Json({"origen": "indec", "id_api": serie_id,
                        "nota": "serie desestacionalizada publicada por el organismo; "
@@ -169,9 +188,8 @@ def cargar_desest_oficial(conn, rep, series, *, desde=None) -> None:
                                       parametros = excluded.parametros, ingested_at = now()""",
                     (serie, fecha, valor, fuente, params))
         conn.commit()
-        rep.info(f"{serie:24} {len(filas):>4} meses  "
-                 f"{filas[0][0]:%Y-%m}..{filas[-1][0]:%Y-%m}  ult={filas[-1][1]:g}  "
-                 f"[desest oficial]")
+        resultados.append(seasonal._result(serie, "ok", n=len(filas), mode="indec"))
+    return resultados
 
 
 def main(argv=None) -> None:
@@ -221,7 +239,9 @@ def main(argv=None) -> None:
             if serie in cubiertas:
                 continue
             if serie in config.CSV_POR_SERIE:
-                rep.info(f"{serie}: sin cuadro CSV, se usa la API de respaldo")
+                # "no la cubrió", no "no existe el cuadro": se llega acá por tres caminos —el
+                # cuadro se cayó, la columna vino vacía, o `--desde` filtró todas sus filas—.
+                rep.info(f"{serie}: el cuadro CSV no la cubrió, se usa la API de respaldo")
             serie_id = config.SERIES_META[serie][0]
             try:
                 filas, descartes = source.get_serie(serie_id)
@@ -245,20 +265,21 @@ def main(argv=None) -> None:
                 ))
             rep.info(f"{serie:24} {len(filas):>4} meses  "
                      f"{filas[0][0]:%Y-%m}..{filas[-1][0]:%Y-%m}  ult={filas[-1][1]:g}")
-        # También es bajar de la API, no correr X-13: va en este bloque y no en el de desest.
-        if not args.no_desest:
-            cargar_desest_oficial(conn, rep, series, desde=args.desde)
+        # Se BAJA acá (es un GET a la API) pero se REPORTA en el bloque de desest, porque escribe
+        # en ese carril y sus upserts se cuentan ahí. `--force` no viaja: este camino siempre
+        # upsertea, no tiene el fast-path de "si no cambió no escribas" que `--force` saltea.
+        desest_oficial = ([] if args.no_desest
+                          else cargar_desest_oficial(conn, series, desde=args.desde))
         rep.summary()
 
         # X-13 sobre la serie REAL (ver la clave `view` en etl/series_desest.toml). A diferencia
         # del resto del repo NO se condiciona a `rep.changed`: el insumo es la serie deflactada,
         # así que un mes nuevo del IPC cambia toda la serie real aunque las ventas no se hayan
         # movido, y la desest quedaría vieja.
-        if args.no_desest:
-            pass
-        else:
+        if not args.no_desest:
             seasonal.run_desest(conn, "datos_gob",
-                                desest_params.build_jobs("datos_gob", keep_dir=args.x13_out))
+                                desest_params.build_jobs("datos_gob", keep_dir=args.x13_out),
+                                extra=desest_oficial)
     finally:
         conn.close()
 

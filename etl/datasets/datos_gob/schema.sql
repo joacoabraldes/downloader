@@ -1,11 +1,23 @@
--- Series de la API oficial del Estado (apis.datos.gob.ar/series), formato LONG.
--- Evaluación completa de la fuente: docs/datos_gob_ar.md
+-- Series de organismos públicos (INDEC y otros), formato LONG.
+--
+-- DOS fuentes con prioridad explícita, no una: la API oficial del Estado
+-- (apis.datos.gob.ar/series) para 9 series, y un cuadro CSV del INDEC
+-- (indec.gob.ar/ftp/cuadros/...) para las 5 del índice de salarios, que publica antes y para las
+-- que la API quedó de respaldo. Ambas escriben estado='definitivo'; la columna `fuente` dice por
+-- cuál entró cada fila. El detalle y la medición que motivó la prioridad: `SERIES_CSV` en
+-- config.py. Evaluación completa de la API: docs/datos_gob_ar.md
 --
 -- Modelo append-only: cada corrida inserta un snapshot con su ingested_at; nunca se pisa un
 -- dato. Los organismos revisan meses ya publicados, así que `insert_if_changed` deja cada
 -- revisión como snapshot nuevo y el anterior queda en la historia.
 --
--- Todo entra con estado='definitivo': la API publica un solo dato por período.
+-- La serie OBSERVADA entra siempre con estado='definitivo', venga de la API o del CSV: las dos
+-- publican un solo dato por período y traen el mismo número (611 meses solapados sin una sola
+-- discrepancia). No son dos calidades distintas, así que no van en carriles distintos.
+--
+-- El otro estado es 'desestacionalizado', y ahí conviven DOS orígenes: el X-13 que corre este
+-- repo y la desestacionalizada oficial que publica el organismo para isac/ipi_manufacturero.
+-- Se distinguen por `fuente` y `parametros`. Ver `DESEST_OFICIAL` en config.py.
 --
 -- Star-schema, igual que reservas_pasivos y por el mismo motivo: las series NO comparten
 -- unidad (conviven índices, dólares y pesos en la misma tabla), así que el nombre legible y la
@@ -19,9 +31,17 @@ create table if not exists etl_datos_gob (
   serie       text   not null,            -- slug propio; ver la dimensión
   date        date   not null,            -- primer día del mes
   valor       double precision,
-  estado      text,                       -- 'definitivo' (API) / 'desestacionalizado' (X-13)
-  fuente      text,                       -- URL de la serie en la API
-  parametros  jsonb,                      -- solo en desest: parámetros de la corrida X-13
+  estado      text,                       -- 'definitivo' (observada) / 'desestacionalizado'
+  -- De DÓNDE salió la fila. NO es siempre una URL de la API: hay cuatro orígenes conviviendo y
+  -- ésta es la única columna que los distingue.
+  --   URL de apis.datos.gob.ar   serie observada de la API
+  --   URL de indec.gob.ar/ftp    serie observada del cuadro CSV (primaria del índice de salarios)
+  --   'census x13'               desestacionalizada que calcula este repo
+  --   URL de apis.datos.gob.ar   desestacionalizada OFICIAL del organismo (con estado='desest...')
+  fuente      text,
+  -- Sólo en las filas desestacionalizadas: parámetros de la corrida X-13, o {"origen": "indec"}
+  -- si la desestacionalizada la publica el organismo y no la calculamos nosotros.
+  parametros  jsonb,
   ingested_at timestamptz not null default now()
 );
 alter table etl_datos_gob add column if not exists parametros jsonb;
