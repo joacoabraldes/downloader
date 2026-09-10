@@ -151,13 +151,85 @@ SERIES_META = {
         "índice oct-2016=100", "INDEC", "ipc_largo"),
 }
 
+# serie -> id en la API de su versión DESESTACIONALIZADA, cuando el organismo la publica.
+#
+# Para varias series INDEC publica la ajustada como una serie APARTE, con su propio id. Para esas
+# lo correcto es bajar la oficial y NO correrles X-13 nosotros encima (ver etl/series_desest.toml).
+#
+# POR QUÉ NO ES UNA FILA MÁS EN SERIES_META: si entrara como serie propia ('isac_desest'), el
+# consumidor tendría que saber de antemano que ese slug existe, y `valor_desest` de 'isac' seguiría
+# en NULL — el dato estaría en la base pero no donde se lo busca. Entra entonces por el MISMO
+# carril que el X-13 propio: estado='desestacionalizado' bajo el slug de la serie base, que es lo
+# que lee `etl_datos_gob_desest` y termina en la columna `valor_desest`.
+#
+# CÓMO SE DISTINGUE UNA DE OTRA, que es el punto: la fila lo dice.
+#   fuente      URL de la serie en la API   vs.  'census x13'
+#   parametros  {"origen": "indec", ...}    vs.  los parámetros de la corrida X-13
+# Y `etl_datos_gob_completo` expone las dos como `desest_fuente` / `desest_parametros`, así que la
+# procedencia viaja con el dato sin tener que ir a buscarla a otra tabla.
+#
+# INVARIANTE: una serie está acá o en el bloque [datos_gob] de series_desest.toml, nunca en los
+# dos. Las dos rutas escriben la misma fila (serie, date, estado='desestacionalizado') y el unique
+# index parcial deja una sola: la última en correr pisaría a la otra en silencio. `run.py` valida.
+DESEST_OFICIAL = {
+    "isac": "33.2_ISAC_SIN_EDAD_0_M_23_56",              # "ISAC. Nivel General. Sin Estacionalidad"
+    "ipi_manufacturero": "453.1_SERIE_DESEADA_0_0_24_58",  # "IPI Nivel General Serie Desestacionalizada"
+}
+
+# Cuadros CSV del INDEC. Para las series que aparecen acá, el CSV es la fuente PRIMARIA y la API
+# de series de tiempo pasa a ser el RESPALDO. Es la única excepción a "todo sale de la API".
+#
+# POR QUÉ SE INVIRTIÓ LA PRIORIDAD, con el número que lo motivó: el feed de apis.datos.gob.ar va
+# atrasado respecto de lo que el organismo ya publicó. Medido el 2026-09-10 sobre las 5 series del
+# índice de salarios:
+#
+#     meses solapados API vs CSV : 611
+#     discrepancias (>0.01)      :   0
+#     meses que sólo tiene el CSV:  10   (2026-05 y 2026-06 de las 5 series)
+#
+# 611 meses idénticos dígito por dígito, y el CSV dos meses adelante. No son dos estimaciones de
+# lo mismo: es el mismo dato por un canal que publica antes. Con eso, dejar la API como primaria
+# significaba mostrar abril cuando junio ya estaba publicado.
+#
+# El CSV además ARRANCA en la misma fecha que la API serie por serie y la contiene por completo
+# (superset estricto), así que invertir la prioridad no recorta histórico.
+#
+# NO se usa el PDF del informe de prensa, que fue la primera idea: sus tres cuadros publican sólo
+# variaciones (mensual, interanual, acumulada) redondeadas a UN decimal. Reconstruir el nivel
+# encadenando esas variaciones acumula error de redondeo y nunca vuelve a cuadrar con la serie
+# oficial. El CSV publica el NIVEL, que es lo que guardamos.
+#
+# La URL es fija, sin fecha en el nombre: no hay que scrapear un link para llegar al mes nuevo.
+SERIES_CSV = {
+    "indice_salarios": {
+        "url": "https://www.indec.gob.ar/ftp/cuadros/sociedad/indice_salarios.csv",
+        # columna en el CSV -> serie nuestra
+        "columnas": {
+            "IS_indice_total": "indice_salarios_total",
+            "IS_total_registrado": "indice_salarios_registrado",
+            "IS_sector_privado_registrado": "indice_salarios_priv_registrado",
+            "IS_sector_publico": "indice_salarios_publico",
+            "IS_sector_no_registrado": "indice_salarios_priv_no_registrado",
+        },
+    },
+}
+
+# serie -> cuadro que la publica. Derivado, para no repetir el mapeo al revés.
+CSV_POR_SERIE = {serie: nombre
+                 for nombre, cuadro in SERIES_CSV.items()
+                 for serie in cuadro["columnas"].values()}
+
 # Deflactores válidos. Ningún código de acá los interpreta: viajan tal cual a la columna
 # `deflactor` de la dimensión, y la vista los usa para filtrar `public.deflactores`. Este set
 # existe sólo para que un typo en SERIES_META falle en la corrida y no salga como una serie
 # sin valor real, que es lo que pasaría con el JOIN vacío.
 DEFLACTORES = {"ipc_largo", "uscpi_mensual"}
 
-# Orden estable. Coincide con el CHECK de schema.sql.
+# Orden estable: fija el `orden` de la dimensión y las opciones de `--serie`.
+#
+# NO hay un CHECK en schema.sql contra el cual cuadrar esta lista, y es a propósito: `serie` no
+# lleva CHECK ni FK justamente para que sumar una serie sea editar SERIES_META y nada más. Este
+# comentario decía lo contrario y mandaba a buscar un constraint que no existe.
 SERIES = list(SERIES_META)
 
 # id de la API -> serie, para resolver la respuesta.

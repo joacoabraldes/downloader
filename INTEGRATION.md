@@ -307,7 +307,7 @@ ETL corrió `ok` y `ultimo_dato` no se movió, es que MAGyP todavía no publicó
 | `escrituras_caba` | `compraventa`, `monto`, `hipotecas`, `monto_medio`, `monto_medio_usd` | `compraventa` |
 | `icc` | `nacional`, `capital`, `gba`, `interior`, `situacion_personal`, `situacion_macro`, `bienes_durables` | *(ninguna)* |
 | `icg` | `icg` | *(ninguna)* |
-| `datos_gob` | las 14: `isac`, `ipi_manufacturero`, `ipc_nacional`, `expo_total`, `impo_total`, `ventas_supermercados`, `ventas_centros_compras`, `ripte`, `smvm`, `indice_salarios_total`, `indice_salarios_registrado`, `indice_salarios_priv_registrado`, `indice_salarios_publico`, `indice_salarios_priv_no_registrado` | `ventas_supermercados`, `ventas_centros_compras`, `expo_total`, `impo_total` *(las 4 sobre la serie real)* |
+| `datos_gob` | las 14: `isac`, `ipi_manufacturero`, `ipc_nacional`, `expo_total`, `impo_total`, `ventas_supermercados`, `ventas_centros_compras`, `ripte`, `smvm`, `indice_salarios_total`, `indice_salarios_registrado`, `indice_salarios_priv_registrado`, `indice_salarios_publico`, `indice_salarios_priv_no_registrado` | `ventas_supermercados`, `ventas_centros_compras`, `expo_total`, `impo_total` *(las 4 sobre la serie real)* + `isac`, `ipi_manufacturero` *(oficiales de INDEC, no X-13)* |
 | `comex` | las 18: `expo_{valor,precio,cantidad}_{general,primarios,moa,moi,combustibles}` + `impo_{valor,precio,cantidad}_general` | las 6 de cantidad: `expo_cantidad_{general,primarios,moa,moi,combustibles}`, `impo_cantidad_general` |
 
 > Las series que **no** están en `_desest` (p.ej. `lino`/`algodon`/`cartamo`/`canola` de granos, o
@@ -361,7 +361,7 @@ select * from etl_control_salud where estado <> 'ok';
 
 | Columna | Significado |
 |---|---|
-| `dataset` | los 15, hayan corrido o no |
+| `dataset` | los 20, hayan corrido o no |
 | `estado` | **proceso**: `ok` · `FALLA` · `SIN_CORRER` · `NUNCA_CORRIO` |
 | `estado_ultima_corrida` | `ok` / `falla` de la última ejecución |
 | `ultima_corrida` · `horas_desde` | cuándo terminó y hace cuánto |
@@ -372,7 +372,85 @@ select * from etl_control_salud where estado <> 'ok';
 | `estado_dato` | **dato**: `ok` · `DATO_VIEJO` · `SIN_DATO` |
 
 `SIN_CORRER` significa que el cron dejó de disparar. `FALLA` significa que corrió y no pudo
-traer el dato: ahí sí conviene ir al log, `/home/jmt/data/etls/<dataset>.log`.
+traer el dato.
+
+### Leer los errores que reportó el ETL
+
+**No hace falta ir al log.** El detalle de cada falla queda en la base, en la columna `fallas`
+(`text[]`) de `etl_control_ejecucion`, y la propaga `etl_control_ultima` y `etl_control_salud`.
+El log (`/home/jmt/data/etls/<dataset>.log`) sólo agrega el ruido de alrededor.
+
+```sql
+-- Una fila por error, listo para mostrar o alertar.
+select dataset, estado, ultima_corrida, falla
+from etl_control_salud, unnest(fallas) as falla
+where fallas is not null
+order by ultima_corrida desc;
+```
+
+Cada string tiene el formato **`<dataset> / <comando>[ <ítem>]: <mensaje>`**, donde `<ítem>` es la
+serie o el mes que falló, cuando la falla es de uno solo:
+
+```
+leche / run: bajando/parseando: HTTPSConnectionPool(host='www.magyp.gob.ar', port=443): ...
+hidrocarburos / run: petroleo: 503 Server Error: Service Unavailable for url: https://...
+hidrocarburos / run: gas: 503 Server Error: Service Unavailable for url: https://...
+datos_gob / run isac: ERROR bajando 33.2_ISAC_NIVELRAL_0_M_18_63: ...
+datos_gob / desest expo_total: <motivo por el que X-13 no pudo ajustar>
+```
+
+**Cuatro cosas que hay que saber antes de construir un alerta encima:**
+
+**1. `fallas` es un array, no un texto.** Una corrida puede fallar en varias series a la vez —
+`hidrocarburos` arriba trae dos. Concatenarlo con `array_to_string` para mostrarlo está bien;
+contarlo como un solo error, no.
+
+**2. `estado = 'falla'` NO significa que no entró nada.** Cada dataset baja varias series y la
+falla es de la corrida, no del dataset entero. Si `datos_gob` falla bajando `isac`, las otras 13
+series entraron igual y son datos buenos. Para saber cuánto entró, mirá los contadores:
+
+```sql
+select dataset, estado, leidos, nuevos, actualizados, fallas
+from etl_control_ultima where estado = 'falla';
+```
+
+> `etl_control_ultima` expone `leidos`, `nuevos` y `actualizados`. El juego completo de contadores
+> (`sin_cambios`, `saltados`, `no_publicado`, los de X-13) está en `etl_control_ejecucion`.
+
+**3. Las tablas de datos NO llevan marca de error.** Ninguna fila de `etl_datos_gob` dice "esta
+corrida falló". La única forma de saber si el dato que estás leyendo viene de una corrida sana es
+cruzar contra las tablas de control. Si tu consumo tiene que ser estricto, chequeá `estado` antes
+de servir el número; para la mayoría de los usos alcanza con vigilar `etl_control_salud`.
+
+**4. `etl_control_salud` es una foto, no un historial.** Trae la ÚLTIMA corrida: si el ETL falló
+anoche y hoy anduvo, `fallas` ya volvió a `NULL` y la falla de ayer desapareció de esa vista. Los
+errores intermitentes —los peores, porque no los ves nunca en vivo— sólo están en
+`etl_control_ejecucion`, que guarda una fila por corrida.
+
+No es teórico: al 2026-09-10 `etl_control_salud` devuelve **cero** fallas, y el mismo día
+`etl_control_ejecucion` tiene **11 fallas en 7 datasets** en los últimos 30 días (MAGyP sin
+resolver DNS, Energía tirando 503). Un alerta montado sólo sobre `etl_control_salud` no habría
+visto ninguna.
+
+```sql
+-- Fallas de los últimos 30 días, aunque después se hayan resuelto solas.
+select dataset, comando, inicio, falla
+from etl_control_ejecucion, unnest(fallas) as falla
+where estado = 'falla' and inicio > now() - interval '30 days'
+order by inicio desc;
+
+-- ¿Qué dataset viene fallando seguido? (un 503 aislado es ruido; 8 de 30 corridas, no)
+select dataset,
+       count(*) filter (where estado = 'falla') as fallas,
+       count(*)                                 as corridas
+from etl_control_ejecucion
+where inicio > now() - interval '30 days' and comando <> 'load-history'
+group by dataset having count(*) filter (where estado = 'falla') > 0
+order by fallas desc;
+```
+
+`python -m etl <dataset>` además sale con **código 1** si la corrida registró alguna falla, que es
+lo que hace que el cron mande el mail.
 
 ### Para la app: cuál de las dos columnas alertar
 
@@ -447,9 +525,66 @@ nunca las tablas `etl_icc` / `etl_icg`: son append-only y guardan un snapshot po
 
 ## `datos_gob` (API oficial del Estado) — cómo consumirlo
 
-14 series de `apis.datos.gob.ar/series` (INDEC y Secretaría de Trabajo). Es el único dataset
-mensual con **star-schema**, porque sus series **no comparten unidad**: conviven índices,
-dólares y pesos. La vista trae el nombre y la unidad ya unidos.
+14 series de organismos públicos (INDEC y Secretaría de Trabajo). Es el único dataset mensual con
+**star-schema**, porque sus series **no comparten unidad**: conviven índices, dólares y pesos. La
+vista trae el nombre y la unidad ya unidos.
+
+> **Dos fuentes, con prioridad explícita.** Nueve series salen de `apis.datos.gob.ar/series`. Las
+> **cinco `indice_salarios_*` salen de un CSV de cuadros del INDEC**
+> (`indec.gob.ar/ftp/cuadros/sociedad/indice_salarios.csv`), y para ellas la API quedó como
+> **respaldo**: sólo entra si el cuadro no estuvo disponible.
+>
+> El motivo, medido el 2026-09-10: sobre **611 meses solapados hay 0 discrepancias**, y el CSV va
+> **dos meses adelante** (traía 2026-05 y 2026-06 cuando la API todavía cortaba en 2026-04). Es el
+> mismo dato por un canal que publica antes, no dos estimaciones distintas — por eso ambas entran
+> con `estado = 'definitivo'` y la columna **`fuente`** dice por cuál entró cada fila:
+>
+> ```sql
+> select serie, date, valor_nominal, fuente
+> from etl_datos_gob_completo
+> where serie = 'indice_salarios_total' order by date desc limit 3;
+> ```
+>
+> Si te importa saber cuánta serie viene de cada canal:
+>
+> ```sql
+> select case when fuente like '%ftp/cuadros%' then 'csv INDEC' else 'api series' end as canal,
+>        count(*), min(date), max(date)
+> from etl_datos_gob_actual where serie like 'indice_salarios%' group by 1;
+> --  api series  611  2015-10-01  2026-04-01
+> --  csv INDEC    10  2026-05-01  2026-06-01
+> ```
+>
+> **`fuente` dice por dónde ENTRÓ la fila, no cuál es la fuente primaria de hoy.** El tramo viejo
+> sigue marcado `api series` porque ya estaba cargado con el mismo valor cuando se hizo el cambio,
+> y el modelo es append-only: `insert_if_changed` devolvió `sin_cambios` y no reescribió 611 meses
+> para corregirles la etiqueta. Reescribirlos habría sido peor —611 snapshots nuevos que no
+> cambian ningún número— y el valor es idéntico de todos modos. De acá en adelante los meses
+> nuevos entran por el CSV.
+
+> **Ojo con este dataset en particular al monitorear.** Son 14 series de organismos distintos,
+> cada una con su calendario, y el control es por DATASET, no por serie: `ultimo_dato` es el
+> `max(date)` sobre las 14, así que avanza en cuanto publica la más rápida. Una serie individual
+> congelada no dispara `DATO_VIEJO`. Si te importa una serie puntual, vigilá su propio `max(date)`
+> además de `etl_control_salud`:
+>
+> ```sql
+> select serie, max(date) as ultimo, current_date - max(date) as dias
+> from etl_datos_gob_completo group by serie order by dias desc;
+> ```
+>
+> Al 2026-09-10 esa query devuelve un rango de **40 a 101 días** según la serie (`smvm` en
+> 2026-08, los cinco `indice_salarios_*` en 2026-06). `etl_control_salud` ve sólo los 40 —el
+> `max`— y marca `estado_dato = ok` contra un umbral de 75, sin enterarse de las que están arriba.
+> El dataset está sano; el promedio de calendarios distintos no dice nada de ninguno.
+>
+> Ese hueco fue real, no hipotético: antes de que el CSV pasara a ser la fuente primaria, las 5
+> series de salarios estaban en **2026-04, a 162 días**, con el control marcando `ok` todo el
+> tiempo. Nadie se enteró hasta que alguien miró serie por serie.
+>
+> Y si una serie falla al bajar, el string en `fallas` la nombra
+> (`datos_gob / run isac: ERROR bajando ...`): ver [Leer los errores que reportó el
+> ETL](#leer-los-errores-que-reportó-el-etl).
 
 ### La vista que probablemente querés
 
@@ -465,10 +600,12 @@ where serie = 'ventas_supermercados' order by date;
 |---|---|---|
 | `valor_nominal` | Tal como lo publica el organismo | nunca |
 | `valor_real` | A precios del **último dato de esa serie** (el mes exacto viaja en `mes_base`) | si la serie no se deflacta, o el mes no tiene deflactor |
-| `valor_desest` | X-13 sobre la serie **real** | si esa serie no se desestacionaliza |
+| `valor_desest` | Serie desestacionalizada: X-13 propio sobre la real, **o** la oficial del organismo | si esa serie no se desestacionaliza |
 | `mes_base` | Mes cuya moneda expresa `valor_real` | si `valor_real` es NULL |
 | `deflactor_origen` | `publicado`, `proyectado` o `interpolado`: procedencia del índice de ese mes | si `valor_real` es NULL |
 | `deflactor` | `ipc_largo` (pesos constantes) o `uscpi_mensual` (dólares constantes) | si `valor_real` es NULL |
+| `desest_fuente` | `census x13` (corrida propia) o la URL de la serie oficial | si `valor_desest` es NULL |
+| `desest_parametros` | Parámetros del X-13, o `{"origen": "indec", ...}` si es la oficial | si `valor_desest` es NULL |
 
 Cada una tiene además su vista suelta: `etl_datos_gob_actual` (nominal),
 `etl_datos_gob_real`, `etl_datos_gob_desest`.
@@ -477,8 +614,8 @@ Cada una tiene además su vista suelta: `etl_datos_gob_actual` (nominal),
 
 | `serie` | Unidad | Desde | ¿real? | ¿desest? |
 |---|---|---|---|---|
-| `isac` | índice 2004=100 | 2012-01 | — | — |
-| `ipi_manufacturero` | índice 2004=100 | 2016-01 | — | — |
+| `isac` | índice 2004=100 | 2012-01 | — | **sí** *(oficial INDEC)* |
+| `ipi_manufacturero` | índice 2004=100 | 2016-01 | — | **sí** *(oficial INDEC)* |
 | `ipc_nacional` | índice dic-2016=100 | 2016-12 | — | — |
 | `expo_total` | USD millones | 1992-01 | sí *(CPI EEUU)* | **sí** |
 | `impo_total` | USD millones | 1992-01 | sí *(CPI EEUU)* | **sí** |
@@ -491,6 +628,25 @@ Cada una tiene además su vista suelta: `etl_datos_gob_actual` (nominal),
 | `indice_salarios_priv_registrado` | índice oct-2016=100 | 2015-10 | sí | — |
 | `indice_salarios_publico` | índice oct-2016=100 | 2015-10 | sí | — |
 | `indice_salarios_priv_no_registrado` | índice oct-2016=100 | 2016-10 | sí | — |
+
+> **`valor_desest` tiene DOS orígenes y no son intercambiables.** Para las 4 series de ventas y
+> comex es el X-13 que corre este repo sobre la serie real. Para `isac` e `ipi_manufacturero` es la
+> ajustada que publica INDEC: no le corremos X-13 encima a una serie que el organismo ya ajusta.
+> **Cuál de los dos es, lo dice la fila** — `desest_fuente` y `desest_parametros` en
+> `etl_datos_gob_completo`:
+>
+> ```sql
+> select serie, date, valor_desest, desest_fuente, desest_parametros ->> 'origen'
+> from etl_datos_gob_completo
+> where valor_desest is not null and date = '2026-05-01';
+> --  isac        153.39  https://apis.datos.gob.ar/...ISAC_SIN_EDAD...   indec
+> --  expo_total 8772.32  census x13                                      (NULL, trae los params X-13)
+> ```
+>
+> No compares `valor_desest` entre series sin mirar `desest_fuente`: parámetros distintos, criterio
+> distinto. Una serie va por una ruta o por la otra, **nunca por las dos** — `run.py` aborta si una
+> serie aparece en `DESEST_OFICIAL` (config.py) y en el bloque `[datos_gob]` de
+> `etl/series_desest.toml`, porque las dos escriben la misma fila y una pisaría a la otra.
 
 ### Cuatro cosas que hay que saber
 

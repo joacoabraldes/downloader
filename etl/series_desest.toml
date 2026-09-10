@@ -447,6 +447,11 @@ seasonalma = "s3x5"
 # como serie aparte (p. ej. IPI: 453.1_SERIE_DESEADA_0_0_24_58). Para esas, lo correcto es bajar
 # la serie oficial —una fila más en SERIES_META— y no correrles X-13 nosotros encima.
 #
+# ISAC e IPI ya están: los baja `DESEST_OFICIAL` en config.py y entran por el mismo carril que el
+# X-13 de acá (estado='desestacionalizado'), distinguibles por `fuente` y `parametros`. Por eso NO
+# van en la lista `desest` de abajo: una serie va por una ruta o por la otra, nunca por las dos, y
+# `run.py` aborta si alguien la suma en los dos lados.
+#
 # Por qué sobre la REAL y no sobre la nominal: bajo inflación argentina la estacionalidad de una
 # serie en pesos corrientes queda tapada por la deriva de precios, así que desestacionalizar el
 # nominal no dice nada útil. De ahí el `view` de abajo, que apunta a la serie deflactada.

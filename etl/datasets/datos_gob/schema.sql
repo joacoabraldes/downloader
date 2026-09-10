@@ -235,7 +235,13 @@ order by serie, date, ingested_at desc;
 --   valor_nominal     como lo publica el organismo
 --   valor_real        a precios del último dato de esa serie, que viaja en `mes_base`
 --                     (NULL si la serie no se deflacta o el mes no tiene deflactor)
---   valor_desest      X-13 sobre la serie real (NULL si esa serie no se desestacionaliza)
+--   valor_desest      serie desestacionalizada (NULL si esa serie no tiene). Puede venir de DOS
+--                     orígenes y NO son intercambiables: el X-13 que corre este repo sobre la
+--                     serie real, o la ajustada que publica el propio organismo. Cuál es, lo
+--                     dicen las dos columnas de abajo.
+--   desest_fuente     'census x13' (corrida propia) | URL de la serie en la API (oficial).
+--   desest_parametros parámetros de la corrida X-13, o {"origen": "indec", ...} si es la oficial.
+--                     Sin esto, comparar `valor_desest` entre series compara peras con manzanas.
 --   mes_base          mes cuya moneda expresa `valor_real`
 --   deflactor_origen  'publicado' | 'proyectado' | 'interpolado' para el mes de esa fila
 --                     (NULL si no aplica). Todo lo que no sea 'publicado' se va a revisar
@@ -249,7 +255,11 @@ select a.serie, a.nombre, a.unidad, a.organismo, a.date,
        s.valor as valor_desest,
        r.mes_base,
        r.origen as deflactor_origen,
-       r.deflactor
+       r.deflactor,
+       -- AL FINAL a propósito: `create or replace view` sólo admite agregar columnas al final.
+       -- Intercalarlas obligaría a dropear la vista en cascada.
+       s.fuente     as desest_fuente,
+       s.parametros as desest_parametros
 from etl_datos_gob_actual a
 left join etl_datos_gob_real   r on r.serie = a.serie and r.date = a.date
 left join etl_datos_gob_desest s on s.serie = a.serie and s.date = a.date

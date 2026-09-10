@@ -25,7 +25,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `escrituras_caba` | `etl_escrituras_caba` | — (los informes traen 2016-02→) | **API REST de WordPress** del Colegio de Escribanos |
 | `icc` | `etl_icc` | — (la planilla trae 1998→) | **.xls UTDT** (link resuelto por scrape) |
 | `icg` | `etl_icg` | — (la planilla trae 2001→) | **.xls UTDT** (link resuelto por scrape) |
-| `datos_gob` | `etl_datos_gob` | — (la API trae 1965→) | **API oficial** `apis.datos.gob.ar/series` |
+| `datos_gob` | `etl_datos_gob` | — (la API trae 1965→) | **API oficial** `apis.datos.gob.ar/series` + **.csv INDEC** (URL fija) para el índice de salarios |
 | `comex` | `etl_comex` | — (las planillas traen 2004→) | **2 .xls INDEC** (URLs fijas, `xlrd`) |
 
 Las tablas están en formato **long** (una fila por `serie, date, estado`). Series por
@@ -110,19 +110,26 @@ dataset:
 - **icg**: Índice de Confianza en el Gobierno (UTDT), escala 0-5. Una serie (`icg`), continua
   desde 2001-11. La planilla está **traspuesta** (meses en columnas) y partida en dos hojas
   (2001-2022 y 2023→) que empalman sin solaparse.
-- **datos_gob**: 14 series de la **API oficial de Series de Tiempo del Estado**
-  (`apis.datos.gob.ar/series`): `isac` (construcción), `ipi_manufacturero`, `ipc_nacional`,
-  `expo_total` / `impo_total` (comercio exterior en USD), `ventas_supermercados`,
-  `ventas_centros_compras`, `ripte`, `smvm` y las 5 aperturas del **índice de salarios** de INDEC
-  (`total`, `registrado`, `priv_registrado`, `publico`, `priv_no_registrado`). Es el único
-  dataset **star-schema mensual**: sus series no comparten unidad (conviven índices, dólares y
-  pesos), así que el nombre y la unidad viven en `etl_datos_gob_series`.
+- **datos_gob**: 14 series de organismos públicos, por **dos fuentes con prioridad explícita**.
+  De la **API oficial de Series de Tiempo del Estado** (`apis.datos.gob.ar/series`) salen 9:
+  `isac` (construcción), `ipi_manufacturero`, `ipc_nacional`, `expo_total` / `impo_total`
+  (comercio exterior en USD), `ventas_supermercados`, `ventas_centros_compras`, `ripte` y `smvm`.
+  Las 5 aperturas del **índice de salarios** de INDEC (`total`, `registrado`, `priv_registrado`,
+  `publico`, `priv_no_registrado`) salen de un **CSV de cuadros del INDEC**
+  (`indec.gob.ar/ftp/cuadros/sociedad/indice_salarios.csv`), y para ellas la API es el
+  **respaldo**: el feed de la API va ~2 meses atrás del cuadro, con 611 meses idénticos en el
+  solapamiento. Ambas entran con `estado='definitivo'`; la columna `fuente` dice por cuál entró
+  cada fila. Es el único dataset **star-schema mensual**: sus series no comparten unidad
+  (conviven índices, dólares y pesos), así que el nombre y la unidad viven en
+  `etl_datos_gob_series`.
   Las 11 series en valores corrientes tienen además **valor real** en `etl_datos_gob_real`, a
   precios del último dato de cada serie (base móvil y por serie; el mes viaja en `mes_base`).
   Son **dos deflactores**, ambos de `public.deflactores` y elegidos por la columna `deflactor`:
   `ipc_largo` para las 9 en pesos (desde 1990-01) y `uscpi_mensual` —CPI-U del BLS, NSA— para
   `expo_total` / `impo_total`, porque estar en dólares no exime de deflactar. Las 2 de ventas y
-  las 2 de comercio exterior se **desestacionalizan sobre esa serie real**.
+  las 2 de comercio exterior se **desestacionalizan sobre esa serie real**; `isac` e
+  `ipi_manufacturero` traen la **desestacionalizada oficial de INDEC** —no les corremos X-13
+  encima— y las columnas `desest_fuente` / `desest_parametros` dicen cuál de los dos orígenes es.
   `etl_datos_gob_completo` devuelve los tres valores —nominal, real y desestacionalizado— en una
   sola fila.
 - **comex**: 18 **números índice** de comercio exterior del INDEC (ICA), **base 2004=100**, desde
@@ -146,10 +153,11 @@ dataset:
 > del mes de referencia, no al mes siguiente. **(2)** No se desestacionalizan: UTDT los publica
 > crudos, así que no hay referencia contra la cual calibrar X-13 (ver `etl/series_desest.toml`).
 
-> **datos_gob es el único ETL que no scrapea nada.** Es una API, así que sumar una serie es
-> agregar una fila a `SERIES_META` en su `config.py` — no se escribe código. La evaluación de la
-> fuente, incluido **por qué NO reemplaza a ninguno de los otros scrapers**, está en
-> `docs/datos_gob_ar.md`.
+> **datos_gob sigue sin scrapear un solo link.** Sumar una serie de la API es agregar una fila a
+> `SERIES_META` en su `config.py` — no se escribe código. El CSV del índice de salarios tampoco
+> scrapea: la URL del cuadro es **fija**, sin fecha en el nombre, y por eso se lo pudo poner de
+> fuente primaria (`SERIES_CSV` en el mismo `config.py`). La evaluación de la fuente, incluido
+> **por qué NO reemplaza a ninguno de los otros scrapers**, está en `docs/datos_gob_ar.md`.
 
 ### Series diarias (BCRA)
 
@@ -360,8 +368,9 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # escrituras_caba: el Colegio de Escribanos publica entre el dia 22 y el 26 del mes siguiente
 # (medido sobre los ultimos 24 informes). Ventana 22-31, igual que icg.
 0  16 22-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh escrituras_caba
-# datos_gob: 9 series de organismos distintos, cada uno con su calendario. Sin ventana; la
-# corrida son 9 requests a una API y es idempotente.
+# datos_gob: 14 series de organismos distintos, cada uno con su calendario. Sin ventana; la
+# corrida son 11 requests a la API (9 series + las 2 desest oficiales de isac/ipi) mas 1 GET del
+# cuadro CSV del indice de salarios, y es idempotente.
 45 15 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh datos_gob
 # hidrocarburos: la Secretaria de Energia publica el capitulo IV a fines del mes siguiente
 # (julio-2026 ya estaba el 26-ago). Ventana 20-31,1-10 como leche. La corrida son 2 GET de ~9 KB
