@@ -1,9 +1,19 @@
 # Cuadro de parámetros de desestacionalización X-13ARIMA-SEATS por serie.
 #
 # El ETL relee este archivo al desestacionalizar (ver etl/core/desest_params.py). Cada
-# corrida busca acá qué series de un dataset hay que ajustar y con qué parámetros. Estos
-# valores salieron de calibrar cada serie contra su referencia (error 0.00%, salvo autos
-# ventas que no reproduce exacto y va en modo automático, ~0.33%).
+# corrida busca acá qué series de un dataset hay que ajustar y con qué parámetros.
+#
+# NO todas las series están calibradas contra una referencia oficial, y conviene saber en cuál de
+# los tres grupos cae la que estás mirando —el bloque de cada dataset lo dice—:
+#
+#   1. CALIBRADAS: los parámetros reproducen el número del organismo (error 0.00%, salvo autos
+#      ventas que no reproduce exacto con ninguna config fija y va en automático, ~0.33%).
+#   2. SIN REFERENCIA: el organismo publica sólo la serie cruda, así que no hay contra qué
+#      verificar. Los parámetros son los razonables para ese tipo de serie (icc/icg,
+#      ventas_combustibles).
+#   3. CON REFERENCIA Y DELIBERADAMENTE DISTINTAS: existe la serie oficial y NO la reproducimos
+#      a propósito, porque partimos de otra serie real. Es el caso de ventas_supermercados y
+#      ventas_centros_compras: ver la nota del bloque [datos_gob], que trae la medición.
 #
 # Para AGREGAR una serie nueva a desestacionalizar:
 #   1. Sumar su nombre a `desest` del dataset (debe existir en la tabla de ese dataset).
@@ -471,10 +481,50 @@ mode = "mult"
 # y domingos caen), más que en una serie de producción.
 td = "td"
 seasonalma = "s3x5"
-# SIN REFERENCIA DE CALIBRACIÓN: a diferencia de acero/leche/cemento, INDEC no publica una versión
-# desestacionalizada de estas dos series contra la cual verificar que reproducimos su número. Los
-# parámetros de arriba son los razonables para una serie de ventas minoristas, no los que
-# reproducen un resultado oficial. Si algún día aparece esa referencia, recalibrar.
+# LA REFERENCIA EXISTE Y NO LA REPRODUCIMOS. Este comentario decía que INDEC no publicaba una
+# desestacionalizada de estas dos series; es falso. Las publica:
+#
+#     ventas_supermercados     455.1_VENTAS_PREADA_0_M_44_44   2017-01 ->
+#     ventas_centros_compras   458.1_VENTAS_TOTADA_0_M_52_56   2017-01 ->
+#
+# Contrastadas contra nuestro d11 el 2026-09-10, comparando VARIACIÓN MENSUAL (los niveles no son
+# comparables: ver abajo) y excluyendo la pandemia (mar-2020 a jun-2021), donde los shoppings
+# cerrados llevan la serie cerca de cero y las variaciones porcentuales explotan:
+#
+#     serie                    n    mediana   media     max
+#     ventas_supermercados     97   0.82 pp   1.10 pp   7.80 pp
+#     ventas_centros_compras   97   2.07 pp   2.77 pp  13.28 pp
+#
+# En supermercados TRES de los cinco peores meses son diciembre (2023-12, 2025-12, 2022-12), que
+# es el pico estacional de la serie: diferimos justo donde el ajuste hace todo el trabajo.
+#
+# DE DÓNDE SALE LA DIFERENCIA. Son dos causas y están separadas, no hay que adivinar. INDEC
+# publica también la serie deflactada SIN ajustar (455.1_VENTAS_PRENAL_0_M_34_10, y la misma en
+# millones de pesos: 455.1_VENTAS_PRETES_0_M_25_98), así que se puede medir el deflactor solo:
+#
+#     nuestra serie REAL vs la deflactada de INDEC   mediana 0.420 pp   (deflactor solo)
+#     nuestro DESEST     vs el desest de INDEC       mediana 0.820 pp   (deflactor + X-13)
+#
+# El deflactor solo ya explica una porción grande: antes de que el X-13 toque nada, la serie real
+# se separa 0.42 pp porque nosotros deflactamos con `ipc_largo` (IPC nacional) y ellos con su
+# índice sectorial. Las dos causas son del mismo orden; culpar sólo a mode/td/seasonalma sería un
+# diagnóstico equivocado.
+#
+# DECISIÓN: se deflacta con IPC nacional y base móvil, y se desestacionaliza con X-13 propio, como
+# todo el resto del repo. NO se adopta la serie oficial ni se recalibran los parámetros para
+# reproducirla. El criterio es la homogeneidad del dataset: las 11 series deflactadas comparten
+# método y base móvil, y se comparan entre sí sin asteriscos. Cambiar dos de ellas al método del
+# organismo las alinearía con INDEC y las desalinearía de sus propias compañeras de tabla, que es
+# el uso real de esta tabla.
+#
+# La diferencia contra el número oficial es entonces ESPERADA y está documentada del lado del
+# consumo, en INTEGRATION.md. No es un error a corregir.
+#
+# (Nota aparte, por si algún día se reconsidera: adoptar la desest oficial tampoco es gratis. Es
+# un ÍNDICE BASE 2017=100 y nuestro d11 está en pesos constantes; meterla en `valor_desest`
+# cambiaría la unidad de esa columna —de ~2.5e9 a ~83— mientras `etl_datos_gob_series.unidad`
+# sigue diciendo 'miles de pesos'. Exigiría antes resolver dónde se declara la unidad del desest
+# cuando difiere de la observada, y hoy el esquema no tiene lugar para eso.)
 
 # Comercio exterior (INDEC, ICA). Heredan mult del dataset —son valores estrictamente positivos
 # (mínimo histórico USD 593 M) con estacionalidad proporcional al nivel: la cosecha gruesa mueve

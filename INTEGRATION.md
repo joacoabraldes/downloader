@@ -738,14 +738,35 @@ precios. El factor estacional que sale para supermercados es el esperable:
 |---|---|---|---|---|---|---|---|
 | factor | 0,99 | 0,94 | 1,01 | | 0,93 | | **1,22** |
 
-> **Todavía sin calibrar, pero la referencia EXISTE.** A diferencia de `acero` o `cemento`,
-> estos parámetros de X-13 (`mult` + `td` + `s3x5`) son los razonables para ventas minoristas,
-> no los que reproducen un resultado oficial. La diferencia con `acero`/`cemento` es que ahí ya
-> se calibró contra la planilla del organismo y acá no: INDEC **sí** publica su propia serie
-> desestacionalizada a precios constantes, en la misma API, con ids
-> `455.1_VENTAS_PREADA_0_M_44_44` (supermercados) y `458.1_VENTAS_TOTADA_0_M_52_56` (centros de
-> compras), ambas índice 2017=100. Mientras no se calibre contra ellas, `valor_desest` es
-> **nuestro** número, no el de INDEC: no citarlo como oficial.
+> **Nuestro número NO coincide con el de INDEC, y es a propósito.** INDEC publica su propia serie
+> de estas dos, a precios constantes, en la misma API: `455.1_VENTAS_PREADA_0_M_44_44`
+> (supermercados) y `458.1_VENTAS_TOTADA_0_M_52_56` (centros de compras), índice 2017=100. No las
+> adoptamos ni recalibramos el X-13 para reproducirlas. **Si comparás contra el informe de INDEC,
+> los números no van a dar iguales** — esto explica por qué.
+>
+> **La causa principal es el deflactor, no el X-13.** Nosotros deflactamos con **IPC nacional**
+> (`ipc_largo`) y base móvil; INDEC deflacta con su **índice sectorial** propio. Eso se puede
+> medir por separado, porque INDEC también publica la serie deflactada SIN ajustar
+> (`455.1_VENTAS_PRENAL_0_M_34_10`). Comparando variación mensual, sin la pandemia:
+>
+> | comparación | mediana |
+> |---|---|
+> | nuestra `valor_real` vs la deflactada de INDEC — **sólo el deflactor** | 0,420 pp |
+> | nuestra `valor_desest` vs el desest de INDEC — **deflactor + X-13** | 0,820 pp |
+>
+> Antes de que el X-13 toque nada, la serie real ya se separa 0,42 pp. Las dos causas son del
+> mismo orden: no es que el ajuste estacional esté mal calibrado, es que partimos de otra serie
+> real. En supermercados los peores meses son diciembres (2022-12, 2023-12, 2025-12), el pico
+> estacional.
+>
+> **Por qué se eligió así:** las 11 series deflactadas de esta tabla comparten método y base
+> móvil, y por eso se comparan entre sí sin asteriscos. Alinear dos de ellas con INDEC las
+> desalinearía de sus propias compañeras de tabla, que es el uso real de esta tabla. Se prioriza
+> la homogeneidad interna sobre la coincidencia con la fuente.
+>
+> Consecuencia práctica: `valor_real` y `valor_desest` de estas series son **nuestro** número, no
+> el de INDEC. Sirven para ver la evolución y comparar contra las otras series del dataset. **No
+> los cites como oficiales**, y si necesitás el número oficial, bajá los ids de arriba.
 
 ### Salario real (`ripte`, `smvm`, `indice_salarios_*`)
 
