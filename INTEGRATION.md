@@ -1370,9 +1370,25 @@ vuelve un régimen diferencial, se agregan filas ahí y ninguna vista cambia.
 | `deflactores` (`ipc_largo`) | **1990-01 → 2026-12** | la única que cubre el PRP entero |
 | `indices_inflacion` | 2016-12 → 2026-04 | arranca 24 años tarde y además viene desactualizada |
 
-Valen las mismas advertencias que para el resto del repo: `deflactor_origen = 'proyectado'` marca
-los meses cuyo IPC todavía no publicó INDEC y se estimó — **esos PRP se revisan**. `deflactores`
-lo mantiene **otro repo** (`downloaders_viejos/downloader`); para chequear frescura:
+**Los meses sin IPC observado usan la proyección, igual que el resto del repo.** `ipc_base_1993`
+lee `deflactores` entero —observado y proyectado— y arrastra la columna `origen`, que llega hasta
+`granos_prp` y `granos_prp_combinado` como `deflactor_origen`. Es la misma técnica de
+`etl_datos_gob_real`. `deflactor_origen = 'proyectado'` marca los meses cuyo IPC todavía no
+publicó INDEC: **esos PRP se revisan** y no hay que presentarlos como firmes.
+
+```sql
+-- Cuánto del PRP está apoyado en IPC estimado
+select deflactor_origen, count(*), min(fecha), max(fecha)
+from granos_prp_combinado group by 1;
+```
+
+> **Pero acá la base es FIJA, no móvil, y eso cambia el alcance de la revisión.** `datos_gob`
+> reexpresa cada serie en la moneda de su último mes observado, así que cuando INDEC publica se
+> mueve el mes base y **se revisa toda la historia de la serie**. El PRP está anclado a 1993 = 1
+> y ese ancla no se mueve nunca: cuando un mes proyectado pasa a publicado **sólo cambia ese mes**.
+> La revisión es local, no global.
+
+`deflactores` lo mantiene **otro repo** (`downloaders_viejos/downloader`); para chequear frescura:
 
 ```sql
 select max(fecha) from deflactores where deflactor = 'ipc_largo' and origen = 'publicado';
