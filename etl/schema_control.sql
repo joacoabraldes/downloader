@@ -198,6 +198,14 @@ with esperado(dataset, horas_max, dias_max_dato) as (values
     ('compras_granos',   80,  25),   -- cron L-V -> fin de semana ~71 h (ver nota de la ventana abajo)
                                      --   dato: edad del label al publicar 7-11 d medido sobre 3 semanas (el corte 05-ago
                                      --   entro el 12-ago) -> 11 + 7 de periodo + margen
+    ('cot',              80,  14),   -- cron diario: son 4 requests a la API de la CFTC, idempotentes
+                                     --   dato: la CFTC corta los martes y publica el viernes 15:30 ET,
+                                     --   asi que el lag normal del label es de 3 a 5 dias. 14 deja
+                                     --   margen para los feriados de EEUU, que corren la publicacion
+                                     --   al lunes, y para los cierres de gobierno, que la suspenden
+                                     --   por semanas (paso en 2018-2019: el COT estuvo cinco semanas
+                                     --   sin publicarse y despues salio todo junto).
+                                     --   UMBRAL ESTIMADO, no medido.
     ('fob_granos',       80,   6)    -- cron L-V -> fin de semana ~71 h
                                      --   dato: la fuente publica el precio FOB del dia habil ese mismo dia y el
                                      --   ETL corre a la mañana siguiente -> lag normal 1 dia, 3 si el ultimo dia

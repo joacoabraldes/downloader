@@ -191,7 +191,13 @@ def main(argv=None) -> None:
 
         for anio, grupo in itertools.groupby(dias, key=lambda d: d.year):
             grupo = list(grupo)
-            masivo = not _anio_cargado(conn, anio)
+            # Con --solo-faltantes TODOS los días que llegan acá tienen cero filas en la
+            # tabla: el filtro ya sacó los cargados. Mandarlos igual por el camino con dedup
+            # gasta un SELECT + COMMIT por fila para confirmar algo que ya sabemos, y contra una
+            # base remota eso cuadruplica el tiempo de un año. Medido el 2026-09-11: los años
+            # que caían en dedup por tener un solo mes de muestra cargado iban a ~22 s por día
+            # contra los ~5,3 s de los que iban por bulk.
+            masivo = args.solo_faltantes or not _anio_cargado(conn, anio)
             lote: list[tuple] = []
             con_datos = 0
             for i, fecha in enumerate(grupo):

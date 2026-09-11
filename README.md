@@ -290,6 +290,13 @@ Inserta el histórico con `estado = NULL`.
 > de calibración** de X-13, no como fuente de datos — y tiene cuatro meses mal (ver la sección
 > de la fuente).
 
+> **`cot` no necesita cuidado de ritmo.** La CFTC sirve desde un CDN del gobierno de EEUU y no
+> corta por volumen: el `load-history` son ~44 zips (~200 MB) y termina en minutos.
+> ```bash
+> python -m etl cot load-history        # 1986 -> hoy, los cuatro origenes
+> python -m etl cot                     # corrida semanal (API Socrata, 4 requests)
+> ```
+
 > **`fob_granos` es el backfill más caro del repo.** La API de precios FOB de MAGyP no tiene
 > endpoint de rango (un request por fecha) y el histórico son ~8.600 días hábiles. **Empezar
 > siempre por el atajo**, que lo deja en ~3.300 (~3,7 h):
@@ -421,6 +428,10 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # OJO: comparte host (magyp.gob.ar) e IP con granos, aves, bovinos, leche y compras_granos. Si se
 # corre el `load-history` (~8.600 requests), hacerlo de noche y por tramos -- ver INTEGRATION.md.
 30 10 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh fob_granos
+# Semanal (Commitments of Traders de la CFTC). Corte los martes, publicacion viernes 15:30 ET
+# (~17:30 ART). Corre diario porque los feriados de EEUU corren la publicacion al lunes y la
+# corrida son 4 requests a la API de Socrata: sale mas barato correr de mas que acertar el dia.
+0  19 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh cot
 ```
 > Los jobs pasan por **`scripts/run_etl.sh`**, que hace el `cd` al repo, escribe
 > `/home/jmt/data/etls/<dataset>.log` y —sólo si la corrida falla— repite el final por stderr
