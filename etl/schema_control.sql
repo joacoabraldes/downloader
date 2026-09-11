@@ -195,9 +195,16 @@ with esperado(dataset, horas_max, dias_max_dato) as (values
                                      --   dato entra a la mañana siguiente, +1 dia, y +3 si publica un viernes.
                                      --   6 + 3 = 9, + 1 dia habil de periodo + margen = 11. Con 8 disparaba
                                      --   DATO_VIEJO falso. Si se vuelve al horario 19:15/20:30, volver a 8.
-    ('compras_granos',   80,  25)    -- cron L-V -> fin de semana ~71 h (ver nota de la ventana abajo)
+    ('compras_granos',   80,  25),   -- cron L-V -> fin de semana ~71 h (ver nota de la ventana abajo)
                                      --   dato: edad del label al publicar 7-11 d medido sobre 3 semanas (el corte 05-ago
                                      --   entro el 12-ago) -> 11 + 7 de periodo + margen
+    ('fob_granos',       80,   6)    -- cron L-V -> fin de semana ~71 h
+                                     --   dato: la fuente publica el precio FOB del dia habil ese mismo dia y el
+                                     --   ETL corre a la mañana siguiente -> lag normal 1 dia, 3 si el ultimo dia
+                                     --   con datos fue viernes. 3 + margen = 6. UMBRAL ESTIMADO, no medido:
+                                     --   reajustar con corridas incrementales reales. Ojo: `ultimo_dato` es el
+                                     --   MAX sobre los cuatro granos, asi que no detecta un grano individual
+                                     --   congelado -- solo el corte total.
 )
 select e.dataset,
        u.estado          as estado_ultima_corrida,

@@ -20,7 +20,7 @@ MONTHLY = ["granos", "cemento", "automotriz", "patentamientos", "transferencias"
            "ventas_combustibles", "refinacion", "escrituras_caba", "icc", "icg", "datos_gob",
            "comex"]
 # Datasets diarios: gatean la vista unificada series_diarias_actual (carril separado).
-DAILY = ["reservas_pasivos"]
+DAILY = ["reservas_pasivos", "fob_granos"]
 # Datasets semanales: sin vista unificada propia (por ahora es uno solo y su grano no es
 # comparable con el de las otras series: mezcla flujo semanal con acumulados de campaña).
 WEEKLY = ["compras_granos"]
