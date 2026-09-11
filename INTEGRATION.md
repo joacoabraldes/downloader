@@ -37,6 +37,7 @@ filas por `(serie, mes)`. Para consumir hay **dos vistas por dataset** que ya re
 | `comex` | `etl_comex` + dimensión `etl_comex_series` | `etl_comex_actual` | `etl_comex_desest` (sólo las 6 de cantidad) |
 | `compras_granos` | `etl_compras_granos` | `etl_compras_granos_actual` | — (semanal, no se desestacionaliza) |
 | `fob_granos` | `etl_fob_granos` | `etl_fob_granos_diario` / `etl_fob_granos_mensual` | — (diario, no se desestacionaliza) |
+| `cot` | `etl_cot` | `etl_cot_actual` / `etl_cot_neto` | — (semanal, no se desestacionaliza) |
 
 > Todas las tablas llevan prefijo **`etl_`**. El nombre de la tabla no siempre deriva directo
 > del dataset (comando): `granos` → `etl_molienda_granos`, `cemento` → `etl_cemento_despacho`;
@@ -110,12 +111,22 @@ order by orden;
 > Regla igual que en las mensuales: consumí las **vistas** (`etl_reservas_pasivos_actual` /
 > `series_diarias_actual`), nunca `etl_reservas_pasivos` cruda (append-only, varias filas por `serie/día`).
 
-## Series semanales (MAGyP) — carril separado
+## Series semanales — carril separado
 
-`compras_granos` son las **compras de granos del sector exportador y de la industria, más las
-DJVE** (declaraciones juradas de venta al exterior), tal como las publica MAGyP cada semana. Es
-**semanal** y vive en un carril aparte: `date` es la **fecha de corte del informe** y no aparece
-en `series_actual` / `series_diarias_actual`.
+Dos datasets son **semanales** y viven en un carril aparte: `date` es la **fecha de corte del
+informe** y no aparecen en `series_actual` / `series_diarias_actual`.
+
+| Dataset | Qué es | Vista de consumo |
+|---|---|---|
+| `compras_granos` | compras del sector exportador y de la industria, más DJVE (MAGyP) | `etl_compras_granos_actual` |
+| `cot` | posición especulativa en soja, maíz y trigo SRW (CFTC) | `etl_cot_neto` |
+
+`cot` tiene su propia sección más abajo (**`cot` (Commitments of Traders, CFTC)**).
+
+### `compras_granos` (MAGyP)
+
+Son las **compras de granos del sector exportador y de la industria, más las DJVE**
+(declaraciones juradas de venta al exterior), tal como las publica MAGyP cada semana.
 
 | Tabla (hechos) | Vista observada | Cobertura |
 |---|---|---|
@@ -1495,3 +1506,139 @@ otro se acercan a 219.
 
 Así que **se deja el valor calculado, 226,73**. `fob_granos_override` existe por si algún mes
 hace falta pisarlo, pero hoy está **vacía**.
+
+## `cot` (Commitments of Traders, CFTC) — cómo consumirlo
+
+La posición especulativa en los tres granos de Chicago: **soja**, **maíz** y **trigo SRW**.
+Semanal, con corte los **martes**; la CFTC publica los **viernes 15:30 ET**.
+
+Es un dataset **semanal** y vive en el carril aparte, junto con `compras_granos`: `date` es la
+fecha de corte del reporte y no aparece en `series_actual` ni en `series_diarias_actual`.
+
+| Tabla / vista | Qué trae |
+|---|---|
+| `etl_cot` | append-only, valores **crudos** tal como los publica la CFTC |
+| `etl_cot_actual` | último snapshot por (contrato, categoria, tipo, fecha), todavía crudo |
+| **`etl_cot_neto`** | **lo que querés consumir**: posición neta, todo en contratos, homogéneo |
+
+### Dos series que NO son la misma, y no se empalman
+
+| `categoria` | Reporte | Desde | Qué mide |
+|---|---|---|---|
+| `managed_money` | Disaggregated | **2006-06-13** | fondos de gestión activa: CTAs, hedge funds de commodities |
+| `non_commercial` | Legacy | **1986-01-15** | categoría **más amplia**: incluye a los managed money **más** otros especuladores reportables |
+
+`managed_money` es la que sigue el mercado y la que se cita como "los fondos están netos
+largos X contratos". Pero **no existe antes de 2006**: el reporte Disaggregated arranca ahí.
+`non_commercial` es el único dato especulativo que hay para los veinte años anteriores.
+
+Las dos están completas y **sin pegar**. Empalmarlas es una decisión de análisis —hay un salto
+conceptual en 2006-06— y se toma al consumir, no en el ETL.
+
+### Y dos variantes de cada una
+
+| `tipo` | Qué incluye |
+|---|---|
+| `futures` | sólo futuros. **Es la serie que se cita habitualmente** |
+| `futures_options` | futuros más opciones en equivalente futuro (delta-adjusted) |
+
+El interés abierto los distingue de un vistazo: soja al 2026-09-08 da **1.070.401** contratos en
+`futures` y **1.378.220** en `futures_options`.
+
+> Un chequeo de integridad que sale gratis: para un mismo `tipo` y fecha, el `interes_abierto` es
+> **idéntico** entre `managed_money` y `non_commercial`. Es el mismo contrato visto con dos
+> particiones distintas. Si alguna vez difieren, algo se rompió en la ingesta.
+
+### Cómo se consulta
+
+```sql
+-- Posición neta de los fondos, última semana
+select contrato, largo, corto, neto, neto_pct_oi
+from etl_cot_neto
+where categoria = 'managed_money' and tipo = 'futures'
+  and date = (select max(date) from etl_cot_neto)
+order by contrato;
+```
+
+```
+ contrato  | largo  | corto | neto    | neto_pct_oi
+-----------+--------+-------+---------+-------------
+ maiz      | 491034 | 76575 | +414459 |       +23.0
+ soja      | 293215 | 35957 | +257258 |       +24.0
+ trigo_srw | 100506 | 95633 |   +4873 |        +1.0
+```
+
+```sql
+-- La serie larga de un grano (40 años), ya homogénea
+select date, neto, neto_pct_oi
+from etl_cot_neto
+where contrato = 'soja' and categoria = 'non_commercial' and tipo = 'futures'
+order by date;
+```
+
+**Usá `neto_pct_oi` para comparar entre granos o a lo largo de décadas.** El contrato de soja
+pasó de ~96.000 contratos de interés abierto promedio en 1986-89 a ~911.000 hoy: un neto de
+50.000 no significa lo mismo en 1990 que ahora. Los niveles en contratos sirven para leer la
+semana; los porcentajes, para leer la historia.
+
+> **El `spreading` NO entra en el neto**, a propósito. Son posiciones largas y cortas
+> simultáneas en distintos vencimientos: por construcción no expresan dirección.
+
+### Tres discontinuidades que hay que conocer
+
+**1. La unidad cambia en 1998, y la vista ya lo corrige.** Hasta 1997 la CFTC reportaba los
+granos en **miles de bushels**; desde el **1998-01-06**, en **contratos de 5.000 bushels**.
+`etl_cot_neto` divide por 5 las 1.749 filas anteriores a esa fecha; `unidad_origen` y
+`divisor_aplicado` marcan cuáles, y `etl_cot_actual` conserva el crudo.
+
+Es una inferencia nuestra, no una conversión documentada por la CFTC, pero está **medida**: al
+cruzar el 1998-01-06 el interés abierto de los **cuatro** contratos de granos del archivo cae en
+un factor de 4,65 a 5,51 (trigo CBOT 4,65 · trigo Kansas 5,51 · maíz 4,70 · soja 5,12), mientras
+que contratos que **no** se miden en bushels no se mueven: boneless beef trimmings 1,05 y
+electricidad CA-OR 0,75. Si fuera un cambio general de unidad de reporte, esos dos también
+saltarían. Con el divisor aplicado el interés abierto de soja pasa de 138.168 el 1997-12-30 a
+133.992 el 1998-01-06 —3 %, una semana normal— y el promedio por lustro crece monótono sin
+escalón.
+
+**2. El código de contrato también cambia en 1998.** `005601` → `005602` (soja), `002601` →
+`002602` (maíz), `001601` → `001602` (trigo). La ingesta los unifica bajo el mismo `contrato` y
+el corte es limpio —último dato del código viejo 1997-12-30, primero del nuevo 1998-01-06, sin
+ninguna fecha en común—. La columna `codigo_cftc` guarda de cuál vino cada fila.
+
+**3. La frecuencia cambia, y esta no la corrige nadie.** El COT era **quincenal hasta 1991** (24
+observaciones por año), 1992 es de transición (31) y recién **desde 1993 es semanal**. Calcular
+variaciones semanales o medias móviles de N semanas sobre el tramo viejo da cualquier cosa:
+
+```sql
+-- Cuántas observaciones hay por año, antes de asumir que son 52
+select extract(year from date)::int as anio, count(*) as obs
+from etl_cot_neto
+where contrato = 'soja' and categoria = 'non_commercial' and tipo = 'futures'
+group by 1 order by 1;
+```
+
+### Cargarlo y mantenerlo
+
+```bash
+python -m etl cot load-history     # 1986 -> hoy, los cuatro origenes, ~44 zips
+python -m etl cot                  # corrida semanal: 4 requests a la API Socrata
+```
+
+**Dos caminos que no son intercambiables.** `run` va por la **API Socrata** y `load-history` por
+los **zips anuales**, y no es redundancia: la API **no tiene todo el histórico**. Legacy arranca
+en 1998-01-06 y Disaggregated en 2006-06-13, así que el tramo **1986-1997** —los doce años que
+hacen que la serie larga valga la pena— existe sólo en los archivos.
+
+Que los dos caminos coinciden está verificado: correr `run` sobre lo que ya cargó `load-history`
+reporta `sin_cambios` en todas las filas comunes.
+
+A diferencia de MAGyP, acá **no hay que cuidar el ritmo**: la CFTC sirve desde un CDN del
+gobierno de EEUU y no corta por volumen. El backfill entero son ~200 MB y termina en minutos.
+
+> **La CFTC revisa reportes ya publicados.** Por eso la tabla es append-only y `run` re-lee 8
+> semanas hacia atrás por defecto: releer es barato y es lo único que hace entrar la revisión.
+> Para cazar revisiones viejas está `load-history --revisar`, que es lento a propósito.
+
+> **Y a veces deja de publicar.** Los feriados de EEUU corren la publicación al lunes, y un
+> cierre de gobierno la suspende por semanas: en 2018-2019 el COT estuvo cinco semanas sin salir
+> y después publicó todo junto. Por eso `dias_max_dato` es 14 y no 7.
