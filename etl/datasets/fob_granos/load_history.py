@@ -39,7 +39,7 @@ al camino lento.
 
 Flags:
   --desde AAAA-MM-DD   primer día (default: 1993-01-04, el primero que responde la API)
-  --hasta AAAA-MM-DD   último día (default: hoy)
+  --hasta AAAA-MM-DD   último día (default: ayer; una fecha futura se recorta sola)
   --pausa SEG          espera entre requests (default 4.0; ver la cuenta de arriba)
   --saltear-cargados   arrancar desde el día siguiente al último cargado
   --solo-faltantes     saltear los días ya cargados y los que la fuente declaró vacíos
@@ -167,13 +167,22 @@ def main(argv=None) -> None:
             ultimo = db.last_date(conn, table=config.TABLE)
             if ultimo:
                 desde = max(desde, ultimo + dt.timedelta(days=1))
-        dias = list(source.dias_habiles(desde, args.hasta))
+        # Un --hasta futuro no es un error del usuario, es lo natural al escribir el año
+        # completo (`--hasta 2026-12-31`). Pero pedir días que todavía no pasaron sólo gasta
+        # requests, así que se recorta acá y se avisa.
+        hasta = args.hasta
+        if hasta >= hoy:
+            if hasta > hoy:
+                rep.info(f"--hasta {args.hasta} es futuro: se recorta a {hoy - dt.timedelta(days=1)}")
+            hasta = hoy - dt.timedelta(days=1)
+
+        dias = list(source.dias_habiles(desde, hasta))
         totales = len(dias)
         if args.solo_faltantes:
-            ya = _dias_resueltos(conn, desde, args.hasta)
+            ya = _dias_resueltos(conn, desde, hasta)
             dias = [d for d in dias if d not in ya]
         horas = len(dias) * args.pausa / 3600
-        rep.info(f"{desde}..{args.hasta} | dias habiles: {len(dias)}"
+        rep.info(f"{desde}..{hasta} | dias habiles: {len(dias)}"
                  + (f" de {totales} (faltantes)" if args.solo_faltantes else "")
                  + f" | pausa: {args.pausa}s | estimado: {horas:.1f} h")
         if not dias:

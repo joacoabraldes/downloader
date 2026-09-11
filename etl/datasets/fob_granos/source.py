@@ -121,7 +121,15 @@ def get_dia(fecha: dt.date) -> tuple[list[dict], str]:
 
 
 def marcar_sin_dato(conn, fecha: dt.date) -> None:
-    """Deja registrado que la fuente contestó sin datos ese día. Idempotente."""
+    """Deja registrado que la fuente contestó sin datos ese día. Idempotente.
+
+    Una fecha futura NO se registra nunca, aunque la API conteste vacío: obviamente va a venir
+    vacía, y anotarla la dejaría salteada para siempre en `load-history --solo-faltantes` cuando
+    ese día llegue de verdad. El envenenamiento sería silencioso: el día nunca se pediría otra
+    vez y nadie vería un error.
+    """
+    if fecha >= dt.date.today():
+        return
     with conn.cursor() as cur:
         cur.execute(f"insert into {config.SIN_DATO_TABLE} (date) values (%s) "
                     f"on conflict (date) do nothing", (fecha,))
