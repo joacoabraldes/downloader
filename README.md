@@ -290,6 +290,22 @@ Inserta el histórico con `estado = NULL`.
 > de calibración** de X-13, no como fuente de datos — y tiene cuatro meses mal (ver la sección
 > de la fuente).
 
+> **`fob_granos` es el backfill más caro del repo.** La API de precios FOB de MAGyP no tiene
+> endpoint de rango (un request por fecha) y el histórico son ~8.600 días hábiles. **Empezar
+> siempre por el atajo**, que lo deja en ~3.300 (~3,7 h):
+> ```bash
+> python -m etl fob_granos load-history --desde-precios-fob   # SQL, sin un solo request
+> python -m etl fob_granos load-history --solo-faltantes      # sólo lo que falta de verdad
+> ```
+> `public.precios_fob` es un volcado previo de esta misma API que cubre 1993-01-04 → 2017-04-19
+> (verificado: cero diferencias contra la API sobre las filas en común), y
+> `etl_fob_granos_sin_dato` evita re-pedir los ~1.200 días que la fuente declaró vacíos.
+> La pausa por defecto es de **4 segundos** y no es negociable a la baja: el host lo comparten
+> `granos`, `aves`, `bovinos`, `leche` y `compras_granos` desde esta misma IP, y el bloqueo del
+> 02/08/2026 (disparado con ~1,8 req/s) duró 4 horas y se los llevó puestos a los cinco.
+> Correrlo por tramos y de noche; es reanudable y re-correrlo siempre es seguro.
+> El detalle del dataset y del cálculo de PRP que lo consume está en `INTEGRATION.md`.
+
 > **Piso histórico de granos (1993-01).** El Excel de MAGyP arranca en 1965, pero ese tramo
 > (prefijo de ceros / cambio de escala) cuelga a X-13. Se recorta la ingesta a **1993-01 en
 > adelante** (`config.START_DATE`), aplicado en los dos caminos (`load-history` y `run`), así
@@ -399,6 +415,12 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # capta las revisiones), asi que correr de mas no cuesta nada. Cuando se confirme el dia, acotar
 # la ventana y bajar `horas_max` en etl/schema_control.sql en el mismo cambio.
 0  10 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh compras_granos
+# Diario (precios FOB oficiales de granos, MAGyP). La fuente cotiza los dias habiles y publica el
+# precio del dia ese mismo dia; la corrida re-lee 7 dias hacia atras ademas de lo que falta, por
+# las circulares con efecto retroactivo. Son ~8 requests con pausa de 1 s.
+# OJO: comparte host (magyp.gob.ar) e IP con granos, aves, bovinos, leche y compras_granos. Si se
+# corre el `load-history` (~8.600 requests), hacerlo de noche y por tramos -- ver INTEGRATION.md.
+30 10 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh fob_granos
 ```
 > Los jobs pasan por **`scripts/run_etl.sh`**, que hace el `cd` al repo, escribe
 > `/home/jmt/data/etls/<dataset>.log` y —sólo si la corrida falla— repite el final por stderr

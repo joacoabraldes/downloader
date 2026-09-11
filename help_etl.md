@@ -83,6 +83,7 @@ Cada ETL corre en la ventana del mes en que su fuente publica, no todos los día
 | `demanda_energia`, `bovinos`, `datos_gob` | todos los días | 80 h (cubre el fin de semana) |
 | `reservas_pasivos` | lunes a viernes | 80 h (cubre el fin de semana) |
 | `compras_granos` | lunes a viernes | 80 h (cubre el fin de semana) |
+| `fob_granos` | lunes a viernes | 80 h (cubre el fin de semana) |
 | `acero` | días 15 al 10 del mes siguiente | 130 h (~5 días) |
 | `leche`, `hidrocarburos` | días 20 al 10 del mes siguiente | 260 h (~11 días) |
 | `granos`, `comex` | días 18 al 31 | 450 h (~19 días) |
@@ -146,6 +147,7 @@ daría falsa alarma **todos los meses**.
 
 | Dataset | Edad del label al publicarse | Período | `dias_max_dato` |
 |---|---|---|---|
+| `fob_granos` | 1 día (3 si el último hábil fue viernes) **(estimado, no medido)** | 1 día hábil | 6 |
 | `reservas_pasivos` | 2-6 días, +3 desde el cambio de horario del cron (ver nota) | 1 día hábil | 11 |
 | `compras_granos` | 7-11 días | 7 días | 25 |
 | `datos_gob` | variable (14 series) | 1 mes | 75 |
@@ -169,9 +171,15 @@ daría falsa alarma **todos los meses**.
 > `dias_max_dato` subió de 8 a 11. Con 8 habría disparado `DATO_VIEJO` falso. Para revertir:
 > volver a `15 19` / `30 20` en el crontab y `dias_max_dato` a 8.
 
-> En `reservas_pasivos` y `compras_granos` las dos lecturas coinciden, porque su `date` **no** es
-> el primer día de un período: es el día hábil y la fecha de corte respectivamente. La distinción
-> sólo muerde en las series mensuales.
+> **Nota sobre `fob_granos`.** MAGyP publica el precio FOB del día hábil ese mismo día y el ETL
+> corre a la mañana siguiente, así que el lag normal es de 1 día y de 3 cuando el último hábil
+> fue viernes. Umbral **estimado, no medido**: reajustar con corridas incrementales reales. Ojo
+> con lo que NO detecta: `ultimo_dato` es el máximo sobre los cuatro granos, así que un grano
+> individual congelado no dispara nada — sólo el corte total.
+
+> En `reservas_pasivos`, `compras_granos` y `fob_granos` las dos lecturas coinciden, porque su
+> `date` **no** es el primer día de un período: es el día hábil y la fecha de corte
+> respectivamente. La distinción sólo muerde en las series mensuales.
 
 La columna del medio se midió con `min(ingested_at)` por fecha en cada tabla, descartando los lotes
 del backfill inicial (se reconocen porque cientos de fechas comparten el mismo `ingested_at`; sin

@@ -36,6 +36,7 @@ filas por `(serie, mes)`. Para consumir hay **dos vistas por dataset** que ya re
 | `datos_gob` | `etl_datos_gob` + dimensión `etl_datos_gob_series` | `etl_datos_gob_actual` (+ `_real` y `_completo`) | `etl_datos_gob_desest` (las 2 de ventas + las 2 de comercio exterior) |
 | `comex` | `etl_comex` + dimensión `etl_comex_series` | `etl_comex_actual` | `etl_comex_desest` (sólo las 6 de cantidad) |
 | `compras_granos` | `etl_compras_granos` | `etl_compras_granos_actual` | — (semanal, no se desestacionaliza) |
+| `fob_granos` | `etl_fob_granos` | `etl_fob_granos_diario` / `etl_fob_granos_mensual` | — (diario, no se desestacionaliza) |
 
 > Todas las tablas llevan prefijo **`etl_`**. El nombre de la tabla no siempre deriva directo
 > del dataset (comando): `granos` → `etl_molienda_granos`, `cemento` → `etl_cemento_despacho`;
@@ -59,16 +60,23 @@ where dataset = 'demanda_energia' and serie = 'no_residencial'
 order by date;
 ```
 
-## Series diarias (BCRA) — carril separado
+## Series diarias — carril separado
 
-Todo lo de arriba es **mensual**. El dataset `reservas_pasivos` (reservas internacionales y principales
-pasivos del BCRA, archivo `diar_bas.xls`) es **diario** y vive en un carril aparte para NO mezclar
-frecuencias: `date` es la **fecha diaria real** (no el primer día del mes) y **no** aparece en
-`series_actual` / `series_desest`.
+Todo lo de arriba es **mensual**. Dos datasets son **diarios** y viven en un carril aparte para NO
+mezclar frecuencias: `date` es la **fecha diaria real** (no el primer día del mes) y **no** aparecen
+en `series_actual` / `series_desest`.
 
-| Tabla (hechos) | Dimensión (nombres) | Vista observada | Vista unificada diaria |
-|---|---|---|---|
-| `etl_reservas_pasivos` | `etl_reservas_pasivos_series` | `etl_reservas_pasivos_actual` | `series_diarias_actual` |
+| Dataset | Tabla (hechos) | Dimensión / vista de día | Vista observada | Vista unificada diaria |
+|---|---|---|---|---|
+| `reservas_pasivos` | `etl_reservas_pasivos` | `etl_reservas_pasivos_series` | `etl_reservas_pasivos_actual` | `series_diarias_actual` |
+| `fob_granos` | `etl_fob_granos` | `etl_fob_granos_diario` | `etl_fob_granos_actual` | `series_diarias_actual` |
+
+`fob_granos` tiene su propia sección más abajo (**`fob_granos` y el PRP de granos**): entra al
+carril diario por `etl_fob_granos_diario`, no por su `*_actual`, porque la tabla de hechos guarda
+**varias filas por (producto, día)** —una por ventana de embarque de la curva forward— y la
+unificada necesita una sola serie por día.
+
+### `reservas_pasivos` (BCRA)
 
 - **`etl_reservas_pasivos`** es append-only, igual que las mensuales, pero `serie` es el **`cd_serie`** del
   BCRA (clave estable del archivo: `246`, `247`, … `8843`). No se desestacionaliza.
@@ -1176,3 +1184,298 @@ series. Si tu gráfico necesita una escala legible, ese punto es el que la rompe
 > transferir un auto es un trámite presencial y una semana con dos feriados se ve en el conteo. Sin
 > el regresor la calibración se queda en 0,98% de error contra la referencia; con él, en 0,0000%.
 > El detalle está en `etl/series_desest.toml`.
+
+## `fob_granos` y el PRP de granos — cómo consumirlo
+
+Dos cosas conviven acá y conviene no confundirlas:
+
+1. **`etl_fob_granos`**, el dataset diario: precios FOB oficiales de granos que publica MAGyP.
+   Es un ETL como cualquier otro del repo.
+2. **El PRP** (precio relativo de los productos): un **cálculo derivado** que combina ese FOB con
+   el tipo de cambio, el IPC y los derechos de exportación. Vive todo en vistas
+   (`granos_prp`, `granos_prp_combinado`) y en cuatro tablas de referencia que se mantienen a
+   mano (`dex`, `vbp_granos`, `tc_granos`, `fob_granos_override`).
+
+### El dato crudo: precios FOB oficiales (MAGyP)
+
+| Tabla / vista | Qué trae |
+|---|---|
+| `etl_fob_granos` | append-only, **varias filas por (producto, día)**: una por ventana de embarque |
+| `etl_fob_granos_actual` | último snapshot por (producto, día, ventana) |
+| `etl_fob_granos_diario` | **una fila por (producto, día)**: el precio del embarque *spot* |
+| `etl_fob_granos_mensual` | **promedio mensual** sobre los días hábiles cotizados |
+| `etl_fob_granos_sin_dato` | días hábiles que la fuente declaró vacíos (feriados). No es una serie: es un registro de lo ya preguntado |
+| `fob_granos_mensual` | el mensual **con los overrides aplicados**. Es lo que consume el PRP |
+
+Cuatro productos, todos en la variante **a granel con hasta un 15 % embolsado**:
+
+| `producto` | NCM | Posición completa | Descripción de la fuente |
+|---|---|---|---|
+| `soja` | 1201-90-00 | `12019000190C` | Habas de soja, Los Demás |
+| `trigo` | 1001-99-00 | `10019900110W` | Trigo, Trigo Pan |
+| `maiz` | 1005-90-10 | `10059010190Y` | Maíz, Los demás. En grano. |
+| `girasol` | 1206-00-90 | `12060090910Y` | Semilla de Girasol, únicamente para industria, Los Demás |
+
+> **La presentación importa.** Cada NCM publica además la versión embolsada, que cotiza ~20
+> USD/ton más cara. Elegir el sufijo equivocado corre la serie entera sin que nada falle.
+
+**La fuente cotiza una curva forward, no un precio.** Cada día hábil MAGyP publica, para cada
+posición, varias filas con distinta ventana de embarque (`embarque_desde` / `embarque_hasta`).
+`etl_fob_granos` las guarda **todas**; `etl_fob_granos_diario` se queda con la que **cubre el mes
+de la cotización** y, si ninguna lo cubre (pasa a fin de mes, cuando la fuente ya sólo cotiza
+meses siguientes), con la más próxima hacia adelante.
+
+Esto no es un detalle: la curva está en **contango**, así que promediar todas las ventanas del
+día en lugar de tomar el spot infla el FOB de soja ~11 USD/ton. Por eso la cadena
+`_diario` → `_mensual` —y no un `avg()` sobre la tabla— es la que alimenta al PRP.
+
+```sql
+-- FOB spot de los cuatro granos en un día
+select producto, valor, embarque_desde, embarque_hasta, circular
+from etl_fob_granos_diario
+where date = (select max(date) from etl_fob_granos_diario)
+order by producto;
+
+-- Promedio mensual (con cuántos días se calculó)
+select date, valor, dias
+from etl_fob_granos_mensual
+where producto = 'soja' and date >= '2026-01-01'
+order by date;
+```
+
+> `dias` importa: el mes en curso trae el promedio **parcial** de los días transcurridos.
+> Filtrá por `dias` si necesitás sólo meses cerrados.
+
+**Fines de semana y feriados no tienen filas.** La API responde con una lista vacía y el ETL lo
+cuenta como `no_publicado`, no como falla. Un agujero de un día es normal; una ventana entera sin
+datos sí es la fuente caída y hace fallar la corrida.
+
+Cada día vacío queda anotado en **`etl_fob_granos_sin_dato`**, que es lo que evita volver a
+gastar un request en él (ver *Carga histórica*). Para distinguir "la fuente no cotizó" de "nunca
+se preguntó":
+
+```sql
+-- Días hábiles del último año que todavía no se preguntaron
+select g::date as dia
+from generate_series(current_date - interval '1 year', current_date, interval '1 day') g
+where extract(isodow from g) < 6
+  and g::date not in (select date from etl_fob_granos)
+  and g::date not in (select date from etl_fob_granos_sin_dato);
+```
+
+### El cálculo: PRP
+
+```
+FOB REAL = fob_usd * tc / ipc_1993
+PRP      = FOB REAL * (1 - dex)
+PRP combinado = Σ (prp_grano * vbp_grano)   sobre soja, trigo, maíz y girasol
+```
+
+El resultado está en **pesos de 1993 por tonelada**. Las dos vistas:
+
+| Vista | Qué trae |
+|---|---|
+| `granos_prp` | una fila por (producto, mes) con **todos los pasos intermedios**: `fob_usd`, `tc`, `ipc_1993`, `fob_real`, `dex`, `prp`. Más las marcas de procedencia `fob_origen`, `tc_motivo` y `deflactor_origen` |
+| `granos_prp_combinado` | una fila por mes con `prp_soja`, `prp_trigo`, `prp_maiz`, `prp_girasol` y `prp_combinado`, más `fob_overrides` (cuántos de los cuatro vinieron pisados a mano) |
+
+```sql
+-- PRP combinado y sus cuatro componentes
+select fecha, prp_soja, prp_trigo, prp_maiz, prp_girasol, prp_combinado
+from granos_prp_combinado
+where deflactor_origen = 'publicado'
+order by fecha;
+
+-- Un grano, con el cálculo abierto para auditarlo
+select fecha, fob_usd, tc, tc_motivo, ipc_1993, fob_real, dex, prp
+from granos_prp
+where producto = 'soja' and fecha >= '2024-01-01'
+order by fecha;
+```
+
+`granos_prp_combinado` devuelve un mes **sólo si los cuatro granos tienen PRP**. Un mes
+incompleto quedaría subponderado, y ése es justo el error que comete la planilla de referencia
+en los meses de cola (devuelve 0 en lugar de nada).
+
+### Las cuatro tablas de referencia (se mantienen a mano)
+
+Las tres primeras tienen la **misma forma**: `producto` (salvo `tc_granos`, que es única para
+los cuatro), `desde`, `hasta`, el valor, y tramos que **no se solapan**. El tramo vigente lleva
+`hasta = 2999-12-31`.
+
+| Tabla | Qué guarda | Unidad |
+|---|---|---|
+| `dex` | derechos de exportación (retenciones) por grano | tanto por uno: `0.26` = 26 % |
+| `vbp_granos` | ponderadores de la canasta por valor bruto de producción | tanto por uno; los cuatro suman 1 |
+| `tc_granos` | tipo de cambio del exportador, **sólo las excepciones al A3500** | pesos por dólar |
+| `fob_granos_override` | FOB mensual puesto a mano, **sólo los meses que se quieren pisar** | USD por tonelada |
+
+`fob_granos_override` es la única de las cuatro que no usa tramos: una fila por `(producto, mes)`,
+con el `date` en el primer día del mes. **Hoy está vacía** — es una válvula de escape, no una
+fuente de datos. La aplica la vista **`fob_granos_mensual`**, que expone
+`valor` (el efectivo), `valor_etl` (el promedio calculado, que nunca se pierde) y `origen`
+(`etl` / `override`). `granos_prp` lee de ahí y arrastra la marca en `fob_origen`;
+`granos_prp_combinado` cuenta cuántos componentes vinieron pisados en `fob_overrides`.
+
+> **`etl_fob_granos_mensual` no se toca.** El override vive una capa más arriba, y por eso la
+> vista que lo aplica va **sin prefijo `etl_`**: la convención del repo es que `etl_*` es lo que
+> bajó el ETL y lo demás es lo que se mantiene a mano —igual que `dex`, `vbp_granos` y
+> `tc_granos`—. La columna `motivo` es obligatoria: un override sin explicación es un dato
+> perdido dentro de seis meses.
+
+**Cómo se extiende un tramo.** Cerrar el vigente y abrir el nuevo, en ese orden:
+
+```sql
+begin;
+update dex set hasta = date '2026-09-30'
+ where producto = 'soja' and hasta = date '2999-12-31';
+insert into dex (producto, desde, hasta, dex, nota)
+ values ('soja', date '2026-10-01', date '2999-12-31', 0.20, 'Decreto NNN/2026');
+commit;
+```
+
+Esas tres llevan un `EXCLUDE USING gist` que **prohíbe el solapamiento**. Sin él, un tramo mal
+cargado haría que un mes matchee dos filas y el PRP se duplique en silencio; con él, el error
+salta al escribir y no al leer. Si el `insert` de arriba falla, es porque el `update` no se hizo.
+
+#### `dex`: los tramos que no son porcentajes redondos
+
+De **2018-09 a 2019-11** rigió el derecho **fijo en pesos por dólar exportado** (Decreto
+793/2018), no una alícuota. La tabla guarda el **equivalente ad valorem** ya calculado, que se
+mueve todos los meses con el tipo de cambio y el precio FOB. Por eso ese tramo tiene una fila por
+mes con valores como `0.28365379632`. No son un error de carga.
+
+#### `tc_granos`: por qué es una tabla de excepciones
+
+El tipo de cambio del PRP es el **A3500 del BCRA promediado por mes**. `tc_granos` sólo tiene los
+meses en que **no** lo es, y `tc_granos_mensual` resuelve cuál se aplica (columna `motivo`):
+
+| `motivo` | Período | Por qué |
+|---|---|---|
+| `convertibilidad` | 1993-01 → 2002-02 | el A3500 arranca el **2002-03-04**: antes no hay serie |
+| `dolar_exportador` | 2022-09 → 2024-12 | programas de incremento exportador (dólar soja/agro a 200, 300 y 340 $/USD) y el blend 80/20 oficial-CCL |
+| `a3500` | el resto | promedio mensual del A3500 |
+
+Son **133 filas = 133 meses pisados** (110 de convertibilidad + 23 de dólar exportador); los
+otros ~272 meses de la serie salen del A3500 y no tienen fila. Desde **2025-01** el A3500 vuelve
+a ser el tipo de cambio efectivo, así que de ahí en adelante la tabla está vacía. Si mañana
+vuelve un régimen diferencial, se agregan filas ahí y ninguna vista cambia.
+
+### El deflactor: `deflactores`, no `indices_inflacion`
+
+`ipc_base_1993` es `public.deflactores` con `deflactor = 'ipc_largo'` **reescalado a base
+1993 = 1** (dividido por el promedio de los doce meses de 1993). La elección no es de gusto:
+
+| Candidata | Cobertura | Veredicto |
+|---|---|---|
+| `deflactores` (`ipc_largo`) | **1990-01 → 2026-12** | la única que cubre el PRP entero |
+| `indices_inflacion` | 2016-12 → 2026-04 | arranca 24 años tarde y además viene desactualizada |
+
+Valen las mismas advertencias que para el resto del repo: `deflactor_origen = 'proyectado'` marca
+los meses cuyo IPC todavía no publicó INDEC y se estimó — **esos PRP se revisan**. `deflactores`
+lo mantiene **otro repo** (`downloaders_viejos/downloader`); para chequear frescura:
+
+```sql
+select max(fecha) from deflactores where deflactor = 'ipc_largo' and origen = 'publicado';
+```
+
+### Carga histórica: leer esto antes de correrla
+
+La API de MAGyP **no tiene endpoint de rango**: un request por fecha. El histórico completo
+(1993-01 → hoy) son **~8.600 días hábiles**. Dos cosas bajan ese número a ~3.300:
+
+```bash
+python -m etl fob_granos load-history --desde-precios-fob   # SQL, sin un solo request
+python -m etl fob_granos load-history --solo-faltantes      # sólo lo que falta de verdad
+python -m etl fob_granos load-history --desde 2020-01-01    # por tramos
+python -m etl fob_granos                                    # corrida diaria (incremental)
+```
+
+**1. `public.precios_fob` ya tiene 1993-01-04 → 2017-04-19.** Es un volcado previo de esta misma
+API y `--desde-precios-fob` lo importa por SQL. Coincide con la API: sobre las filas en común,
+419 comparadas y **cero** con valor distinto. Aporta ~20.200 filas y ahorra ~5.000 requests. Dos
+límites que hay que conocer:
+
+- **Tiene un agujero de 2008 a 2011**: 2009 y 2010 enteros, 149 días de 2008, 218 de 2011 y ~35
+  de más en 2004. **No es de la fuente** —la API responde esas fechas sin problema— así que hay
+  que taparlo por API. Son ~940 días.
+- **Recorta la curva forward**: en varios tramos guarda sólo la ventana de embarque más cercana.
+  Eso **no afecta al PRP** (la ventana spot es justamente la más cercana y está presente en el
+  98,2 % de los pares fecha-posición; el resto lo cubre el fallback), pero las filas importadas
+  no traen el resto de la curva.
+
+**2. `etl_fob_granos_sin_dato` registra los días que la fuente declaró vacíos.** Son ~1.200 entre
+1993 y 2017 —feriados, sobre todo— y sin este registro cada `--solo-faltantes` los vuelve a
+pedir: 80 minutos de requests que no traen nada. El ETL lo va llenando solo cada vez que la API
+contesta con la lista vacía, y el schema siembra 263 días inferidos de `precios_fob` (validados
+contra la API con una muestra al azar de 10, los 10 vacíos y los 10 feriados reconocibles).
+`--desde`/`--hasta` sin `--solo-faltantes` ignora este registro, por si hay que volver a preguntar.
+
+La pausa por defecto es **4 segundos** (~0,22 req/s) y sale de una cuenta, no de una corazonada:
+el bloqueo del 02/08/2026 se disparó con ~1,8 req/s sostenidos, duró 4 horas y se llevó puesto el
+dominio entero para los **cinco** ETLs que salen de esta misma IP contra `magyp.gob.ar`
+(`granos`, `aves`, `bovinos`, `leche`, `compras_granos`). Correr el backfill por tramos y de
+noche; es reanudable y re-correrlo siempre es seguro.
+
+> El host canónico de la API (`monitorsiogranos.magyp.gob.ar`) devuelve **403 a todo**. La propia
+> documentación de MAGyP avisa que hay que usar el espejo bajo `www.magyp.gob.ar`, que es el que
+> usa el ETL — y es el mismo host que comparten los otros cinco.
+
+> **La fuente devuelve de a ratos un 200 con el cuerpo vacío.** No es un día sin cotización: el
+> mismo pedido repetido trae los datos (visto con 13/11/2007, que a la segunda trajo sus 145
+> filas). `etl.core.http` no lo cubre —no hay status reintentable que mirar y `raise_for_status()`
+> lo deja pasar— así que `source.get_dia` reintenta dos veces por su cuenta. Sin eso, un backfill
+> de miles de días se llena de agujeros intermitentes que sólo se ven al comparar.
+
+### Cómo se validó contra la planilla
+
+Se comparó **columna por columna** contra `TCR Granos.xlsx`, sobre los meses que había cargados
+al momento de escribir esto (**264 meses, 1.055 pares producto-mes**; la carga histórica todavía
+estaba corriendo, así que la cobertura sólo puede mejorar):
+
+| Columna | Resultado |
+|---|---|
+| `dex` | **exacto** en los 1.055 pares |
+| `fob_usd` | **98,3 % dentro de ±0,5 %**, 99,3 % dentro de ±1 % |
+| `tc` | **exacto** salvo 2002-03..2002-07, 2017 y blips de ~1 % en 2004-01 y 2008-05/06 (ver abajo) |
+| `prp_combinado` | mediana de \|dif\| **0,42 %**; 90 % dentro de ±3 %, 97 % dentro de ±5 % |
+
+**La prueba fuerte del FOB.** La planilla carga el FOB **a mano y redondeado a entero** en 1.198
+de sus 1.211 celdas; en 13 lo deja calculado. Una de esas trece es **soja marzo-2016 = 332,48**, y
+`etl_fob_granos_mensual` devuelve **332,4761904…** para ese mes. Al centavo. Eso valida a la vez
+la posición arancelaria elegida, el criterio de ventana spot y el promedio mensual: las tres
+cosas tendrían que estar bien simultáneamente para dar ese número.
+
+**De dónde sale el residuo que queda.** Tres fuentes, todas identificadas:
+
+1. **El deflactor (siempre presente, -0,07 % a +4,5 %). Es la fuente dominante.** La planilla trae el IPC de un libro
+   externo (`IPC99ON (real)`); nosotros usamos `deflactores`/`ipc_largo`. Son dos empalmes
+   distintos del mismo índice y difieren sobre todo en los años de la intervención del INDEC
+   (+4,5 % en 2007-2008, ~1,3-1,8 % de 2016 en adelante). Como el PRP divide por el IPC, el
+   desvío pasa con signo invertido y **explica por sí solo casi todo el residuo**.
+2. **El redondeo del FOB de la planilla (±0,5 %).** Ver arriba.
+3. **Dos meses con el TC de otra fuente.** En 2002-03..2002-07 la planilla usa un tipo de cambio
+   1 % a 6 % por encima del A3500 (la salida de la convertibilidad, con el A3500 recién
+   arrancando el 2002-03-04), y hay blips de ~1 % en 2004-01 y 2008-05/06. **No se overridearon**:
+   `tc_granos` es para **regímenes**, no para perseguir decimales.
+
+**Lo que NO se replicó: el tipo de cambio de 2017 de la planilla está mal.** Su columna D coincide
+exacto con el A3500 en 1993-2016, 2018-2022 y 2025-2026, pero los doce meses de **2017** son esa
+misma serie **corrida 9 meses**: enero-2017 muestra el A3500 de abril-2016 y diciembre-2017 el de
+marzo-2017. Es un copy-paste con offset —un desvío que empieza en enero y termina en diciembre no
+es un régimen económico— y acá se usa el A3500 real. Por eso el PRP de 2017 queda **~10 % por
+encima** del de la planilla: es corrección, no discrepancia.
+
+**El único par fuera de rango: trigo octubre-2019.** Se sale +3,5 % (226,73 calculado contra 219
+de la planilla) y **no es un problema del criterio**. Con el histórico cargado se compararon los
+**22 octubres** disponibles: **20 coinciden dentro de ±0,3 %** y los otros dos son meses con la
+carga incompleta. Tampoco hay otra posición arancelaria de trigo que dé 219 como spot ese mes
+—se probaron las ocho de la partida 1001—. Todo apunta a que el 219 es un valor tipeado a mano
+en la planilla.
+
+El detalle del mes lo confirma: **21 de los 22 días cotizan entre 222 y 230 USD/ton**, ninguno
+cerca de 219. El día 31 es el único distinto (196), porque la fuente ya dejó de cotizar embarque
+de octubre y pasó a noviembre. Ese solo día baja el promedio de 228,24 a 226,73 — y ni uno ni
+otro se acercan a 219.
+
+Así que **se deja el valor calculado, 226,73**. `fob_granos_override` existe por si algún mes
+hace falta pisarlo, pero hoy está **vacía**.
