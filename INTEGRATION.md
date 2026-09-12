@@ -1364,6 +1364,85 @@ Esas tres llevan un `EXCLUDE USING gist` que **prohíbe el solapamiento**. Sin �
 cargado haría que un mes matchee dos filas y el PRP se duplique en silencio; con él, el error
 salta al escribir y no al leer. Si el `insert` de arriba falla, es porque el `update` no se hizo.
 
+#### Desarrollar un CRUD para estas tablas
+
+Lo que hace falta saber, más allá del `EXCLUDE` de arriba.
+
+**Columnas.** Todo `not null` salvo `nota`. `hasta` tiene default `2999-12-31`.
+
+| Tabla | PK | Columnas |
+|---|---|---|
+| `dex` | `(producto, desde)` | `producto`, `desde`, `hasta`, `dex`, `nota` |
+| `vbp_granos` | `(producto, desde)` | `producto`, `desde`, `hasta`, `vbp`, `nota` |
+| `tc_granos` | **`(desde)`** | `desde`, `hasta`, `tc`, `motivo`, `nota` |
+| `fob_granos_override` | `(producto, date)` | `producto`, `date`, `valor`, `motivo`, `nota` |
+
+> **`tc_granos` no tiene columna `producto`.** El tipo de cambio es único para los cuatro granos,
+> así que su PK y su `EXCLUDE` van sin producto. Un CRUD genérico sobre las cuatro tablas se
+> rompe acá si asume la misma clave.
+
+**Checks que van a rechazar escrituras.** `producto in ('soja','trigo','maiz','girasol')` ·
+`hasta >= desde` · `dex` y `vbp` entre 0 y 1 · `tc` y `valor` mayores que 0 ·
+`fob_granos_override.date` tiene que ser el **primer día del mes** · `motivo` obligatorio en
+`tc_granos` y `fob_granos_override`.
+
+El error de solapamiento llega así, y conviene traducirlo en la UI:
+
+```
+conflicting key value violates exclusion constraint "dex_sin_solapamiento"
+```
+
+**Partir un tramo por el medio** (no sólo extender el vigente). Tres pasos en una transacción, y
+el orden importa: primero se achica el existente, si no el `EXCLUDE` rechaza los insert.
+
+```sql
+begin;
+-- el tramo 2020-03-01..2025-01-31 de soja pasa a cortarse en 2022-06
+update dex set hasta = date '2022-05-31'
+ where producto = 'soja' and desde = date '2020-03-01';
+insert into dex (producto, desde, hasta, dex, nota) values
+  ('soja', date '2022-06-01', date '2023-12-31', 0.31, 'Resolucion NNN'),
+  ('soja', date '2024-01-01', date '2025-01-31', 0.33, 'vuelve al 33%');
+commit;
+```
+
+**Tres cosas que NINGÚN constraint protege.** Son las que el CRUD tiene que validar por su
+cuenta, porque la base las va a aceptar sin chistar:
+
+1. **Huecos.** El `EXCLUDE` prohíbe solapar, no prohíbe dejar meses sin cubrir. Si borrás un
+   tramo del medio, esos meses **desaparecen del PRP en silencio** — `granos_prp` hace `join`,
+   no `left join`, así que el mes no aparece con `dex` nulo: no aparece. Chequeo:
+
+   ```sql
+   select d.producto, m.fecha
+   from (select generate_series(date '1993-01-01', date_trunc('month', current_date),
+                                interval '1 month')::date as fecha) m
+   cross join (select distinct producto from dex) d
+   left join dex on dex.producto = d.producto and m.fecha between dex.desde and dex.hasta
+   where dex.producto is null
+   order by 1, 2;
+   ```
+
+2. **Que los cuatro `vbp` sumen 1.** No hay constraint. Un CRUD puede dejar la canasta en 0,95 y
+   el PRP combinado sale sistemáticamente bajo, sin ningún error. Chequeo por tramo:
+
+   ```sql
+   select desde, hasta, sum(vbp) from vbp_granos group by 1, 2 having abs(sum(vbp) - 1) > 1e-9;
+   ```
+
+3. **El refresh.** `granos_prp` y `granos_prp_combinado` son **materializadas**: una edición no
+   se ve hasta refrescarlas. El ETL lo hace todos los días a las 9:00, pero un CRUD que quiera
+   mostrar el efecto al instante tiene que correr, en este orden:
+
+   ```sql
+   refresh materialized view concurrently granos_prp;
+   refresh materialized view concurrently granos_prp_combinado;
+   ```
+
+**Borrar el tramo vigente** deja al producto sin cobertura desde el `desde` de esa fila en
+adelante. Lo correcto casi siempre es extender el tramo anterior hasta `2999-12-31` en la misma
+transacción, no borrar y ya.
+
 #### `dex`: los tramos que no son porcentajes redondos
 
 De **2018-09 a 2019-11** rigió el derecho **fijo en pesos por dólar exportado** (Decreto
