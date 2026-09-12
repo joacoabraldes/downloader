@@ -594,7 +594,18 @@ comment on view fob_granos_mensual is
   'la vista devuelve el promedio calculado para todos los meses.';
 
 -- PRP por grano: el cálculo de la planilla, columna por columna.
-create or replace view granos_prp as
+--
+-- Esta vista es la DEFINICION; lo que se consume es la materializada `granos_prp`, que se
+-- refresca al final de cada corrida de `python -m etl fob_granos`. El motivo es medido, no
+-- estetico: la cadena completa tarda ~1,7 s por consulta y el 43% de eso es `deflactores`, que
+-- no es de este repo, cuesta ~400 ms por escaneo y se escanea DOS veces (la serie y el promedio
+-- de 1993 del subquery de ipc_base_1993). Materializada, la misma consulta baja a ~10 ms.
+drop view if exists granos_prp_combinado;
+drop view if exists granos_prp;
+drop materialized view if exists granos_prp_combinado;
+drop materialized view if exists granos_prp;
+
+create or replace view granos_prp_calc as
 select f.producto,
        f.date                                       as fecha,
        f.valor                                      as fob_usd,
@@ -612,7 +623,15 @@ join tc_granos_mensual t on t.fecha = f.date
 join ipc_base_1993     i on i.fecha = f.date
 join dex               d on d.producto = f.producto and f.date between d.desde and d.hasta;
 
-comment on view granos_prp is
+create materialized view if not exists granos_prp as
+  select * from granos_prp_calc;
+
+-- Unico por (producto, fecha): lo exige REFRESH ... CONCURRENTLY, que es lo que permite
+-- refrescar sin bloquear a quien este leyendo.
+create unique index if not exists granos_prp_uq on granos_prp (producto, fecha);
+create index if not exists granos_prp_fecha_idx on granos_prp (fecha);
+
+comment on materialized view granos_prp is
   'PRP (precio relativo de los productos) mensual por grano, en pesos de 1993 por tonelada. '
   'Reproduce la planilla TCR Granos.xlsx, una solapa por grano: '
   'fob_real = fob_usd * tc / ipc_1993 y prp = fob_real * (1 - dex). '
@@ -623,7 +642,7 @@ comment on view granos_prp is
   'completo.';
 
 -- PRP combinado: los cuatro PRP ponderados por VBP, con los componentes a la vista.
-create or replace view granos_prp_combinado as
+create or replace view granos_prp_combinado_calc as
 select p.fecha,
        max(p.prp) filter (where p.producto = 'soja')    as prp_soja,
        max(p.prp) filter (where p.producto = 'trigo')   as prp_trigo,
@@ -638,7 +657,12 @@ join vbp_granos v on v.producto = p.producto and p.fecha between v.desde and v.h
 group by p.fecha
 having count(*) = 4;
 
-comment on view granos_prp_combinado is
+create materialized view if not exists granos_prp_combinado as
+  select * from granos_prp_combinado_calc;
+
+create unique index if not exists granos_prp_combinado_uq on granos_prp_combinado (fecha);
+
+comment on materialized view granos_prp_combinado is
   'PRP combinado mensual de la canasta de granos, en pesos de 1993 por tonelada: '
   'prp_soja * vbp_soja + prp_trigo * vbp_trigo + prp_maiz * vbp_maiz + prp_girasol * vbp_girasol, '
   'con los ponderadores de vbp_granos. Equivale a la columna K de la solapa "4 GRANOS" de la '

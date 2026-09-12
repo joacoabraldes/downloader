@@ -16,6 +16,11 @@ Flags:
   --dias N             atajo: bajar los últimos N días (ignora --desde)
   --pausa SEG          espera entre requests (default 1.0)
   --force              insertar snapshot aunque no haya cambiado
+  --no-refresh         no refrescar las materializadas del PRP al terminar
+
+Al final de cada corrida refresca `granos_prp` y `granos_prp_combinado`, que son MATERIALIZADAS.
+Se refrescan siempre, haya datos nuevos o no: el PRP tambien depende de deflactores, A3500, dex,
+vbp_granos y tc_granos, que cambian sin que este ETL corra.
 """
 from __future__ import annotations
 
@@ -27,6 +32,30 @@ import urllib3
 
 from etl.core import db, report
 from . import config, source
+
+# Materializadas que dependen de este dataset. El orden importa: granos_prp_combinado lee de
+# granos_prp, asi que primero se refresca la base.
+MATERIALIZADAS = ["granos_prp", "granos_prp_combinado"]
+
+
+def refrescar(conn, rep) -> None:
+    """Refresca las materializadas del PRP. CONCURRENTLY para no bloquear a quien este leyendo.
+
+    Por que existe: la cadena de vistas del PRP tarda ~1,7 s por consulta y el 43% es
+    `deflactores`, que no es de este repo y se escanea dos veces. Materializado baja a ~10 ms.
+    El precio es que hay que refrescar, y se hace aca porque es el unico proceso que corre todos
+    los dias. OJO: el PRP tambien depende de dex, vbp_granos y tc_granos, que mantiene un CRUD
+    aparte -- despues de editar esas tablas hay que refrescar a mano o esperar a esta corrida.
+    """
+    for mv in MATERIALIZADAS:
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"refresh materialized view concurrently {mv}")
+            conn.commit()
+            rep.info(f"refrescada {mv}")
+        except Exception as e:  # noqa: BLE001
+            conn.rollback()
+            rep.note(mv, f"no se pudo refrescar: {e}", failure=True)
 
 # Días hacia atrás que se re-leen además de lo que falta (circulares retroactivas).
 SOLAPE = 7
@@ -47,6 +76,8 @@ def main(argv=None) -> None:
                     help="bajar los últimos N días (ignora --desde)")
     ap.add_argument("--pausa", type=float, default=PAUSA_DEFAULT, metavar="SEG",
                     help=f"espera entre requests (default: {PAUSA_DEFAULT})")
+    ap.add_argument("--no-refresh", action="store_true",
+                    help="no refrescar las materializadas del PRP al terminar")
     ap.add_argument("--force", action="store_true", help="insertar aunque no cambie")
     args = ap.parse_args(argv)
     urllib3.disable_warnings()
@@ -99,6 +130,10 @@ def main(argv=None) -> None:
         # Que ningún día de la ventana traiga datos no es un feriado: es la fuente caída.
         if con_datos == 0:
             rep.error(f"ningún día de {desde}..{args.hasta} trajo precios")
+        # Se refresca SIEMPRE, aunque no haya datos nuevos: el PRP tambien depende de
+        # deflactores, A3500, dex, vbp_granos y tc_granos, que cambian sin que este ETL corra.
+        if not args.no_refresh:
+            refrescar(conn, rep)
         rep.summary()
     finally:
         conn.close()

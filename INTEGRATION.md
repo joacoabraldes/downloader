@@ -1284,6 +1284,22 @@ PRP combinado = Σ (prp_grano * vbp_grano)   sobre soja, trigo, maíz y girasol
 
 El resultado está en **pesos de 1993 por tonelada**. Las dos vistas:
 
+> **Las dos son MATERIALIZADAS.** Consultarlas cuesta ~40 ms; la cadena de vistas que las
+> alimenta (`granos_prp_calc`) cuesta ~1.800 ms, y el 43 % de eso es `deflactores`, que no es de
+> este repo y se escanea dos veces. Se refrescan al final de cada corrida de
+> `python -m etl fob_granos` (cron diario a las 9:00), siempre, haya datos nuevos o no — porque
+> el PRP también depende de `deflactores`, `A3500`, `dex`, `vbp_granos` y `tc_granos`, que
+> cambian sin que este ETL corra.
+>
+> **Si editás `dex`, `vbp_granos` o `tc_granos` desde el CRUD, el cambio no se ve hasta el
+> refresh.** Para verlo ya:
+> ```sql
+> refresh materialized view concurrently granos_prp;
+> refresh materialized view concurrently granos_prp_combinado;
+> ```
+> En ese orden: la segunda lee de la primera. `granos_prp_calc` y `granos_prp_combinado_calc`
+> siguen existiendo como vistas normales, si hace falta el valor al instante sin refrescar.
+
 | Vista | Qué trae |
 |---|---|
 | `granos_prp` | una fila por (producto, mes) con **todos los pasos intermedios**: `fob_usd`, `tc`, `ipc_1993`, `fob_real`, `dex`, `prp`. Más las marcas de procedencia `fob_origen`, `tc_motivo` y `deflactor_origen` |
