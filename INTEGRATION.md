@@ -1364,7 +1364,7 @@ Esas tres llevan un `EXCLUDE USING gist` que **prohíbe el solapamiento**. Sin �
 cargado haría que un mes matchee dos filas y el PRP se duplique en silencio; con él, el error
 salta al escribir y no al leer. Si el `insert` de arriba falla, es porque el `update` no se hizo.
 
-#### Desarrollar un CRUD para estas tablas
+#### Desarrollar un CRUD para `dex`, `vbp_granos`, `tc_granos` y `fob_granos_override`
 
 Lo que hace falta saber, más allá del `EXCLUDE` de arriba.
 
