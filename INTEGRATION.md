@@ -1455,16 +1455,31 @@ noche; es reanudable y re-correrlo siempre es seguro.
 
 ### Cómo se validó contra la planilla
 
-Se comparó **columna por columna** contra `TCR Granos.xlsx`, sobre los meses que había cargados
-al momento de escribir esto (**264 meses, 1.055 pares producto-mes**; la carga histórica todavía
-estaba corriendo, así que la cobertura sólo puede mejorar):
+Con la serie **completa** —1993-01-04 a 2026-09-10, cero días faltantes— se comparó columna por
+columna contra `TCR Granos.xlsx`. Sobre los meses con 15 días cotizados o más: **1.613 pares
+producto-mes y 404 meses de PRP combinado**.
 
 | Columna | Resultado |
 |---|---|
-| `dex` | **exacto** en los 1.055 pares |
-| `fob_usd` | **98,3 % dentro de ±0,5 %**, 99,3 % dentro de ±1 % |
-| `tc` | **exacto** salvo 2002-03..2002-07, 2017 y blips de ~1 % en 2004-01 y 2008-05/06 (ver abajo) |
-| `prp_combinado` | mediana de \|dif\| **0,42 %**; 90 % dentro de ±3 %, 97 % dentro de ±5 % |
+| `dex` | **exacto en los 1.613**, 100 % |
+| `fob_usd` | **96,2 % dentro de ±0,5 %**, 97,3 % dentro de ±1 %, 98,1 % dentro de ±3 % |
+| `tc` | **23 de los 34 años coinciden en todos sus meses**; los desvíos se concentran (ver abajo) |
+| `prp_combinado` | mediana de \|dif\| **1,11 %**; 82 % dentro de ±3 %, **96 % dentro de ±5 %** |
+
+De los 15 meses con mayor desvío del PRP combinado, **11 son de 2017** —el bug del tipo de
+cambio de la planilla, donde nuestro número es el bueno—, 2 de 2007 y 2 de 2002.
+
+**Dónde se aparta el tipo de cambio, y por qué.** Sólo tres tramos:
+
+| Tramo | Mediana | Qué pasa |
+|---|---|---|
+| 2017 | 10,1 % | **bug de la planilla**: su columna es el A3500 corrido 9 meses. No se replicó |
+| 2002 | 1,1 % | salida de la convertibilidad: usó otra fuente mientras el A3500 recién arrancaba |
+| 2003-2011 | 0,6 % | sesgo chico **sin explicar**: no es la forma de promediar (promediar por días calendario en vez de por ruedas lo deja igual, 0,555 % contra 0,561 %), así que es otra serie de tipo de cambio |
+
+El resto de los años coincide exacto. El residuo de 2003-2011 se deja anotado y no se corrige:
+son 0,6 % contra el 1,3-4,5 % que aporta el deflactor, así que no cambia ninguna conclusión y
+"arreglarlo" sería copiar una serie que no sabemos cuál es.
 
 **La prueba fuerte del FOB.** La planilla carga el FOB **a mano y redondeado a entero** en 1.198
 de sus 1.211 celdas; en 13 lo deja calculado. Una de esas trece es **soja marzo-2016 = 332,48**, y
@@ -1492,20 +1507,32 @@ marzo-2017. Es un copy-paste con offset —un desvío que empieza en enero y ter
 es un régimen económico— y acá se usa el A3500 real. Por eso el PRP de 2017 queda **~10 % por
 encima** del de la planilla: es corrección, no discrepancia.
 
-**El único par fuera de rango: trigo octubre-2019.** Se sale +3,5 % (226,73 calculado contra 219
-de la planilla) y **no es un problema del criterio**. Con el histórico cargado se compararon los
-**22 octubres** disponibles: **20 coinciden dentro de ±0,3 %** y los otros dos son meses con la
-carga incompleta. Tampoco hay otra posición arancelaria de trigo que dé 219 como spot ese mes
-—se probaron las ocho de la partida 1001—. Todo apunta a que el 219 es un valor tipeado a mano
-en la planilla.
+**El trigo de 2018, 2019 y 2020 no sale de esta fuente.** Es la única divergencia sistemática
+que quedó, y está acotada al año exacto. Desvío mediano del FOB contra la planilla, por grano y
+año (sólo meses con 15 días cotizados o más):
 
-El detalle del mes lo confirma: **21 de los 22 días cotizan entre 222 y 230 USD/ton**, ninguno
-cerca de 219. El día 31 es el único distinto (196), porque la fuente ya dejó de cotizar embarque
-de octubre y pasó a noviembre. Ese solo día baja el promedio de 228,24 a 226,73 — y ni uno ni
-otro se acercan a 219.
+| año | soja | **trigo** | maíz | girasol |
+|---|---|---|---|---|
+| 2014-2017 | 0,08 % | **0,06-0,11 %** | 0,13 % | 0,00 % |
+| **2018** | 0,10 % | **3,53 %** | 0,97 % | 0,00 % |
+| **2019** | 0,08 % | **3,31 %** | 0,22 % | 0,00 % |
+| **2020** | 0,07 % | **6,62 %** | 0,22 % | 0,00 % |
+| 2021-2026 | 0,08 % | **0,12-0,32 %** | 0,18 % | 0,00-0,13 % |
 
-Así que **se deja el valor calculado, 226,73**. `fob_granos_override` existe por si algún mes
-hace falta pisarlo, pero hoy está **vacía**.
+Antes de 2018 y después de 2020 el trigo coincide **a la décima de punto**, igual que los otros
+tres granos en toda la serie. En el medio hay 24 meses con desvíos de hasta 18 %, y para los dos
+lados: +18,0 % en agosto-2020 y -12,1 % en noviembre-2019.
+
+**No es un corrimiento de fechas**, que era la sospecha razonable después del bug del tipo de
+cambio de 2017. El test lo descarta: en el tramo sano (2010-2017) la planilla coincide con
+nuestro valor del MISMO mes con un error mediano de **0,09 %**, y desplazarla un mes lo lleva a
+2,6 %. En 2018-2020 el mínimo sigue estando en desplazamiento cero, pero vale **4,46 %** —
+cincuenta veces peor—. La fecha está bien; lo que cambió durante esos tres años es de dónde salió
+el número.
+
+Acá se deja **el valor calculado desde la API de MAGyP**, que es el que la propia planilla
+reproduce en los otros 30 años. `fob_granos_override` existe por si algún mes hace falta pisarlo,
+pero hoy está **vacía**.
 
 ## `cot` (Commitments of Traders, CFTC) — cómo consumirlo
 
