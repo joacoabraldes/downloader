@@ -422,16 +422,20 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # capta las revisiones), asi que correr de mas no cuesta nada. Cuando se confirme el dia, acotar
 # la ventana y bajar `horas_max` en etl/schema_control.sql en el mismo cambio.
 0  10 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh compras_granos
-# Diario (precios FOB oficiales de granos, MAGyP). La fuente cotiza los dias habiles y publica el
-# precio del dia ese mismo dia; la corrida re-lee 7 dias hacia atras ademas de lo que falta, por
-# las circulares con efecto retroactivo. Son ~8 requests con pausa de 1 s.
+# Diario (precios FOB oficiales de granos, MAGyP). Son ~8 requests con pausa de 1 s; la corrida
+# re-lee 7 dias hacia atras ademas de lo que falta, por las circulares con efecto retroactivo.
+# OJO con el horario: MAGyP publica el FOB del dia DESPUES de las 14 -- medido el 11-sep-2026, a
+# las 14:05 no estaba y a las 23:30 si -- asi que a las 9:00 el dato del dia en curso nunca esta
+# y entra a la mañana siguiente. Es una eleccion deliberada, no un descuido: si se quiere el dato
+# el mismo dia, mover a `0 20 * * 1-5`.
 # OJO: comparte host (magyp.gob.ar) e IP con granos, aves, bovinos, leche y compras_granos. Si se
 # corre el `load-history` (~8.600 requests), hacerlo de noche y por tramos -- ver INTEGRATION.md.
-30 10 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh fob_granos
+0  9 *          * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh fob_granos
 # Semanal (Commitments of Traders de la CFTC). Corte los martes, publicacion viernes 15:30 ET
 # (~17:30 ART). Corre diario porque los feriados de EEUU corren la publicacion al lunes y la
 # corrida son 4 requests a la API de Socrata: sale mas barato correr de mas que acertar el dia.
-0  19 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh cot
+# Mismo caso que fob_granos: a las 9:00 la publicacion del viernes entra el sabado.
+0  9 *          * * /home/jmt/dev/downloader/scripts/run_etl.sh cot
 ```
 > Los jobs pasan por **`scripts/run_etl.sh`**, que hace el `cd` al repo, escribe
 > `/home/jmt/data/etls/<dataset>.log` y —sólo si la corrida falla— repite el final por stderr
