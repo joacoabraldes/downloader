@@ -1,7 +1,8 @@
 """ETL incremental de acero crudo (Cámara Argentina del Acero).
 
-Baja el último PDF de "Cifras" (scrapeando la página, porque el nombre es inconsistente),
-parsea las ~13 filas mensuales y snapshotea acero crudo con estado='definitivo': la cifra
+Baja el último PDF de "Cifras" (descubriéndolo, porque el nombre es inconsistente: ver
+source.py), parsea las ~13 filas mensuales y snapshotea acero crudo con
+estado='definitivo': la cifra
 publicada por la CAA es el número oficial del mes. Como cada PDF re-publica los últimos 13
 meses, insert_if_changed absorbe las revisiones de la CAA (un valor corregido entra como
 snapshot definitivo nuevo) y se pone al día solo. Al final, sólo si hubo datos nuevos o
@@ -45,23 +46,28 @@ def main(argv=None) -> None:
             rep.error(f"bajando/parseando: {e}")
             rep.summary()
             return
-        if not res or not res[0]:
-            rep.error("no se encontró PDF de Cifras o no se parseó ninguna fila")
+        data, url, notas = res
+        # Las notas van ANTES del chequeo: si algo salió raro en el descubrimiento, el
+        # diagnóstico tiene que salir igual aunque después no se parsee ninguna fila.
+        for nota in notas:  # PDF subido sin linkear, o una de las dos vías caída (ver source.py)
+            rep.info(nota)
+        if not data:
+            rep.error("no se parseó ninguna fila del PDF de Cifras")
             rep.summary()
             return
-        data, url = res
         rep.info(f"fuente: {url} | meses: {min(data):%Y-%m}..{max(data):%Y-%m}")
-        # La CAA a veces sube el PDF de Cifras sin linkearlo en la página (ver source.py), así
-        # que el descubrimiento por link puede quedar atrás de lo ya cargado. Se avisa: sin
-        # esto, la corrida son trece 'sin_cambios' y la situación pasa inadvertida.
+        # Red de seguridad: el descubrimiento ya mira la biblioteca de medios además del link,
+        # así que la fuente sólo puede quedar atrás de lo cargado si el PDF más nuevo
+        # desapareció de las dos. Se avisa igual: sin esto, la corrida son trece
+        # 'sin_cambios' y la situación pasa inadvertida.
         prev_max = db.last_date(
             conn, table=config.TABLE,
             where="serie = %s and estado is distinct from 'desestacionalizado'",
             where_params=(config.MAIN_SERIE,))
         if prev_max and max(data) < prev_max:
-            rep.info(f"OJO: el PDF linkeado llega a {max(data):%Y-%m} pero ya hay datos hasta "
-                     f"{prev_max:%Y-%m}, cargados de un PDF aún sin link. Revisar si hay uno "
-                     f"más nuevo sin linkear antes de dar la fuente por atrasada.")
+            rep.info(f"OJO: el PDF más nuevo que se encontró llega a {max(data):%Y-%m} pero ya "
+                     f"hay datos hasta {prev_max:%Y-%m}. Revisar a mano la página y "
+                     f"wp-json/wp/v2/media antes de dar la fuente por atrasada.")
         for fecha in sorted(data):
             valor = data[fecha]
             status = db.insert_if_changed(
