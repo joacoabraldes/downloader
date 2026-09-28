@@ -27,10 +27,12 @@ log="$LOGDIR/$ds.log"
 
 # Se junta la salida en vez de streamearla para poder mandar el tail por mail. Las corridas son
 # cortas (la mas lenta ronda el minuto), asi que no hace falta ver el avance en vivo.
+inicio=$(date '+%F %T %Z')
 out=$(.venv/bin/python -m etl "$ds" "$@" 2>&1)
 rc=$?
 
-printf '%s\n' "$out" >> "$log"
+# Cabecera por corrida: sin ella el log no dice cuando corrio cada bloque.
+printf '=== %s  exit=%d\n%s\n' "$inicio" "$rc" "$out" >> "$log"
 
 if [ "$rc" -ne 0 ]; then
     printf 'ETL %s FALLO (exit %d) -- %s\nlog: %s\n\n%s\n' \
