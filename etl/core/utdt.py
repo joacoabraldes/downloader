@@ -73,28 +73,34 @@ def normalizar(texto: str) -> str:
     return " ".join(sin_acentos.lower().split())
 
 
-def resolver_xls(id_item_menu: int) -> str:
-    """URL absoluta del .xls publicado hoy en la página de descarga del indicador.
+def resolver_descarga(id_item_menu: int, extension: str) -> str:
+    """URL absoluta del archivo `.<extension>` publicado hoy en la página de descarga del indicador.
 
     `id_item_menu` identifica la página ("Serie Histórica ICC", "Descarga de datos" del ICG).
-    Esa página puede ofrecer varios formatos (el ICG publica .pdf, .xls y .dta); nos quedamos
-    con el .xls, que es el que trae la serie completa.
+    Esa página puede ofrecer varios formatos (el ICG publica .pdf, .xls y .dta): se filtra por
+    extensión, así que el mismo scrape sirve para la planilla (.xls) y para los microdatos (.dta).
     """
     url = f"{BASE}/listado_contenidos.php?id_item_menu={id_item_menu}"
     resp = SESSION.get(url, timeout=TIMEOUT)
     resp.raise_for_status()
     sopa = BeautifulSoup(resp.text, "lxml")
+    patron = re.compile(rf"\.{re.escape(extension)}($|[?&#])", re.IGNORECASE)
     hrefs = []
     for a in sopa.find_all("a", href=True):
         href = a["href"]
-        if "download.php" in href and re.search(r"\.xls($|[?&#])", href):
+        if "download.php" in href and patron.search(href):
             hrefs.append(href)
     if not hrefs:
-        raise RuntimeError(f"no se encontró ningún .xls en {url} (¿cambió la página?)")
+        raise RuntimeError(f"no se encontró ningún .{extension} en {url} (¿cambió la página?)")
     if len(hrefs) > 1:
-        # No es fatal, pero conviene enterarse: hasta hoy cada página ofrece un solo .xls.
-        print(f"  aviso: {len(hrefs)} .xls en {url}, se usa el primero")
+        # No es fatal, pero conviene enterarse: hasta hoy cada página ofrece uno solo por formato.
+        print(f"  aviso: {len(hrefs)} .{extension} en {url}, se usa el primero")
     return requests.compat.urljoin(url, hrefs[0])
+
+
+def resolver_xls(id_item_menu: int) -> str:
+    """URL del .xls de la página: la planilla, que es la que trae la serie completa."""
+    return resolver_descarga(id_item_menu, "xls")
 
 
 def bajar_libro(url: str) -> xlrd.book.Book:
