@@ -1,19 +1,26 @@
 -- Series de organismos públicos (INDEC y otros), formato LONG.
 --
--- DOS fuentes con prioridad explícita, no una: la API oficial del Estado
--- (apis.datos.gob.ar/series) para 9 series, y un cuadro CSV del INDEC
--- (indec.gob.ar/ftp/cuadros/...) para las 5 del índice de salarios, que publica antes y para las
--- que la API quedó de respaldo. Ambas escriben estado='definitivo'; la columna `fuente` dice por
--- cuál entró cada fila. El detalle y la medición que motivó la prioridad: `SERIES_CSV` en
--- config.py. Evaluación completa de la API: docs/datos_gob_ar.md
+-- TRES fuentes con prioridad explícita, no una: la API oficial del Estado
+-- (apis.datos.gob.ar/series) para 7 series, y dos cuadros del INDEC (indec.gob.ar/ftp/cuadros/...)
+-- que publican antes y para cuyas series la API quedó de respaldo: un CSV para las 5 del índice
+-- de salarios y una planilla XLS para expo_total, impo_total y saldo_total. La columna `fuente`
+-- dice por cuál entró cada fila. El detalle y la medición que motivó la prioridad: `SERIES_CSV` y
+-- `SERIES_XLS` en config.py. Evaluación completa de la API: docs/datos_gob_ar.md
 --
 -- Modelo append-only: cada corrida inserta un snapshot con su ingested_at; nunca se pisa un
 -- dato. Los organismos revisan meses ya publicados, así que `insert_if_changed` deja cada
 -- revisión como snapshot nuevo y el anterior queda en la historia.
 --
--- La serie OBSERVADA entra siempre con estado='definitivo', venga de la API o del CSV: las dos
--- publican un solo dato por período y traen el mismo número (611 meses solapados sin una sola
--- discrepancia). No son dos calidades distintas, así que no van en carriles distintos.
+-- La serie OBSERVADA entra con estado='definitivo' si viene de la API o del CSV: publican un solo
+-- dato por período y sin marcas de calidad. La excepción es la planilla XLS de comercio exterior,
+-- que SÍ marca sus meses ('*' provisorio, 'e' estimado): esos entran 'provisorio'.
+--
+-- `etl_datos_gob_actual` NO tiene CASE de precedencia definitivo > provisorio, a diferencia de
+-- cemento y otros, y es a propósito: el 'definitivo' de la API es una versión VIEJA del número
+-- (la API no marca nada y va atrás de las revisiones del INDEC), así que un CASE haría ganar ese
+-- número viejo sobre la revisión 'provisorio' más nueva de la planilla. Gana el último snapshot
+-- (`ingested_at desc`); el estado es un atributo de esa fila. `run.py` se encarga de que cuando
+-- un mes pierde la marca se escriba un snapshot 'definitivo' nuevo aunque el número no cambie.
 --
 -- El otro estado es 'desestacionalizado', y ahí conviven DOS orígenes: el X-13 que corre este
 -- repo y la desestacionalizada oficial que publica el organismo para isac/ipi_manufacturero.
@@ -31,11 +38,12 @@ create table if not exists etl_datos_gob (
   serie       text   not null,            -- slug propio; ver la dimensión
   date        date   not null,            -- primer día del mes
   valor       double precision,
-  estado      text,                       -- 'definitivo' (observada) / 'desestacionalizado'
+  estado      text,                       -- 'definitivo' / 'provisorio' (observada) / 'desestacionalizado'
   -- De DÓNDE salió la fila. NO es siempre una URL de la API: hay cuatro orígenes conviviendo y
   -- ésta es la única columna que los distingue.
   --   URL de apis.datos.gob.ar   serie observada de la API
-  --   URL de indec.gob.ar/ftp    serie observada del cuadro CSV (primaria del índice de salarios)
+  --   URL de indec.gob.ar/ftp    serie observada de un cuadro del INDEC: CSV (índice de salarios)
+  --                              o XLS (balanmensual.xls: expo, impo y saldo)
   --   'census x13'               desestacionalizada que calcula este repo
   --   URL de apis.datos.gob.ar   desestacionalizada OFICIAL del organismo (con estado='desest...')
   fuente      text,
@@ -83,6 +91,9 @@ create table if not exists etl_datos_gob_series (
 alter table etl_datos_gob_series add column if not exists deflactable boolean not null default false;
 alter table etl_datos_gob_series add column if not exists real_desde date;
 alter table etl_datos_gob_series add column if not exists deflactor text;
+-- Edad máxima legítima del último dato de la serie, en días. La lee `etl_datos_gob_salud`.
+-- Fuente de verdad: DIAS_MAX_DATO en config.py, donde está la medición detrás de cada valor.
+alter table etl_datos_gob_series add column if not exists dias_max_dato int;
 
 -- Serie observada "actual" por (serie, mes): último snapshot, enriquecida con la dimensión.
 create or replace view etl_datos_gob_actual as
@@ -107,13 +118,15 @@ order by d.serie, d.date, d.ingested_at desc;
 -- (fuente de verdad: SERIES_META en config.py):
 --
 --   'ipc_largo'      series en pesos corrientes (ventas, salarios).
---   'uscpi_mensual'  series en dólares corrientes (expo_total, impo_total). CPI-U del BLS,
---                    serie CUUR0000SA0, all items, NOT seasonally adjusted, desde 1913-01.
+--   'uscpi_mensual'  series en dólares corrientes (expo_total, impo_total, saldo_total). CPI-U
+--                    del BLS, serie CUUR0000SA0, all items, NOT seasonally adjusted, desde
+--                    1913-01.
 --
 -- Estar en dólares NO exime de deflactar: un dólar de 1992 compra más que uno de 2026, así que
 -- leer el nivel de expo/impo de los 90 contra el de hoy en dólares nominales sobrestima el
--- crecimiento por toda la inflación de EEUU del medio. Las dos series arrancan en 1992-01, o
--- sea 34 años de CPI acumulado: el ajuste no es cosmético.
+-- crecimiento por toda la inflación de EEUU del medio. Las tres series arrancan en 1990-01, o
+-- sea 36 años de CPI acumulado: el ajuste no es cosmético. El saldo se deflacta igual que sus
+-- dos componentes: con el mismo índice y el mismo mes base, saldo_real = expo_real - impo_real.
 --
 -- El CPI que se usa es el NSA, y a propósito. El deflactor tiene que dejar la estacionalidad de
 -- la serie intacta para que el X-13 posterior la mida entera: deflactar con la versión
@@ -128,7 +141,7 @@ order by d.serie, d.date, d.ingested_at desc;
 -- base sale del CTE `base`, que para cada serie toma el último mes que tiene a la vez dato
 -- nominal y deflactor. No hay una fecha escrita en ningún lado: se calcula sola.
 --
--- POR SERIE y no una sola para el dataset: las 11 deflactables terminan en meses distintos
+-- POR SERIE y no una sola para el dataset: las 12 deflactables terminan en meses distintos
 -- (`smvm` publica antes que el IPC, los `indice_salarios_*` van más rezagados). Anclar todas al
 -- mismo mes obligaría a elegir el más viejo o a extrapolar el resto. Cada serie en su propio
 -- último dato. La columna `mes_base` dice en qué moneda está cada fila: dos series son
@@ -232,7 +245,7 @@ where i.valor > 0;
 
 -- Serie desestacionalizada (X-13), un valor por (serie, mes).
 --
--- Se ajustan las dos series de ventas y las dos de comercio exterior, y se ajusta su serie
+-- Se ajustan las dos series de ventas y expo/impo, y se ajusta su serie
 -- REAL, no la nominal: bajo inflación argentina la estacionalidad de una serie en pesos
 -- corrientes queda tapada por la deriva de precios, así que desestacionalizar el nominal no
 -- dice nada. En expo/impo la deriva es mucho menor (es CPI de EEUU), pero el orden correcto es
@@ -284,3 +297,39 @@ from etl_datos_gob_actual a
 left join etl_datos_gob_real   r on r.serie = a.serie and r.date = a.date
 left join etl_datos_gob_desest s on s.serie = a.serie and s.date = a.date
 order by a.serie, a.date;
+
+-- Frescura POR SERIE: una fila por serie de la dimensión, con su último dato y su umbral.
+--
+-- Existe porque el control por dataset de `etl_control_salud` es ciego en este dataset: mide
+-- max(date) sobre las 15 series juntas, y `smvm` trae meses FUTUROS (el salario mínimo se fija
+-- por decreto con meses de anticipación), así que ese max no envejece nunca. Aun sin `smvm`,
+-- alcanza con que publique la serie más rápida para que una congelada pase inadvertida.
+--
+-- `etl_control_salud` (etl/schema_control_salud.sql) lee esta vista y marca `datos_gob` como
+-- DATO_VIEJO si CUALQUIER serie no está en 'ok'. Esta vista es la que dice CUÁL.
+--
+--   ultimo_dato    max(date) observado de la serie. Las fechas futuras de `smvm` son dato
+--                  legítimo y se dejan: `dias` sale negativo hasta que ese mes llega.
+--   dias           current_date - ultimo_dato
+--   dias_max_dato  umbral de la serie (DIAS_MAX_DATO en config.py)
+--   estado_dato    'ok' | 'DATO_VIEJO' (dias > dias_max_dato) | 'SIN_DATO' (la serie está en la
+--                  dimensión y no tiene ningún dato) | 'SIN_UMBRAL' (la dimensión no tiene umbral:
+--                  falta correr el ETL después de un init-db, o config.py quedó desparejo). Los
+--                  dos últimos NO son 'ok' a propósito: un control que no puede medir no dice "ok".
+create or replace view etl_datos_gob_salud as
+select c.serie,
+       c.nombre,
+       c.organismo,
+       a.ultimo_dato,
+       (current_date - a.ultimo_dato) as dias,
+       c.dias_max_dato,
+       case when a.ultimo_dato is null                           then 'SIN_DATO'
+            when c.dias_max_dato is null                         then 'SIN_UMBRAL'
+            when (current_date - a.ultimo_dato) > c.dias_max_dato then 'DATO_VIEJO'
+            else 'ok'
+       end as estado_dato
+from etl_datos_gob_series c
+left join (select serie, max(date) as ultimo_dato
+           from etl_datos_gob_actual
+           group by serie) a on a.serie = c.serie
+order by c.orden;

@@ -14,6 +14,7 @@ DATASETS_DIR = Path(__file__).parent / "datasets"
 UNIFIED_SCHEMA = Path(__file__).parent / "schema_unified.sql"
 DAILY_SCHEMA = Path(__file__).parent / "schema_daily.sql"
 CONTROL_SCHEMA = Path(__file__).parent / "schema_control.sql"
+CONTROL_SALUD_SCHEMA = Path(__file__).parent / "schema_control_salud.sql"
 # Datasets mensuales: gatean las vistas unificadas series_actual / series_desest.
 MONTHLY = ["granos", "cemento", "automotriz", "patentamientos", "transferencias", "acero",
            "aves", "leche", "bovinos", "demanda_energia", "hidrocarburos",
@@ -62,6 +63,27 @@ def apply_daily_unified(conn) -> bool:
     return apply_sql_file(conn, DAILY_SCHEMA, "unificadas  -> series_diarias_actual")
 
 
+def apply_control_salud(conn) -> bool:
+    """`etl_control_salud`. Va DESPUÉS de los datasets: lee `etl_datos_gob_salud`.
+
+    Es LA vista de alertas, así que tiene que existir después de cualquier init-db, incluido uno
+    parcial que no nombre a datos_gob: si falta su vista por serie, se aplica ese schema primero.
+
+    Además se sincroniza la dimensión de datos_gob: el umbral `dias_max_dato` sólo lo escribe
+    `sincronizar_dimension`, y sin eso un init-db sobre una base existente deja las 14 series en
+    `SIN_UMBRAL` —falsa alarma de DATO_VIEJO— hasta la próxima corrida del ETL.
+    """
+    from etl.datasets.datos_gob.run import sincronizar_dimension
+
+    with conn.cursor() as cur:
+        cur.execute("select to_regclass('etl_datos_gob_salud') is not null")
+        existe = cur.fetchone()[0]
+    if not existe:
+        apply_schema(conn, "datos_gob")
+    sincronizar_dimension(conn)
+    return apply_sql_file(conn, CONTROL_SALUD_SCHEMA, "control     -> etl_control_salud")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="etl init-db",
                                  description="Aplica los schema.sql a DATABASE_URL.")
@@ -87,6 +109,8 @@ def main(argv=None) -> None:
             apply_unified(conn)
         if set(names) >= set(DAILY):
             apply_daily_unified(conn)
+        # Al final: depende de la vista por serie de datos_gob (ver apply_control_salud).
+        apply_control_salud(conn)
     finally:
         conn.close()
     print(f"resumen [init-db]  aplicados={aplicados}")

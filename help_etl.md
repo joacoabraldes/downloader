@@ -26,8 +26,12 @@ hace meses se ve igual que uno que corre todos los días sin novedades.
 select * from etl_control_salud where estado <> 'ok';
 
 -- ¿Alguna fuente dejó de publicar? No es accionable, pero explica un dato que "no avanza".
-select dataset, ultimo_dato, dias_dato, dias_max_dato
+select dataset, ultimo_dato, dias_dato, dias_max_dato, series_no_ok
 from etl_control_salud where estado_dato <> 'ok';
+
+-- Si la fila anterior es datos_gob: cuál de sus 15 series se atrasó, y por cuánto.
+select serie, ultimo_dato, dias, dias_max_dato, estado_dato
+from etl_datos_gob_salud where estado_dato <> 'ok';
 ```
 
 **Si no devuelven filas, está todo en orden.** Cada fila devuelta es algo a revisar.
@@ -52,6 +56,10 @@ y la fuente falló; en el segundo el proceso directamente no se ejecutó.
 | `DATO_VIEJO` | `ultimo_dato` superó `dias_max_dato`: hace más de lo normal que la fuente no publica nada nuevo. | **No es un bug del ETL.** Verificar a mano si el organismo publicó y el parser no lo vio, o si directamente no publicó. |
 | `SIN_DATO` | El dataset no tiene ninguna fila cargada. | Dataset nuevo sin backfill, o la carga nunca escribió. |
 
+En `datos_gob` la frescura se mide **por serie** (ver [más abajo](#datos_gob-umbral-por-serie)):
+`DATO_VIEJO` significa que **alguna** de sus 15 series superó su propio umbral, y la columna
+`series_no_ok` dice cuáles.
+
 `DATO_VIEJO` **no implica** que haya algo que arreglar. Lo más común es que el organismo se haya
 atrasado. Lo que sí amerita mirarlo es el caso silencioso: la fuente publicó, pero cambió el
 formato y el parser lo está ignorando sin lanzar excepción. Ese caso da `estado = ok` con
@@ -61,7 +69,7 @@ formato y el parser lo está ignorando sin lanzar excepción. Ese caso da `estad
 
 | Columna | Significado |
 |---|---|
-| `dataset` | Nombre del ETL. Aparecen los 14 siempre, hayan corrido o no. |
+| `dataset` | Nombre del ETL. Aparecen los 22 siempre, hayan corrido o no. |
 | `estado` | Salud del **proceso**: `ok`, `FALLA`, `SIN_CORRER` o `NUNCA_CORRIO`. |
 | `estado_ultima_corrida` | Resultado de la última ejecución: `ok` o `falla`. Vacío si nunca corrió. |
 | `ultima_corrida` | Fecha y hora en que terminó la última ejecución. |
@@ -70,8 +78,9 @@ formato y el parser lo está ignorando sin lanzar excepción. Ese caso da `estad
 | `ultimo_dato` | Período más reciente cargado en ese dataset después de esa corrida. |
 | `fallas` | Detalle de los errores. Vacío cuando la corrida fue exitosa. |
 | `dias_dato` | Días transcurridos desde `ultimo_dato` hasta hoy. |
-| `dias_max_dato` | Edad máxima que puede tener `ultimo_dato` sin que sea un problema. |
+| `dias_max_dato` | Edad máxima que puede tener `ultimo_dato` sin que sea un problema. Vacío en `datos_gob`, que tiene un umbral por serie. |
 | `estado_dato` | Frescura del **dato**: `ok`, `DATO_VIEJO` o `SIN_DATO`. |
+| `series_no_ok` | Sólo en `datos_gob`: las series fuera de `ok`, como `{serie:ESTADO,...}`. Vacío si están todas bien. |
 
 ## Por qué `horas_max` cambia según el dataset
 
@@ -114,7 +123,7 @@ umbral de 80 daría `DATO_VIEJO` cada vez que ADEFA se atrasa, que es justamente
 ventana vuelve más probable.
 
 > Si vuelve a perderse un mes, la vuelta atrás es `10 12 * * *` en el cron **y** `horas_max` a 80
-> en `etl/schema_control.sql`, en el mismo movimiento.
+> en `etl/schema_control_salud.sql`, en el mismo movimiento.
 
 Los dos índices de UTDT (`icc`, `icg`) son la excepción del cuadro: se publican **dentro del
 mes de referencia**, no al mes siguiente. UTDT difunde el ICC un jueves (entre el 17 y el 24) y
@@ -152,7 +161,7 @@ daría falsa alarma **todos los meses**.
 | `cot` | 3-5 días (corte martes, publica viernes) **(estimado, no medido)** | 1 semana | 14 |
 | `reservas_pasivos` | 2-6 días, +3 desde el cambio de horario del cron (ver nota) | 1 día hábil | 11 |
 | `compras_granos` | 7-11 días | 7 días | 25 |
-| `datos_gob` | variable (14 series) | 1 mes | 75 |
+| `datos_gob` | por serie, 42-101 días (ver abajo) | 1 mes | por serie, 90-150 |
 | `patentamientos`, `cemento` | 31-37 días | 1 mes | 80 |
 | `automotriz` | 33 días, pero la ventana 1-10 puede atrasar la captura un mes entero | 1 mes | 105 |
 | `icc`, `icg` | ~24 días (publican **dentro** del mes) | 1 mes | 70 |
@@ -195,14 +204,55 @@ descartarlos, lo "observado" es la fecha del backfill y no significa nada). La e
 planillas del INDEC (junio-2026 quedó guardado el 20-jul). Reajustar cuando haya corridas
 incrementales reales.
 
-Dos límites que conviene tener presentes:
+**Los umbrales son deliberadamente generosos.** Una alerta que grita al pedo se termina
+ignorando, y entonces no sirve para nada. Se pueden ajustar cuando haya varios meses de
+observación incremental real.
 
-- **`datos_gob` mide el corte total, no cada serie.** `ultimo_dato` es el máximo sobre las 14
-  series, así que avanza en cuanto publica la más rápida. Una serie individual congelada no se
-  ve acá.
-- **Los umbrales son deliberadamente generosos.** Una alerta que grita al pedo se termina
-  ignorando, y entonces no sirve para nada. Se pueden ajustar cuando haya varios meses de
-  observación incremental real.
+### `datos_gob`: umbral por serie
+
+En `datos_gob` un umbral de dataset no sirve. Son 15 series de organismos distintos, y el
+`max(date)` del dataset es ciego por dos motivos:
+
+- `smvm` trae meses **futuros**: el salario mínimo se fija por decreto con meses de anticipación
+  (hoy hasta 2027-04), así que ese máximo no envejece nunca y `DATO_VIEJO` no podía dispararse.
+- Aun sin eso, avanza en cuanto publica la serie más rápida. Los cinco `indice_salarios_*`
+  llegaron a estar 162 días parados con el control en `ok`.
+
+Por eso cada serie tiene su propio `dias_max_dato`, declarado en `DIAS_MAX_DATO` de
+`etl/datasets/datos_gob/config.py`. `run.py` lo copia a la dimensión `etl_datos_gob_series` en
+cada corrida, y la vista `etl_datos_gob_salud` da una fila por serie con `ultimo_dato`, `dias`,
+`dias_max_dato` y `estado_dato` (`ok`, `DATO_VIEJO`, `SIN_DATO` o `SIN_UMBRAL`, este último si a
+la dimensión le falta el umbral). `etl_control_salud` pone la fila de `datos_gob` en `DATO_VIEJO`
+si **cualquier** serie no está en `ok`.
+
+La edad del label se midió el 2026-09-18 con `min(ingested_at)::date - date` de cada mes nuevo,
+descartando el backfill del 2026-08-12. Es un mes de corridas incrementales, así que hay una o dos
+observaciones por serie:
+
+| Serie | Edad del label observada | `dias_max_dato` |
+|---|---|---|
+| `ipc_nacional` | 42-44 días (jul visto 14-ago, ago visto 12-sep) | 90 |
+| `smvm` | 12 días; ago llegó a ~43 sin reemplazo (trae meses futuros) | 90 |
+| `isac`, `ipi_manufacturero` | 70 días (jul visto 09-sep) | 115 |
+| `expo_total`, `impo_total`, `saldo_total` | 48 días (ago visto 18-sep, el día del ICA, desde la planilla del INDEC) | 100 |
+| `ripte` | 74-75 días | 120 |
+| `ventas_supermercados`, `ventas_centros_compras` | 91 días | 140 |
+| los 5 `indice_salarios_*` | 101 días, cota superior (el CSV se sumó como fuente ese día) | 150 |
+
+El umbral sigue la misma cuenta: edad del label + 31 días de período + margen. La edad es la
+que aparece **en la base** desde la fuente primaria de cada serie, no la del calendario del
+organismo: la API de `apis.datos.gob.ar` puede ir semanas atrás del INDEC, y un umbral que no lo
+tolere daría falsa alarma.
+
+Comercio exterior se mide contra la planilla `balanmensual.xls` del INDEC, su fuente primaria
+desde el 2026-09-18. El ICA sale a mitad del mes siguiente a las 16:00 y la corrida de las 17:30
+lo levanta el mismo día; justo antes del ICA siguiente el último dato tiene ~80 días. 48 + 31 +
+margen = 100. Con la API sola (julio visto 16-sep, 77 días) el umbral era 120. Bajarlo es a
+propósito: si la planilla se cae varias semanas y las series viven de la API de respaldo, que va
+~4 semanas atrás, también salta por frescura, además de la falla que ya registra la corrida.
+
+Con `smvm` la edad es negativa mientras el último mes fijado esté en el futuro. La alarma salta
+si, pasado el cronograma, no aparece el decreto siguiente.
 
 ## Detalle de una ejecución
 
@@ -221,20 +271,33 @@ registros leídos, nuevos y actualizados.
 ## Mantenimiento
 
 Los umbrales de `horas_max` se derivan de las ventanas del cron. Si se cambia la ventana de un
-dataset, hay que actualizar su `horas_max` en `etl/schema_control.sql`; de lo contrario ese
+dataset, hay que actualizar su `horas_max` en `etl/schema_control_salud.sql`; de lo contrario ese
 dataset queda con un umbral que ya no corresponde y puede dar un `SIN_CORRER` falso o, peor,
 dejar de avisar.
 
 Lo mismo vale para `dias_max_dato`, pero el disparador es otro: no cambia con el cron, cambia
 cuando **la fuente** mueve su calendario de publicación. Si un organismo empieza a publicar más
 tarde de forma sostenida, el umbral viejo va a dar `DATO_VIEJO` todos los meses hasta que se
-ajuste. Los dos umbrales se editan en el mismo bloque `esperado` de `etl/schema_control.sql`.
+ajuste. Los dos umbrales se editan en el mismo bloque `esperado` de
+`etl/schema_control_salud.sql`.
 
-Para aplicar cualquier cambio de umbrales:
+La excepción es `datos_gob`: sus umbrales son por serie y se editan en `DIAS_MAX_DATO` de
+`etl/datasets/datos_gob/config.py`. Toman efecto en la próxima corrida del ETL, que los copia a la
+dimensión, o antes con cualquier `init-db`, que también los sincroniza.
+
+Cualquier `init-db`, aunque sea de un solo dataset, deja creada `etl_control_salud`: si falta la
+vista por serie de datos_gob, aplica ese schema primero.
+
+Para aplicar cualquier cambio de umbrales de `etl_control_salud`:
 
 ```bash
 python -m etl init-db          # la vista es `create or replace`, es idempotente
 ```
+
+`etl_control_salud` vive en `etl/schema_control_salud.sql`, separada de `etl/schema_control.sql`
+(la tabla de corridas), porque lee `etl_datos_gob_salud` y ésa la crea el schema de `datos_gob`.
+`init-db` aplica la tabla de corridas primero, después los datasets, y la vista de salud al
+final. Si la base es nueva y se inicializa sin `datos_gob`, la vista se saltea con un aviso.
 
 > Al agregar columnas nuevas a `etl_control_salud`, van **al final** del `select`. Postgres sólo
 > permite agregar columnas al final en un `create or replace view`; insertarlas en el medio

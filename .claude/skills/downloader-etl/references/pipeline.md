@@ -23,7 +23,7 @@ Relevado contra el código el 2026-09-18. Si una línea no coincide, manda el c�
   - Tabla con `estado`, `fuente`, `parametros jsonb` e `ingested_at default now()`.
   - Unique index parcial `(serie,date) where estado='desestacionalizado'`.
   - Vistas `_actual` y `_desest`.
-- Registros fuera de la carpeta: `DATASETS` en `__main__.py`, la lista de carril en `initdb.py` (MONTHLY/DAILY/WEEKLY), la UNION en `schema_unified.sql`/`schema_daily.sql`, la fila `(horas_max, dias_max_dato)` en `etl_control_salud` (`schema_control.sql`) y la documentación.
+- Registros fuera de la carpeta: `DATASETS` en `__main__.py`, la lista de carril en `initdb.py` (MONTHLY/DAILY/WEEKLY), la UNION en `schema_unified.sql`/`schema_daily.sql`, la fila `(horas_max, dias_max_dato)` en `etl_control_salud` (`schema_control_salud.sql`) y la documentación.
 
 ### Flujo típico de run (cemento)
 
@@ -50,7 +50,10 @@ Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`, `
   - `desestacionalizado`.
 - `_actual`: `distinct on (serie,date)` excluyendo la desest.
   - Precedencia: definitivo > NULL > provisorio, y después `ingested_at desc`.
-  - datos_gob no tiene CASE: solo `ingested_at desc`.
+  - datos_gob no tiene CASE: solo `ingested_at desc`. A propósito: el 'definitivo' de la API es
+    una versión VIEJA; el 'provisorio' de la planilla XLS del INDEC es la revisión vigente.
+    `run.cargar_xls` fuerza un snapshot nuevo cuando cambia el estado sin cambiar el valor, y el
+    respaldo API no reescribe meses cuya fila vigente vino de un cuadro (`del_cuadro`).
 - `_desest`: último snapshot con `estado='desestacionalizado'`.
 - `bulk_insert` no deduplica. Lo usan comex y reservas_pasivos.
 
@@ -63,14 +66,17 @@ Hoy hay DOS lugares. Los dos son SQL, no Python.
 - Fórmula: `real = valor * indice_base / indice(t)`.
 - `mes_base` = el último mes de CADA serie con nominal y deflactor a la vez. Es base móvil y por serie; con un mes nuevo, la serie real se reescala entera.
 - El deflactor lo elige la columna `etl_datos_gob_series.deflactor`, que sale de `SERIES_META` en config.py.
-- Hay 11 series deflactadas:
+- Hay 12 series deflactadas:
 
   | deflactor | series |
   |---|---|
   | `ipc_largo` | ventas_supermercados, ventas_centros_compras, ripte, smvm, 5× indice_salarios_* |
-  | `uscpi_mensual` (CPI-U NSA) | expo_total, impo_total |
+  | `uscpi_mensual` (CPI-U NSA) | expo_total, impo_total, saldo_total |
 
 - No se deflactan: `isac`, `ipi_manufacturero`, `ipc_nacional`.
+- `saldo_total` se deflacta pero NO pasa por X-13 (puede ser negativo); su desest se deriva como
+  `expo_desest - impo_desest` (ajuste indirecto). Con el mismo índice y el mismo `mes_base`,
+  `saldo_real = expo_real - impo_real` exacto.
 - `REAL_DESDE={"smvm":"1992-01-01"}`: antes de esa fecha no hay real, por las reformas monetarias.
 - `origen` = publicado / proyectado / interpolado. Los meses proyectados se revisan.
 - `etl_datos_gob_completo` junta nominal, real y desest en una fila.
@@ -124,14 +130,19 @@ Hoy hay DOS lugares. Los dos son SQL, no Python.
 
 - `etl_control_ejecucion` guarda una fila por corrida: estado ok/falla, `fallas[]`, contadores y `ultimo_dato`.
 - `etl_control_salud` compara cada dataset contra sus `horas_max` y `dias_max_dato`.
+  - Vive en `etl/schema_control_salud.sql`, NO en `schema_control.sql` (tabla + `etl_control_ultima`): lee `etl_datos_gob_salud`, así que `initdb.py` la aplica AL FINAL, después de los datasets, y la saltea con aviso si esa vista no existe (base nueva sin datos_gob).
   - `estado`: NUNCA_CORRIO / FALLA / SIN_CORRER / ok.
-  - `estado_dato`: SIN_DATO / DATO_VIEJO / ok.
-- El control es por DATASET: en datos_gob, una serie congelada no dispara la alarma.
+  - `estado_dato`: SIN_DATO / DATO_VIEJO / ok. Columna final `series_no_ok` (text[] `serie:ESTADO`).
+- El control del dato es por DATASET, salvo datos_gob, que va POR SERIE:
+  - `DIAS_MAX_DATO` en `datos_gob/config.py` (umbral por serie, medido y comentado) → `sincronizar_dimension` lo copia a `etl_datos_gob_series.dias_max_dato` en cada corrida.
+  - Vista `etl_datos_gob_salud` (datos_gob/schema.sql): serie, ultimo_dato, dias, dias_max_dato, estado_dato (ok / DATO_VIEJO / SIN_DATO / SIN_UMBRAL). Las fechas futuras de `smvm` son legítimas: `dias` negativo.
+  - En `etl_control_salud`, datos_gob tiene `dias_max_dato` NULL y `estado_dato = DATO_VIEJO` si cualquier serie no está en ok.
+  - Serie nueva en SERIES_META sin umbral en DIAS_MAX_DATO: `run.py` aborta.
 
 ## 7. Trampas conocidas
 
 - `schema_unified.sql:123,127` tiene comentarios viejos: escrituras_caba y ventas_combustibles SÍ se desestacionalizan.
 - El comentario de `[granos]` en el toml habla de un timeout de 120 s; en el código es 200 s.
-- `apis.datos.gob.ar` puede ir meses atrás del INDEC: pegarle a la API antes de dar un ETL por roto.
+- `apis.datos.gob.ar` puede ir meses atrás del INDEC, y con una versión vieja del dato: pegarle a la API antes de dar un ETL por roto. Por eso en datos_gob los cuadros del INDEC de URL fija son primarios (`SERIES_CSV`: índice de salarios; `SERIES_XLS`: `balanmensual.xls` para expo/impo/saldo) y la API es respaldo.
 - Una URL inexistente de INDEC devuelve HTML con 200: validar encabezado y cantidad de filas.
 - El repo no tiene tests ni CI. La verificación es contra la base y contra las planillas de referencia.

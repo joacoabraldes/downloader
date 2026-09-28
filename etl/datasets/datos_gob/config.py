@@ -27,7 +27,8 @@ ACTUAL_VIEW = "etl_datos_gob_actual"
 #                    dejaba a `ripte` (nominal desde 1994) y `smvm` (desde 1965) sin valor real
 #                    en casi toda su historia. `ipc_largo` cubre desde 1990-01.
 #   'uscpi_mensual'  dólares. CPI-U del BLS (serie CUUR0000SA0, all items, NOT seasonally
-#                    adjusted), desde 1913-01. Es el deflactor de `expo_total` e `impo_total`.
+#                    adjusted), desde 1913-01. Es el deflactor de `expo_total`, `impo_total` y
+#                    `saldo_total`.
 #
 # Que el CPI sea NSA no es un detalle: si se deflactara con la versión desestacionalizada del
 # CPI, la serie real quedaría con la estacionalidad del deflactor invertida encima, y el X-13
@@ -38,7 +39,7 @@ ACTUAL_VIEW = "etl_datos_gob_actual"
 # el comentario de la vista.
 #
 # El mes base es MÓVIL y POR SERIE: cada serie queda expresada en moneda de SU último dato
-# observado, y toda su historia se reexpresa hacia atrás en esa moneda. Las 11 deflactables
+# observado, y toda su historia se reexpresa hacia atrás en esa moneda. Las 12 deflactables
 # terminan en meses distintos, así que no comparten base: la fecha efectiva de cada fila viaja
 # en la columna `mes_base` de la vista. No se escribe una fecha acá porque se calcula sola.
 #
@@ -82,7 +83,7 @@ REAL_DESDE = {
 # Estar en dólares NO exime de deflactar, y por un tiempo acá se creyó que sí. Un dólar de 1992
 # compra bastante más que uno de 2026: comparar el nivel de exportaciones de los 90 contra el de
 # hoy en dólares nominales sobrestima el crecimiento por toda la inflación de EEUU del medio.
-# Por eso expo/impo van con 'uscpi_mensual', no con None.
+# Por eso expo/impo/saldo van con 'uscpi_mensual', no con None.
 #
 # Quedan sin deflactor los índices de volumen (isac, ipi), que ya son cantidades, y el propio
 # ipc_nacional. Los índices de salarios SÍ llevan: son índices nominales, así que deflactados
@@ -109,6 +110,16 @@ SERIES_META = {
     "impo_total": (
         "74.3_IIT_0_M_25",
         "Importaciones totales",
+        "USD millones", "INDEC", "uscpi_mensual"),
+    # Saldo comercial: la columna 'Saldo' de la planilla del INDEC (primaria, ver SERIES_XLS), NO
+    # expo - impo calculado acá. El id de la API es el respaldo: misma familia 74.3 que expo/impo
+    # y, contra la API, igual a 74.3_IET - 74.3_IIT hasta el error de punto flotante (4.5e-13,
+    # medido el 2026-09-18). Deflactado con el mismo CPI que expo/impo: es la diferencia de dos
+    # flujos en dólares corrientes, y deflactar ambos por el mismo índice y restar da lo mismo
+    # que restar y deflactar. Puede ser NEGATIVO: por eso no pasa por X-13 (ver el toml).
+    "saldo_total": (
+        "74.3_ISC_0_M_19",
+        "Saldo comercial",
         "USD millones", "INDEC", "uscpi_mensual"),
     "ventas_supermercados": (
         "455.1_VENTAS_TOTLOS_0_M_30_43",
@@ -149,6 +160,67 @@ SERIES_META = {
         "149.1_SOR_PRIADO_OCTU_0_28",
         "Índice de salarios. Empleo no registrado, sector privado",
         "índice oct-2016=100", "INDEC", "ipc_largo"),
+}
+
+# serie -> edad máxima legítima, en días, de su último dato (`current_date - max(date)`). Lo lee
+# la vista `etl_datos_gob_salud`, una fila por serie, y de ahí `etl_control_salud` marca el
+# dataset entero como DATO_VIEJO si CUALQUIER serie se pasa.
+#
+# POR QUÉ POR SERIE Y NO UN UMBRAL DEL DATASET: son 15 series de organismos distintos, cada una
+# con su calendario. Un umbral sobre el max(date) del dataset es ciego por construcción: `smvm`
+# trae meses FUTUROS (el salario mínimo se fija por decreto con meses de anticipación, hoy hasta
+# 2027-04), así que ese max nunca envejece. Y aun sin eso, basta que publique la serie más
+# rápida para que una congelada pase inadvertida: los 5 `indice_salarios_*` llegaron a estar
+# 162 días parados con el control en `ok`.
+#
+# La cuenta es la misma que en `etl/schema_control_salud.sql`:
+#
+#     dias_max_dato = EDAD DEL LABEL AL APARECER EN LA BASE + un periodo (31) + margen
+#
+# La edad del label se MIDIÓ el 2026-09-18 como `min(ingested_at)::date - date` de cada mes
+# nuevo, descartando los lotes del backfill inicial del 2026-08-12 (cientos de meses con el mismo
+# ingested_at). Es poca historia: un mes de corridas incrementales, una o dos observaciones por
+# serie. Por eso los márgenes son anchos y cada valor dice de dónde sale. Reajustar cuando haya
+# varios meses de incremental real.
+#
+# OJO: la edad medida es la de la fuente PRIMARIA de cada serie (API, CSV o XLS), no la del
+# organismo. apis.datos.gob.ar puede ir semanas atrás del INDEC (expo/impo de julio: INDEC lo
+# publicó a mediados de agosto y la API lo trajo el 16-sep), así que una serie servida por la
+# API tiene que tolerar ese atraso o daría falsa alarma. Las que tienen un cuadro del INDEC como
+# primaria (SERIES_CSV, SERIES_XLS) se miden contra el cuadro, y su umbral es más corto.
+#
+# Sumar una serie a SERIES_META exige sumarla acá: `run.py` valida que estén las mismas.
+DIAS_MAX_DATO = {
+    "isac":                   115,  # jul visto 09-sep -> 70 d. 70 + 31 + margen
+    "ipi_manufacturero":      115,  # jul visto 09-sep -> 70 d. Mismo informe que isac
+    "ipc_nacional":            90,  # jul visto 14-ago (44 d), ago visto 12-sep (42 d). 44 + 31 + margen
+    # Comercio exterior: planilla del INDEC primaria (ver SERIES_XLS). El ICA sale a mitad del mes
+    # siguiente, 16:00; ago visto 18-sep (48 d) en la corrida de las 17:30, el mismo día. Justo
+    # antes del ICA siguiente el último dato tiene ~80 d (ago contra el ~20-oct). 48 + 31 +
+    # margen para un ICA que se corra una semana. Con la API sola (jul visto 16-sep, 77 d) el
+    # umbral era 120; con 100, una planilla caída varias semanas salta también por frescura, que
+    # es lo buscado: la API de respaldo va ~4 semanas atrás.
+    "expo_total":             100,
+    "impo_total":             100,  # idem expo_total, misma planilla
+    "saldo_total":            100,  # idem expo_total, misma planilla
+    "ventas_supermercados":   140,  # jun visto 31-ago -> 91 d. 91 + 31 + margen
+    "ventas_centros_compras": 140,  # idem supermercados, mismo informe
+    "ripte":                  120,  # jun visto 15-ago (75 d), jul visto 13-sep (74 d). 75 + 31 + margen
+    # `smvm` trae meses futuros y el umbral compara contra el ÚLTIMO mes fijado, así que la edad
+    # es negativa hasta que ese mes llega; la alarma salta si pasado el cronograma no aparece el
+    # decreto siguiente. Observado: sep-2026 entró el 13-sep (12 d) junto con oct..abr-2027, y
+    # antes ago-2026 llegó a tener ~43 d sin reemplazo. 43 + 31 + margen: la fijación se demora
+    # cuando el Consejo del Salario no acuerda y el gobierno termina laudando por decreto.
+    "smvm":                    90,
+    # Índice de salarios: CSV del INDEC primario (ver SERIES_CSV). jun visto 10-sep -> 101 d, y es
+    # COTA SUPERIOR: el CSV se sumó como fuente ese mismo día, así que jun pudo estar antes. El
+    # may visto el mismo día (132 d) no cuenta: es la puesta al día del cambio de fuente, no un
+    # rezago. 101 + 31 + margen. Con la API sola esto llegó a 162 d; con 150 habría saltado.
+    "indice_salarios_total":              150,
+    "indice_salarios_registrado":         150,
+    "indice_salarios_priv_registrado":    150,
+    "indice_salarios_publico":            150,
+    "indice_salarios_priv_no_registrado": 150,
 }
 
 # serie -> id en la API de su versión DESESTACIONALIZADA, cuando el organismo la publica.
@@ -218,6 +290,62 @@ SERIES_CSV = {
 CSV_POR_SERIE = {serie: nombre
                  for nombre, cuadro in SERIES_CSV.items()
                  for serie in cuadro["columnas"].values()}
+
+# Planillas .xls del INDEC. Mismo papel que SERIES_CSV —fuente PRIMARIA, la API de respaldo— para
+# las series del comercio exterior. Parser en `source_xls.py`.
+#
+# POR QUÉ, con la medición del 2026-09-18: el INDEC publicó el ICA de agosto ese día a las 16:00
+# y la API seguía cortando en 2026-07. Con la API como primaria, agosto habría entrado recién
+# semanas después (julio lo trajo el 16-sep, un mes después de que el INDEC lo publicara).
+#
+# Contra la API, sobre los 415 meses que comparten (1992-01..2026-07):
+#
+#     meses idénticos (<1e-6)      : 271 de expo, 270 de impo
+#     2005-06, 2014-15, 2018-21    : difieren menos de 0,5 USD M por mes (revisiones chicas)
+#     2016, 2017, 2022, 2023       : difieren en serio. Máximo mensual expo/impo, USD M:
+#                                    2016 21/59, 2017 7/2, 2022 149/81, 2023 79/36. En el año,
+#                                    expo 2022 +258 M y 2023 +167 M en la planilla: la API tiene
+#                                    una versión vieja de esos años, la planilla la revisada
+#     2026-07 impo                 : 6.738,68 en la API, 6.755,73 en la planilla (revisado con
+#                                    el ICA de agosto)
+#     sólo en la planilla          : 1990-01..1991-12 y 2026-08
+#
+# O sea: NO es "el mismo dato por un canal más rápido", como en el índice de salarios. La
+# planilla es la publicación VIGENTE del INDEC y la API arrastra una versión anterior de varios
+# años. Eso refuerza la prioridad, pero tiene una consecuencia: el cambio de fuente dejó
+# snapshots nuevos ('actualizado') en esos meses, y el respaldo no puede volver a pisarlos con el
+# número viejo. Ver `del_cuadro` en run.py.
+#
+# El saldo es la columna 'Saldo' de la planilla, no una resta nuestra. Igual cuadra: saldo =
+# expo - impo hasta 1.5e-12 en toda la planilla.
+#
+# ESTADO: la planilla marca meses provisorios ('*' en el año: todo el año) y estimados ('e' en el
+# mes). Esos meses entran con estado='provisorio'; el resto, 'definitivo'. Ver el porqué en run.py.
+#
+# `columnas`: índice de columna (0-based) -> serie nuestra. `encabezados`: lo que esa columna
+# tiene que decir en la fila 'Período'; se valida, para que una columna corrida no cargue
+# importaciones como exportaciones. La URL es fija, sin fecha en el nombre, como la del CSV.
+SERIES_XLS = {
+    "balanza_comercial": {
+        "url": "https://www.indec.gob.ar/ftp/cuadros/economia/balanmensual.xls",
+        "columnas": {2: "expo_total", 7: "impo_total", 11: "saldo_total"},
+        "encabezados": {2: "Exportaciones", 7: "Importaciones", 11: "Saldo"},
+        # Se valida contra el subencabezado de cada columna: si el INDEC cambiara de escala sin
+        # tocar los títulos, todos los valores se correrían 1000x sin que nada lo note.
+        "unidad": "Millones de dólares",
+    },
+}
+
+XLS_POR_SERIE = {serie: nombre
+                 for nombre, cuadro in SERIES_XLS.items()
+                 for serie in cuadro["columnas"].values()}
+
+# serie -> URL de su cuadro primario (CSV o XLS). Lo usa run.py para no pisar con la API lo que
+# ya escribió el cuadro.
+CUADRO_POR_SERIE = {
+    **{s: SERIES_CSV[n]["url"] for s, n in CSV_POR_SERIE.items()},
+    **{s: SERIES_XLS[n]["url"] for s, n in XLS_POR_SERIE.items()},
+}
 
 # Deflactores válidos. Ningún código de acá los interpreta: viajan tal cual a la columna
 # `deflactor` de la dimensión, y la vista los usa para filtrar `public.deflactores`. Este set

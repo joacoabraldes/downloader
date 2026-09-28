@@ -40,7 +40,7 @@ Cargar al tocar `etl/` o `scripts/`, agregar/modificar un dataset o serie, cambi
 ## Execution Steps
 
 1. Leer `references/pipeline.md` (mapa verificado con file:line).
-2. Dataset nuevo: copiar la forma de `cemento` (simple) o `datos_gob` (star-schema + real). Crear `config.py`, `source.py`, `run.py`, `schema.sql` y registrarlo en `etl/__main__.py`, `etl/initdb.py`, `schema_unified.sql`/`schema_daily.sql`, `etl/schema_control.sql` y la tabla de README/INTEGRATION.
+2. Dataset nuevo: copiar la forma de `cemento` (simple) o `datos_gob` (star-schema + real). Crear `config.py`, `source.py`, `run.py`, `schema.sql` y registrarlo en `etl/__main__.py`, `etl/initdb.py`, `schema_unified.sql`/`schema_daily.sql`, `etl/schema_control_salud.sql` y la tabla de README/INTEGRATION.
 3. `python -m etl init-db <ds>`, backfill (`load-history` o `--all`), `python -m etl <ds>`.
 4. Cambio de parámetros X-13: calibrar con `scripts/calibrar_<ds>.py` o `--x13-out DIR`, luego `python -m etl redesest <ds>`.
 5. Verificar en la base (`etl_control_salud`, `<tabla>_desest.parametros`) antes de declarar terminado.

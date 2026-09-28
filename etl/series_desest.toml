@@ -450,10 +450,10 @@ seasonalma = "s3x5"
 # un bloque [icc] / [icg] con table/desest/mode/td/seasonalma. Las tablas y las vistas
 # etl_icc_desest / etl_icg_desest ya existen y hoy devuelven 0 filas.
 
-# datos_gob: se desestacionalizan SOLO las dos series de ventas, y sobre su serie REAL.
+# datos_gob: se desestacionalizan las dos series de ventas y expo/impo, y sobre su serie REAL.
 #
-# Por qué sólo esas dos: ipc_nacional es un índice de precios, expo/impo están en dólares y
-# quedan fuera de este pedido, y para isac/ipi la desestacionalizada la publica el propio INDEC
+# Por qué sólo esas: ipc_nacional es un índice de precios, el saldo comercial no admite X-13
+# propio (ver la nota de comercio exterior, más abajo), y para isac/ipi la desestacionalizada la publica el propio INDEC
 # como serie aparte (p. ej. IPI: 453.1_SERIE_DESEADA_0_0_24_58). Para esas, lo correcto es bajar
 # la serie oficial —una fila más en SERIES_META— y no correrles X-13 nosotros encima.
 #
@@ -512,7 +512,7 @@ seasonalma = "s3x5"
 #
 # DECISIÓN: se deflacta con IPC nacional y base móvil, y se desestacionaliza con X-13 propio, como
 # todo el resto del repo. NO se adopta la serie oficial ni se recalibran los parámetros para
-# reproducirla. El criterio es la homogeneidad del dataset: las 11 series deflactadas comparten
+# reproducirla. El criterio es la homogeneidad del dataset: las 12 series deflactadas comparten
 # método y base móvil, y se comparan entre sí sin asteriscos. Cambiar dos de ellas al método del
 # organismo las alinearía con INDEC y las desalinearía de sus propias compañeras de tabla, que es
 # el uso real de esta tabla.
@@ -527,8 +527,20 @@ seasonalma = "s3x5"
 # cuando difiere de la observada, y hoy el esquema no tiene lugar para eso.)
 
 # Comercio exterior (INDEC, ICA). Heredan mult del dataset —son valores estrictamente positivos
-# (mínimo histórico USD 593 M) con estacionalidad proporcional al nivel: la cosecha gruesa mueve
-# las exportaciones en proporción, no en una constante de dólares.
+# (mínimo histórico USD 226 M, impo de 1990-02; desde 2026-09 la serie arranca en 1990-01 porque
+# la fuente primaria es la planilla del INDEC y no la API, que empezaba en 1992) con
+# estacionalidad proporcional al nivel: la cosecha gruesa mueve las exportaciones en proporción,
+# no en una constante de dólares.
+#
+# `saldo_total` NO va en `desest`, a propósito:
+#   1. Puede ser NEGATIVO: 142 de 440 meses, casi todo 1992-2000, 2015, 2017-2018 y 2023.
+#      El multiplicativo es imposible —log de un negativo— y el núcleo forzaría `add`, que para
+#      una diferencia de dos flujos multiplicativos es un modelo mal especificado: la
+#      estacionalidad del saldo es la de expo menos la de impo, cada una proporcional a SU nivel.
+#   2. No hace falta: se DERIVA. saldo_desest = expo_desest - impo_desest (ajuste indirecto, el
+#      mismo criterio que `gasoil_mas_nafta`). Así además la identidad saldo = expo - impo se
+#      sostiene también en la serie ajustada, que un X-13 directo sobre el saldo rompería.
+#   La cuenta la hace el consumidor, sobre `etl_datos_gob_desest` (ver INTEGRATION.md).
 #
 # td1coef en vez del td de 6 coeficientes del default: lo que mueve el valor despachado en un mes
 # es cuántos días hábiles tuvo la aduana, un contraste hábil/no hábil. Distinguir lunes de martes

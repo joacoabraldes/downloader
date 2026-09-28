@@ -88,9 +88,14 @@ código sino agregar una línea.
 
 Es, por lejos, el ETL más barato que se puede agregar a este repo.
 
+> **Estado al 2026-09-18:** la API ya no es la única fuente del dataset. Para 8 de las 15 series
+> la primaria es un cuadro del INDEC de URL fija y la API quedó de respaldo: el CSV del índice de
+> salarios (`SERIES_CSV`) y la planilla `balanmensual.xls` para `expo_total`, `impo_total` y
+> `saldo_total` (`SERIES_XLS`). El motivo es la trampa de abajo sobre atraso y versiones viejas.
+
 ## 4. Trampas verificadas
 
-Tres cosas que aparecieron al probarla y que hay que tener en cuenta al implementar:
+Cuatro cosas que aparecieron al probarla y que hay que tener en cuenta al implementar:
 
 - **Devuelve `403` con el User-Agent por defecto** de `urllib` y de `requests`. Hay que mandar uno
   explícito. Es la primera pared contra la que se choca cualquiera.
@@ -101,6 +106,11 @@ Tres cosas que aparecieron al probarla y que hay que tener en cuenta al implemen
   rango que va de **2065 a 2126**: al pedirle el último dato devuelve un valor fechado
   **2126-04**. No alcanza con confiar en los metadatos; hay que validar las fechas al parsear y
   descartar lo que caiga fuera de un rango razonable.
+- **Va atrás del organismo, y a veces con una versión vieja del dato.** El 2026-09-18 el INDEC
+  publicó el comercio exterior de agosto a las 16:00 y la API seguía en julio (julio lo había
+  traído el 16-sep, un mes después del INDEC). Peor: contra la planilla vigente del INDEC, la API
+  tenía expo e impo de 2016, 2017, 2022 y 2023 sin las revisiones (hasta 149 USD M en un mes).
+  Antes de dar un ETL por roto, o un número por firme, contrastar contra el cuadro del organismo.
 
 ## 5. La skill `indec`
 
