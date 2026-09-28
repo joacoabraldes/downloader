@@ -1,21 +1,30 @@
 """Fuente MAGyP (bovinos): descubre el xls de faena/producción y parsea la producción mensual.
 
 La página de información sectorial no linkea el xls de datos directamente: linkea un PDF
-"Tablero de Faena Bovina" que, **adentro**, tiene el hipervínculo al xls mensual
-(`Faena_Bovina_<años>_mensual..xls`). El nombre del xls cambia con el rango de años, pero el
-link embebido en el PDF siempre apunta al vigente. Así que la cadena es:
+"Tablero de Faena Bovina" que, **adentro**, tiene el hipervínculo al xls mensual. El nombre del
+xls cambia, pero el link embebido en el PDF siempre apunta al vigente. Así que la cadena es:
 página → Tablero PDF → hipervínculo embebido → xls.
 
-El archivo tiene una fila de encabezado con "Mes/Año" y "Producción (en miles de toneladas res
-con hueso)". Se ubican esas columnas por texto (no por índice fijo) y se parsea la serie
-mensual de producción desde 2019. Hoy MAGyP lo publica en `.xls` viejo (se lee con `xlrd`),
-pero el parser detecta el formato por los magic bytes y cae a `openpyxl` si algún día pasan a
-`.xlsx` moderno.
+Hay DOS formatos de planilla, y el parser distingue cuál es por su contenido:
+
+- **Por categoría** (sep-2026 →, `Planilla_Informe_Faena_Bovina_.xls`): hoja "Faena por
+  categoria" con tres bloques apilados — "Cabezas", "Toneladas res", "Peso res" —, cada uno con
+  una fila por mes que trae SÓLO el nombre del mes (sin año) y una fila de cierre por año
+  ("Acum. Abr-Dic 2019", "Total 2020", "Acum 2026"). La producción es la columna "Total" del
+  bloque "Toneladas res", en toneladas: se divide por 1000. Ver `_parse_por_categoria`.
+- **Mes/Año** (hasta ago-2026, `Faena_Bovina_<años>_mensual.xls`, y hoy la planilla histórica
+  desde 1990): una fila de encabezado con "Mes/Año" y "Producción (en miles de toneladas res con
+  hueso)", con la fecha como serial de Excel. Ver `_find_cols`. Se conserva porque
+  `get_historico_magyp` sigue leyendo ese formato.
+
+En los dos casos se ubica todo por texto, no por índice fijo: MAGyP agrega filas y columnas.
+Los `.xls` viejos (OLE2) se leen con `xlrd`; los `.xlsx`, con `openpyxl` (magic bytes `PK`).
 """
 from __future__ import annotations
 
 import datetime as dt
 import io
+import re
 
 import openpyxl
 import pdfplumber
@@ -23,14 +32,14 @@ import requests
 import xlrd
 from bs4 import BeautifulSoup
 
-from etl.core import http
+from etl.core import http, meses
 
 PAGE = "https://www.magyp.gob.ar/sitio/areas/bovinos/informacion_sectorial/"
 HEADERS = {"User-Agent": "Mozilla/5.0 (bovinos ETL)"}
 TIMEOUT = 90
 
 # Carpeta donde MAGyP publica el xls de faena. Hace falta porque el hipervínculo del PDF pasó a
-# ser RELATIVO (ago-2026): trae sólo "Faena_Bovina_2019-2026_mensual.xls", y resolverlo contra la
+# ser RELATIVO (ago-2026): traía sólo "Faena_Bovina_2019-2026_mensual.xls", y resolverlo contra la
 # URL del propio PDF da 404 — el PDF vive bajo /bovinos/ y el xls bajo /ss_ganaderia/.
 ARCHIVO_BASE = "http://www.magyp.gob.ar/sitio/areas/ss_ganaderia/archivos/"
 
@@ -94,7 +103,8 @@ def download(url: str) -> bytes:
 # --------------------------------------------------------------------------------------
 # De la misma página cuelgan dos PDFs, cada uno con su propio Excel embebido:
 #
-#   Tablero_Faena_Bovino.pdf   -> Faena_Bovina_2019-2026_mensual.xls   2019-04 .. 2026-07
+#   Tablero_Faena_Bovino.pdf   -> Planilla_Informe_Faena_Bovina_.xls   2019-04 .. 2026-08
+#                                 (hasta ago-2026: Faena_Bovina_2019-2026_mensual.xls)
 #   Indicadores bovinos.pdf    -> Planilla_indicadores_..._1990_...    1990-01 .. 2026-06
 #
 # El ETL diario usa el PRIMERO y así queda: tiene el mes más reciente, que es lo que importa
@@ -170,52 +180,192 @@ def _find_cols(cell, nrows: int, ncols: int) -> tuple[int, int, int]:
     raise RuntimeError("no se ubicaron las columnas 'Mes/Año' y 'Producción' en el archivo")
 
 
-def _parse_xls(blob: bytes) -> dict[dt.date, float]:
-    """Parseo del formato .xls viejo (OLE2) con xlrd. La fecha viene como serial de Excel."""
-    wb = xlrd.open_workbook(file_contents=blob)
-    sh = wb.sheet_by_index(0)
-    header, fecha_col, prod_col = _find_cols(sh.cell_value, sh.nrows, sh.ncols)
-    out: dict[dt.date, float] = {}
-    for r in range(header + 1, sh.nrows):
-        f, v = sh.cell_value(r, fecha_col), sh.cell_value(r, prod_col)
-        if not isinstance(f, float) or f <= 1000 or not isinstance(v, (int, float)) or not v:
+# --------------------------------------------------------------------------------------
+# Formato "por categoría" (sep-2026 →)
+# --------------------------------------------------------------------------------------
+BLOQUE_TONELADAS = "toneladas res"
+# Títulos de los otros bloques de la hoja: marcan dónde termina el de toneladas.
+BLOQUES = ("cabezas", "toneladas res", "peso res")
+# Fila de cierre de cada año: "Acum. Abr-Dic 2019", "Total 2020", "Acum 2026", "Promedio 2026".
+RX_CIERRE = re.compile(r"^(acum|total|promedio)\b.*?\b((?:19|20)\d{2})\s*$", re.IGNORECASE)
+# Rango plausible de la producción mensual, en miles de toneladas res con hueso (2019-2026 va de
+# ~200 a ~300). Fuera de esto, casi seguro cambió la unidad o se leyó la columna equivocada.
+RANGO_PLAUSIBLE = (100.0, 500.0)
+# Tolerancia relativa entre la suma de los meses de un año y su fila de cierre.
+TOL_CIERRE = 0.001
+
+
+def _txt(v) -> str:
+    return str(v or "").strip()
+
+
+def _find_bloque_toneladas(cell, nrows: int, ncols: int) -> tuple[int, int] | None:
+    """(fila de título del bloque 'Toneladas res', col 'Total'), o None si no es este formato."""
+    for r in range(nrows):
+        if _txt(cell(r, 0)).lower() != BLOQUE_TONELADAS:
             continue
-        y, m, _ = xlrd.xldate_as_tuple(f, wb.datemode)[:3]
-        out[dt.date(y, m, 1)] = float(v)
+        totales = [c for c in range(1, ncols) if _txt(cell(r, c)).lower() == "total"]
+        if len(totales) != 1:
+            raise RuntimeError(
+                f"bloque 'Toneladas res' (fila {r + 1}): se esperaba UNA columna 'Total' en el "
+                f"título y hay {len(totales)}")
+        if r + 1 >= nrows or not _txt(cell(r + 1, 0)).lower().startswith("clasific"):
+            raise RuntimeError(
+                f"bloque 'Toneladas res' (fila {r + 1}): falta la fila 'Clasificación' debajo")
+        return r, totales[0]
+    return None
+
+
+def _parse_por_categoria(cell, nrows: int, titulo: int, total_col: int,
+                         avisos: list[str]) -> dict[dt.date, float]:
+    """Producción mensual del bloque 'Toneladas res', infiriendo el año de cada mes.
+
+    Las filas de mes traen sólo el nombre ("Abril"), sin año. El año sale de la fila de cierre
+    que cierra cada tramo ("Total 2020", "Acum 2026") y se CRUZA contra la secuencia de meses:
+    - dentro de un tramo los meses son consecutivos y crecientes (sin saltos ni vuelta de año);
+    - cada tramo empieza en enero, salvo el primero (arranca en abril-2019);
+    - el año de cada cierre es el anterior + 1;
+    - un cierre 'Total YYYY' tiene que cubrir los 12 meses;
+    Cualquier inconsistencia de ESTRUCTURA levanta RuntimeError: un año mal inferido correría la
+    serie entera 12 meses sin que nada más lo note. Meses sueltos después del último cierre
+    también fallan.
+
+    Aparte, la suma de los meses de cada año se compara con el valor de su fila de cierre
+    (dentro de TOL_CIERRE). Si no coincide, ese año se DESCARTA entero (no se devuelve) y se
+    anota en `avisos`, pero el resto del archivo sigue sirviendo. Es lo que pasa con 2024 en el
+    archivo de sep-2026: sus 12 filas de mes son una copia de las de 2025, mientras que la fila
+    'Total 2024' sí trae el total real (coincide con la base). Un error de valores de un año no
+    invalida los demás; un error de estructura, sí.
+    """
+    out: dict[dt.date, float] = {}
+    pendientes: list[tuple[int, int, float]] = []  # (fila, mes, toneladas)
+    anio_prev: int | None = None
+    for r in range(titulo + 2, nrows):
+        etiqueta = _txt(cell(r, 0))
+        low = etiqueta.lower()
+        if not etiqueta:
+            if pendientes or out:
+                break  # fin del bloque
+            continue
+        if low in BLOQUES:
+            break  # empieza el bloque siguiente
+        mes = meses.numero(etiqueta)
+        valor = cell(r, total_col)
+        if mes is not None:
+            if not isinstance(valor, (int, float)) or not valor:
+                raise RuntimeError(f"fila {r + 1} ({etiqueta}): 'Total' vacío o no numérico")
+            if pendientes and mes != pendientes[-1][1] + 1:
+                raise RuntimeError(
+                    f"fila {r + 1}: {etiqueta} después de mes {pendientes[-1][1]} sin fila de "
+                    "cierre de año en el medio")
+            pendientes.append((r, mes, float(valor)))
+            continue
+        m = RX_CIERRE.match(etiqueta)
+        if not m:
+            raise RuntimeError(f"fila {r + 1}: etiqueta desconocida en el bloque: {etiqueta!r}")
+        anio = int(m.group(2))
+        if not pendientes:
+            raise RuntimeError(f"fila {r + 1}: cierre {etiqueta!r} sin meses antes")
+        if anio_prev is not None:
+            if anio != anio_prev + 1:
+                raise RuntimeError(f"fila {r + 1}: cierre {etiqueta!r} después de {anio_prev}")
+            if pendientes[0][1] != 1:
+                raise RuntimeError(f"fila {r + 1}: el tramo de {anio} no empieza en enero")
+        if m.group(1).lower() == "total" and len(pendientes) != 12:
+            raise RuntimeError(f"fila {r + 1}: {etiqueta!r} con {len(pendientes)} meses")
+        suma, cierre = sum(v for _, _, v in pendientes), cell(r, total_col)
+        if not isinstance(cierre, (int, float)) or abs(suma - cierre) > TOL_CIERRE * abs(cierre):
+            avisos.append(
+                f"{anio} descartado: la suma de sus meses ({suma / 1000:,.3f} miles tn) no "
+                f"coincide con la fila {etiqueta!r} ({cierre!r} tn)")
+        else:
+            for _, mes, v in pendientes:
+                out[dt.date(anio, mes, 1)] = v / 1000.0  # toneladas -> miles de toneladas
+        pendientes, anio_prev = [], anio
+    if pendientes:
+        raise RuntimeError(
+            f"{len(pendientes)} mes(es) después del último cierre (fila {pendientes[0][0] + 1}) "
+            "sin fila de cierre: no se puede inferir el año")
+    if not out:
+        raise RuntimeError("el bloque 'Toneladas res' no tiene meses")
+    lo, hi = RANGO_PLAUSIBLE
+    fuera = [f"{d:%Y-%m}={v:.1f}" for d, v in sorted(out.items()) if not lo <= v <= hi]
+    if fuera:
+        raise RuntimeError(f"producción fuera de rango ({lo:.0f}-{hi:.0f} miles tn): {fuera}")
     return out
 
 
-def _parse_xlsx(blob: bytes) -> dict[dt.date, float]:
-    """Parseo del formato .xlsx moderno con openpyxl (fallback). La fecha es un datetime."""
+def _parse_hoja(cell, nrows: int, ncols: int, to_date, avisos: list[str]) -> dict[dt.date, float]:
+    """Parsea una hoja en cualquiera de los dos formatos; si no reconoce ninguno, falla.
+
+    `to_date(v)` convierte la celda de fecha del formato Mes/Año (serial xls o datetime xlsx).
+    """
+    bloque = _find_bloque_toneladas(cell, nrows, ncols)
+    if bloque is not None:
+        return _parse_por_categoria(cell, nrows, *bloque, avisos)
+    try:
+        header, fecha_col, prod_col = _find_cols(cell, nrows, ncols)
+    except RuntimeError:
+        raise RuntimeError(
+            "formato desconocido: no hay bloque 'Toneladas res' (formato por categoría) ni "
+            "columnas 'Mes/Año' + 'Producción' (formato viejo)") from None
+    out: dict[dt.date, float] = {}
+    for r in range(header + 1, nrows):
+        f, v = to_date(cell(r, fecha_col)), cell(r, prod_col)
+        if f is None or not isinstance(v, (int, float)) or not v:
+            continue
+        out[f] = float(v)
+    return out
+
+
+def _parse_xls(blob: bytes, avisos: list[str]) -> dict[dt.date, float]:
+    """Formato .xls viejo (OLE2) con xlrd. En el formato Mes/Año la fecha es serial de Excel."""
+    wb = xlrd.open_workbook(file_contents=blob)
+    sh = wb.sheet_by_index(0)
+
+    def to_date(f):
+        if not isinstance(f, float) or f <= 1000:
+            return None
+        y, m, _ = xlrd.xldate_as_tuple(f, wb.datemode)[:3]
+        return dt.date(y, m, 1)
+    return _parse_hoja(sh.cell_value, sh.nrows, sh.ncols, to_date, avisos)
+
+
+def _parse_xlsx(blob: bytes, avisos: list[str]) -> dict[dt.date, float]:
+    """Formato .xlsx moderno con openpyxl. En el formato Mes/Año la fecha es un datetime."""
     wb = openpyxl.load_workbook(io.BytesIO(blob), data_only=True)
     ws = wb[wb.sheetnames[0]]
     cell = lambda r, c: ws.cell(r + 1, c + 1).value  # openpyxl es 1-based  # noqa: E731
-    header, fecha_col, prod_col = _find_cols(cell, ws.max_row, ws.max_column)
-    out: dict[dt.date, float] = {}
-    for r in range(header + 1, ws.max_row):
-        f, v = cell(r, fecha_col), cell(r, prod_col)
-        if not isinstance(f, dt.datetime) or not isinstance(v, (int, float)) or not v:
-            continue
-        out[dt.date(f.year, f.month, 1)] = float(v)
-    wb.close()
-    return out
+
+    def to_date(f):
+        return dt.date(f.year, f.month, 1) if isinstance(f, dt.datetime) else None
+    try:
+        return _parse_hoja(cell, ws.max_row, ws.max_column, to_date, avisos)
+    finally:
+        wb.close()
 
 
-def parse_produccion(blob: bytes) -> dict[dt.date, float]:
+def parse_produccion(blob: bytes, avisos: list[str] | None = None) -> dict[dt.date, float]:
     """{date(primer día del mes): produccion (miles tn res con hueso)}.
 
-    Detecta el formato por los magic bytes: ZIP (`PK`) = .xlsx moderno (openpyxl); si no,
-    OLE2 = .xls viejo (xlrd), que es lo que MAGyP publica hoy.
+    Detecta el contenedor por los magic bytes (ZIP `PK` = .xlsx; si no, OLE2 = .xls) y el
+    formato de planilla por su contenido (ver docstring del módulo). Si se pasa `avisos`, ahí
+    quedan los años descartados por inconsistentes (ver `_parse_por_categoria`).
     """
-    return _parse_xlsx(blob) if blob[:2] == b"PK" else _parse_xls(blob)
+    avisos = [] if avisos is None else avisos
+    return _parse_xlsx(blob, avisos) if blob[:2] == b"PK" else _parse_xls(blob, avisos)
 
 
-def get_latest() -> tuple[dict[dt.date, float], str] | None:
-    """({date: produccion}, url_xls) siguiendo la cadena página → PDF → xls, o None."""
+def get_latest() -> tuple[dict[dt.date, float], str, list[str]] | None:
+    """({date: produccion}, url_xls, avisos) siguiendo la cadena página → PDF → xls, o None.
+
+    `avisos`: años que el parser descartó por inconsistentes (el run los informa).
+    """
     pdf_url = _find_tablero_pdf()
     xls_url = _resolver_xls(_find_xls_uri(download(pdf_url)), pdf_url)
-    data = parse_produccion(download(xls_url))
-    return (data, xls_url) if data else None
+    avisos: list[str] = []
+    data = parse_produccion(download(xls_url), avisos)
+    return (data, xls_url, avisos) if data else None
 
 
 if __name__ == "__main__":  # smoke test
@@ -223,7 +373,9 @@ if __name__ == "__main__":  # smoke test
     urllib3.disable_warnings()
     res = get_latest()
     if res:
-        data, url = res
+        data, url, avisos = res
         print(url)
+        for a in avisos:
+            print(f"  aviso: {a}")
         for d in sorted(data)[-6:]:
             print(f"  {d:%Y-%m}  {data[d]:.3f}")
