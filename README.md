@@ -24,7 +24,7 @@ Census X-13** reutilizable. La base es un **Postgres** (en el servidor: `10.0.16
 | `refinacion` | `etl_refinacion` | — (la fuente trae 2010→) | **API Superset** Sec. Energía (POST por concepto) |
 | `escrituras_caba` | `etl_escrituras_caba` | — (los informes traen 2016-02→) | **API REST de WordPress** del Colegio de Escribanos |
 | `icc` | `etl_icc` | — (la planilla trae 1998→) | **.xls UTDT** (link resuelto por scrape) |
-| `icg` | `etl_icg` | — (la planilla trae 2001→) | **.xls UTDT** (link resuelto por scrape) |
+| `icg` | `etl_icg` | — (la planilla y el .dta traen 2001→) | **.xls UTDT** (`icg`) + **microdatos .dta** (aperturas); links resueltos por scrape |
 | `datos_gob` | `etl_datos_gob` | — (la API trae 1965→) | **API oficial** `apis.datos.gob.ar/series` + **.csv INDEC** (URL fija) para el índice de salarios |
 | `comex` | `etl_comex` | — (las planillas traen 2004→) | **2 .xls INDEC** (URLs fijas, `xlrd`) |
 
@@ -107,27 +107,45 @@ dataset:
   La planilla repite la columna "ICC Nacional" en sus dos hojas y **no coinciden** en 24 meses
   viejos (casi todo redondeo, pero 2009-06 difiere en 0,2): `nacional` se toma siempre de la
   hoja de regiones.
-- **icg**: Índice de Confianza en el Gobierno (UTDT), escala 0-5. Una serie (`icg`), continua
-  desde 2001-11. La planilla está **traspuesta** (meses en columnas) y partida en dos hojas
-  (2001-2022 y 2023→) que empalman sin solaparse.
-- **datos_gob**: 14 series de organismos públicos, por **dos fuentes con prioridad explícita**.
-  De la **API oficial de Series de Tiempo del Estado** (`apis.datos.gob.ar/series`) salen 9:
-  `isac` (construcción), `ipi_manufacturero`, `ipc_nacional`, `expo_total` / `impo_total`
-  (comercio exterior en USD), `ventas_supermercados`, `ventas_centros_compras`, `ripte` y `smvm`.
-  Las 5 aperturas del **índice de salarios** de INDEC (`total`, `registrado`, `priv_registrado`,
-  `publico`, `priv_no_registrado`) salen de un **CSV de cuadros del INDEC**
-  (`indec.gob.ar/ftp/cuadros/sociedad/indice_salarios.csv`), y para ellas la API es el
-  **respaldo**: el feed de la API va ~2 meses atrás del cuadro, con 611 meses idénticos en el
-  solapamiento. Ambas entran con `estado='definitivo'`; la columna `fuente` dice por cuál entró
-  cada fila. Es el único dataset **star-schema mensual**: sus series no comparten unidad
+- **icg**: Índice de Confianza en el Gobierno (UTDT), escala 0-5, continuo desde 2001-11. La
+  serie principal (`icg`) sale de la planilla, que está **traspuesta** (meses en columnas) y
+  partida en dos hojas (2001-2022 y 2023→) que empalman sin solaparse. Las 16 **aperturas** se
+  calculan desde los **microdatos .dta** de la misma página (~22 MB, ~1000 casos por mes), como
+  media ponderada (`ponderacion_UTDT`) por `ola`: los 5 componentes (`icg_eval_gob`,
+  `icg_benef_gob`, `icg_adm_gp`, `icg_cor_gob`, `icg_resol_prob`) y el ICG por zona
+  (`icg_zona_{caba,bsas,interior}`), sexo (`icg_sexo_{femenino,masculino}`), edad
+  (`icg_edad_{18_29,30_49,50_mas}`) y nivel educativo
+  (`icg_edu_{primario,secundario,terciario_univ}`). Cada corrida controla que el ICG recalculado
+  desde los microdatos coincida con la planilla: da igual en 289 de 299 meses (±0,005); los 10
+  restantes son diferencias históricas de la fuente y sólo se informan. Una falla del .dta no
+  frena la carga de `icg`.
+- **datos_gob**: 15 series de organismos públicos, por **tres fuentes con prioridad explícita**.
+  De la **API oficial de Series de Tiempo del Estado** (`apis.datos.gob.ar/series`) salen 7:
+  `isac` (construcción), `ipi_manufacturero`, `ipc_nacional`, `ventas_supermercados`,
+  `ventas_centros_compras`, `ripte` y `smvm`. Las otras 8 salen de **cuadros del INDEC**, y para
+  ellas la API es el **respaldo** (entra sólo si el cuadro no estuvo, y no pisa lo que el cuadro
+  ya escribió):
+  - las 5 aperturas del **índice de salarios** (`total`, `registrado`, `priv_registrado`,
+    `publico`, `priv_no_registrado`), de un **CSV**
+    (`indec.gob.ar/ftp/cuadros/sociedad/indice_salarios.csv`): la API va ~2 meses atrás, con
+    611 meses idénticos en el solapamiento;
+  - **comercio exterior en USD** —`expo_total`, `impo_total` y `saldo_total` (la columna Saldo
+    del cuadro, no una resta nuestra)—, de la **planilla XLS** del ICA
+    (`indec.gob.ar/ftp/cuadros/economia/balanmensual.xls`), desde 1990-01: trae el mes el mismo
+    día del ICA, cuando la API va ~4 semanas atrás y arrastra una versión vieja de 2016, 2017,
+    2022 y 2023. Los meses que la planilla marca provisorios (`*`) o estimados (`e`) entran con
+    `estado='provisorio'`.
+
+  El resto entra con `estado='definitivo'`; la columna `fuente` dice por cuál entró cada fila. Es el único dataset **star-schema mensual**: sus series no comparten unidad
   (conviven índices, dólares y pesos), así que el nombre y la unidad viven en
   `etl_datos_gob_series`.
-  Las 11 series en valores corrientes tienen además **valor real** en `etl_datos_gob_real`, a
+  Las 12 series en valores corrientes tienen además **valor real** en `etl_datos_gob_real`, a
   precios del último dato de cada serie (base móvil y por serie; el mes viaja en `mes_base`).
   Son **dos deflactores**, ambos de `public.deflactores` y elegidos por la columna `deflactor`:
   `ipc_largo` para las 9 en pesos (desde 1990-01) y `uscpi_mensual` —CPI-U del BLS, NSA— para
-  `expo_total` / `impo_total`, porque estar en dólares no exime de deflactar. Las 2 de ventas y
-  las 2 de comercio exterior se **desestacionalizan sobre esa serie real**; `isac` e
+  `expo_total` / `impo_total` / `saldo_total`, porque estar en dólares no exime de deflactar.
+  Las 2 de ventas y expo/impo se **desestacionalizan sobre esa serie real** (el saldo no: puede
+  ser negativo, y su desest se deriva como expo − impo); `isac` e
   `ipi_manufacturero` traen la **desestacionalizada oficial de INDEC** —no les corremos X-13
   encima— y las columnas `desest_fuente` / `desest_parametros` dicen cuál de los dos orígenes es.
   `etl_datos_gob_completo` devuelve los tres valores —nominal, real y desestacionalizado— en una
@@ -155,8 +173,9 @@ dataset:
 
 > **datos_gob sigue sin scrapear un solo link.** Sumar una serie de la API es agregar una fila a
 > `SERIES_META` en su `config.py` — no se escribe código. El CSV del índice de salarios tampoco
-> scrapea: la URL del cuadro es **fija**, sin fecha en el nombre, y por eso se lo pudo poner de
-> fuente primaria (`SERIES_CSV` en el mismo `config.py`). La evaluación de la fuente, incluido
+> scrapea, ni la planilla de comercio exterior: las URL de los cuadros son **fijas**, sin fecha en
+> el nombre, y por eso se los pudo poner de fuente primaria (`SERIES_CSV` y `SERIES_XLS` en el
+> mismo `config.py`). La evaluación de la fuente, incluido
 > **por qué NO reemplaza a ninguno de los otros scrapers**, está en `docs/datos_gob_ar.md`.
 
 ### Series diarias (BCRA)
@@ -374,7 +393,7 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # acero: ventana ancha a proposito. NO sabemos el dia real de publicacion de la CAA: la unica
 # publicacion observada es junio/2026, que aparecio el 31-jul (al 4-jul lo ultimo publicado era
 # mayo). Con un solo dato no se puede acotar, y la corrida es un no-op de segundos. Cuando haya
-# 2-3 fechas observadas, cerrar la ventana y bajar `horas_max` en etl/schema_control.sql en el
+# 2-3 fechas observadas, cerrar la ventana y bajar `horas_max` en etl/schema_control_salud.sql en el
 # mismo cambio.
 0  10 15-31,1-10 * * /home/jmt/dev/downloader/scripts/run_etl.sh acero
 0  11 20-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh aves
@@ -391,10 +410,12 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # escrituras_caba: el Colegio de Escribanos publica entre el dia 22 y el 26 del mes siguiente
 # (medido sobre los ultimos 24 informes). Ventana 22-31, igual que icg.
 0  16 22-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh escrituras_caba
-# datos_gob: 14 series de organismos distintos, cada uno con su calendario. Sin ventana; la
-# corrida son 11 requests a la API (9 series + las 2 desest oficiales de isac/ipi) mas 1 GET del
-# cuadro CSV del indice de salarios, y es idempotente.
+# datos_gob: 15 series de organismos distintos, cada uno con su calendario. Sin ventana; la
+# corrida son 9 requests a la API (7 series + las 2 desest oficiales de isac/ipi) mas 2 GET de
+# cuadros del INDEC (CSV del indice de salarios, XLS de balanza comercial), y es idempotente. Segunda pasada a las 17:30: INDEC publica
+# a las 16:00 y una sola pasada a las 15:45 deja el dato del dia para el dia habil siguiente.
 45 15 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh datos_gob
+30 17 *         * * /home/jmt/dev/downloader/scripts/run_etl.sh datos_gob
 # hidrocarburos: la Secretaria de Energia publica el capitulo IV a fines del mes siguiente
 # (julio-2026 ya estaba el 26-ago). Ventana 20-31,1-10 como leche. La corrida son 2 GET de ~9 KB
 # a la API de Superset y es idempotente.
@@ -406,7 +427,11 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # comex: INDEC publica el ICA a mediados del mes siguiente (junio-2026 quedo en las planillas el
 # 20-jul). Ventana 18-31, igual que granos. La corrida re-lee siempre los meses de los anios que
 # INDEC todavia marca provisorios, asi que ademas capta las revisiones sin pedirselo.
+# Segunda pasada a las 17:30 porque INDEC publica a las 16:00 y los archivos no siempre estan a
+# las 16:30: el 2026-09-18 las planillas del ICA se actualizaron a las 16:12 y la corrida de las
+# 16:30 todavia leyo julio (cache). La de 17:30 es la que lo agarra. Idempotente.
 30 16 18-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh comex
+30 17 18-31     * * /home/jmt/dev/downloader/scripts/run_etl.sh comex
 # reservas_pasivos: dos pasadas por dia habil, 10:00 y 16:30 (pedido del usuario, 16/08/2026).
 # OJO: el BCRA sube diar_bas.xls a la TARDE -- ~18:22 segun el `Last Saved` del archivo del
 # viernes 14-ago -- asi que NINGUNA de las dos pasadas ve la publicacion del dia: el dato entra
@@ -420,7 +445,7 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # el dia real de publicacion: la pagina dice "se actualiza los miercoles" pero no esta verificado.
 # Es idempotente y barato (baja ~4 paginas y re-lee las ultimas 3 semanas, con lo que ademas
 # capta las revisiones), asi que correr de mas no cuesta nada. Cuando se confirme el dia, acotar
-# la ventana y bajar `horas_max` en etl/schema_control.sql en el mismo cambio.
+# la ventana y bajar `horas_max` en etl/schema_control_salud.sql en el mismo cambio.
 0  10 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh compras_granos
 # Diario (precios FOB oficiales de granos, MAGyP). Son ~8 requests con pausa de 1 s; la corrida
 # re-lee 7 dias hacia atras ademas de lo que falta, por las circulares con efecto retroactivo.
@@ -432,10 +457,13 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # corre el `load-history` (~8.600 requests), hacerlo de noche y por tramos -- ver INTEGRATION.md.
 0  9 *          * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh fob_granos
 # Semanal (Commitments of Traders de la CFTC). Corte los martes, publicacion viernes 15:30 ET
-# (~17:30 ART). Corre diario porque los feriados de EEUU corren la publicacion al lunes y la
-# corrida son 4 requests a la API de Socrata: sale mas barato correr de mas que acertar el dia.
-# Mismo caso que fob_granos: a las 9:00 la publicacion del viernes entra el sabado.
+# (16:30 ART con horario de verano de EEUU, 17:30 sin el). Corre diario porque los feriados de
+# EEUU corren la publicacion al lunes y la corrida son 4 requests a la API de Socrata: sale mas
+# barato correr de mas que acertar el dia. La pasada de las 9:00 no ve la publicacion del
+# viernes; por eso hay una segunda los viernes a las 18:00 (desde el 18-sep-2026), que cubre
+# las dos horas posibles y la hace entrar el mismo dia.
 0  9 *          * * /home/jmt/dev/downloader/scripts/run_etl.sh cot
+0 18 *          * 5 /home/jmt/dev/downloader/scripts/run_etl.sh cot
 ```
 > Los jobs pasan por **`scripts/run_etl.sh`**, que hace el `cd` al repo, escribe
 > `/home/jmt/data/etls/<dataset>.log` y —sólo si la corrida falla— repite el final por stderr
@@ -471,12 +499,13 @@ meses se ve idéntico a uno que corre a diario sin novedad. Si el **dato** está
 leyendo las tablas (y la vista trae `ultimo_dato` en la misma fila); esta tabla dice si el
 **proceso** está vivo.
 
-Para consumir desde una app, dos vistas:
+Para consumir desde una app, tres vistas:
 
 | Vista | Para qué |
 |---|---|
 | `etl_control_ultima` | última corrida de cada dataset que alguna vez corrió |
-| **`etl_control_salud`** | los 20 datasets **siempre**, con dos veredictos: proceso y dato |
+| **`etl_control_salud`** | los 22 datasets **siempre**, con dos veredictos: proceso y dato |
+| `etl_datos_gob_salud` | frescura **por serie** de `datos_gob` (14 filas), con el umbral de cada una |
 
 ```sql
 -- ¿Hay algo roto de nuestro lado? Si vuelve vacío, está todo bien.
@@ -498,6 +527,12 @@ es accionable por nosotros (hay algo que arreglar acá), `estado_dato` casi nunc
 organismo se atrasó). El caso que sí importa mirar es `estado = ok` con `estado_dato = DATO_VIEJO`
 sostenido: puede ser que la fuente cambió de formato y el parser la esté ignorando sin fallar.
 El detalle de cómo se derivan los umbrales está en `help_etl.md`.
+
+`datos_gob` es la excepción al control por dataset: sus 15 series tienen calendarios distintos y
+`smvm` trae meses futuros fijados por decreto, así que el `max(date)` del dataset no envejece
+nunca. Se controla **serie por serie** en `etl_datos_gob_salud` (umbrales en `DIAS_MAX_DATO` de
+`etl/datasets/datos_gob/config.py`), y su fila de `etl_control_salud` pasa a `DATO_VIEJO` si
+cualquier serie se atrasa; la columna `series_no_ok` dice cuáles.
 
 > La escritura del control **nunca** rompe ni cambia el resultado de la corrida: si falla (base
 > caída, tabla sin crear), avisa por stderr y sigue. Se crea con `python -m etl init-db`.
@@ -588,6 +623,7 @@ Parametrización actual (calibrada contra la referencia de cada serie, error ~0)
 | escrituras_caba | `compraventa` | `mult` | `td1coef` | `s3x5` | — |
 | datos_gob | `ventas_supermercados`, `ventas_centros_compras` | `mult` | `td` | `s3x5` | — |
 | datos_gob | `expo_total`, `impo_total` | `mult` | `td1coef` | `s3x5` | — |
+| datos_gob | `saldo_total` | *sin X-13*: puede ser negativo; desest = expo − impo (ajuste indirecto) | — | — | — |
 | comex | las 6 de cantidad | `mult` | `td1coef` | `s3x5` | — |
 
 > **patentamientos** aún no tiene referencia de calibración: `mode=auto` deja que X-13 elija
@@ -985,22 +1021,62 @@ columna `desest` es la **referencia de calibración** (reproducida con error ~0)
 
 La página de bovinos no linkea el xls de datos directamente. `etl/datasets/bovinos/source.py`
 sigue una cadena: scrapea la página de información sectorial → encuentra el PDF **"Tablero de
-Faena Bovina"** → **extrae el hipervínculo embebido** dentro del PDF (con `pdfplumber`), que
-apunta al xls mensual `Faena_Bovina_<años>_mensual..xls` → lo baja y parsea. El nombre del xls
-cambia con el rango de años, pero el link del PDF siempre apunta al vigente.
+Faena Bovina"** → **extrae el hipervínculo embebido** dentro del PDF (con `pdfplumber`) → baja el
+xls y lo parsea. El nombre del xls cambia, pero el link del PDF siempre apunta al vigente.
 
-El xls es formato `.xls` viejo (se lee con **`xlrd`**); se ubican por texto las columnas
-*Mes/Año* y *Producción (miles tn res con hueso)* y se toma la producción (2019→, `definitivo`).
-El histórico profundo (1998→) sale de `etl/datasets/bovinos/data/Bovinos.xlsx` (`load-history`),
-cuya columna `desest` es la **referencia de calibración**.
+El xls es formato `.xls` viejo (se lee con **`xlrd`**). El histórico profundo (1998→) sale de
+`etl/datasets/bovinos/data/Bovinos.xlsx` (`load-history`), cuya columna `desest` es la
+**referencia de calibración**.
+
+### Cambio de planilla (sep-2026)
+
+Hasta agosto de 2026 el PDF apuntaba a `Faena_Bovina_<años>_mensual.xls`, con una columna
+*Mes/Año* (fecha) y otra *Producción (miles tn res con hueso)*. Desde septiembre de 2026 apunta a
+`Planilla_Informe_Faena_Bovina_.xls`, con otro diseño, y el ETL falló a diario hasta adaptarlo.
+
+La hoja *Faena por categoria* trae tres bloques apilados: *Cabezas*, *Toneladas res* y *Peso
+res*. Cada bloque tiene una fila de título, una fila *Clasificación* con las categorías, una fila
+por mes y una fila de cierre por año.
+
+- La producción es la columna **"Total"** del bloque **"Toneladas res"**, dividida por 1000.
+  Bloque y columna se ubican por texto, no por posición.
+- Las filas de mes traen **sólo el nombre del mes, sin año**. El año sale de la fila de cierre
+  de cada tramo (*Acum. Abr-Dic 2019*, *Total 2020* … *Total 2024*, *Acum 2025*, *Acum 2026*) y
+  se cruza con la secuencia de meses: consecutivos dentro del tramo, cada tramo (salvo el
+  primero) empieza en enero, años de cierre correlativos y *Total* con 12 meses. Cualquier
+  inconsistencia de estructura hace fallar la corrida: un año mal inferido correría la serie
+  entera sin que nada lo note.
+- Si el formato no es ni este ni el viejo, la corrida falla con "formato desconocido". El parser
+  del formato viejo se conserva porque la planilla desde 1990 (ver abajo) lo sigue usando.
+
+Contra la base, el archivo nuevo coincide en 77 de los 89 meses 2019-04 → 2026-08 (las
+diferencias de 2026 no superan el 0,1%). **Los 12 meses de 2024 no coinciden**: difieren entre
+0,5% y 12,5% (2024-06: 262,3 contra 233,1). No es una revisión, es un error de la planilla:
+
+- las 12 filas de mes de 2024 son una **copia de las de 2025**: su suma (3.143.544 tn) es la fila
+  *Acum 2025*;
+- la fila *Total 2024* sí trae el total real (3.178.044 tn), que coincide con la base;
+- la planilla desde 1990 también coincide con la base en 2024.
+
+Dos filtros impiden que ese error entre a la base:
+
+1. **En `source.py`**: si la suma de los meses de un año no coincide con su fila de cierre (0,1%),
+   ese año se descarta entero y la corrida lo informa como `AVISO`, sin fallar.
+2. **En `run.py`**: el archivo sólo **agrega meses nuevos**. Un mes que ya tiene `definitivo` en
+   la base no se reescribe. Si difiere en hasta 0,1%, cuenta como `sin_cambios`. Si difiere en
+   más, se imprime `NO se pisa: archivo=… base=…` y cuenta como `saltados` en el resumen y en
+   `etl_control_ejecucion`, sin fallar la corrida. `--force` no saltea esta guarda.
+
+Consecuencia: desde sep-2026 el ETL **ya no absorbe revisiones** de meses que ya tiene. Corregir
+un mes es una decisión manual.
 
 ### MAGyP publica DOS planillas de la misma serie, y no coinciden
 
 De la misma página cuelgan dos PDFs, cada uno con su propio Excel embebido:
 
-| PDF | Excel | Rango (ago-2026) |
+| PDF | Excel | Rango (último visto) |
 |---|---|---|
-| `Tablero_Faena_Bovino.pdf` | `Faena_Bovina_2019-2026_mensual.xls` | 2019-04 → **2026-07** |
+| `Tablero_Faena_Bovino.pdf` | `Planilla_Informe_Faena_Bovina_.xls` (hasta ago-2026: `Faena_Bovina_2019-2026_mensual.xls`) | 2019-04 → **2026-08** |
 | `Indicadores bovinos.pdf` (pág. 13) | `Planilla_indicadores_bovinos_desde_1990_MENSUAL.xlsx` | **1990-01** → 2026-06 |
 
 El ETL diario usa el **primero** y así queda: es el que trae el mes más reciente, que es lo que

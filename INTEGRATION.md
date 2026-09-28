@@ -325,8 +325,8 @@ ETL corrió `ok` y `ultimo_dato` no se movió, es que MAGyP todavía no publicó
 | `hidrocarburos` | `petroleo`, `gas` (totales) + `<serie>_convencional`, `_shale`, `_tight` | `petroleo`, `gas` *(sólo los totales)* |
 | `escrituras_caba` | `compraventa`, `monto`, `hipotecas`, `monto_medio`, `monto_medio_usd` | `compraventa` |
 | `icc` | `nacional`, `capital`, `gba`, `interior`, `situacion_personal`, `situacion_macro`, `bienes_durables` | *(ninguna)* |
-| `icg` | `icg` | *(ninguna)* |
-| `datos_gob` | las 14: `isac`, `ipi_manufacturero`, `ipc_nacional`, `expo_total`, `impo_total`, `ventas_supermercados`, `ventas_centros_compras`, `ripte`, `smvm`, `indice_salarios_total`, `indice_salarios_registrado`, `indice_salarios_priv_registrado`, `indice_salarios_publico`, `indice_salarios_priv_no_registrado` | `ventas_supermercados`, `ventas_centros_compras`, `expo_total`, `impo_total` *(las 4 sobre la serie real)* + `isac`, `ipi_manufacturero` *(oficiales de INDEC, no X-13)* |
+| `icg` | `icg` + 16 aperturas: `icg_{eval_gob,benef_gob,adm_gp,cor_gob,resol_prob}` (componentes), `icg_zona_{caba,bsas,interior}`, `icg_sexo_{femenino,masculino}`, `icg_edad_{18_29,30_49,50_mas}`, `icg_edu_{primario,secundario,terciario_univ}` | *(ninguna)* |
+| `datos_gob` | las 15: `isac`, `ipi_manufacturero`, `ipc_nacional`, `expo_total`, `impo_total`, `saldo_total`, `ventas_supermercados`, `ventas_centros_compras`, `ripte`, `smvm`, `indice_salarios_total`, `indice_salarios_registrado`, `indice_salarios_priv_registrado`, `indice_salarios_publico`, `indice_salarios_priv_no_registrado` | `ventas_supermercados`, `ventas_centros_compras`, `expo_total`, `impo_total` *(las 4 sobre la serie real)* + `isac`, `ipi_manufacturero` *(oficiales de INDEC, no X-13)*. `saldo_total` no: se deriva como expo − impo desest |
 | `comex` | las 18: `expo_{valor,precio,cantidad}_{general,primarios,moa,moi,combustibles}` + `impo_{valor,precio,cantidad}_general` | las 6 de cantidad: `expo_cantidad_{general,primarios,moa,moi,combustibles}`, `impo_cantidad_general` |
 
 > Las series que **no** están en `_desest` (p.ej. `lino`/`algodon`/`cartamo`/`canola` de granos, o
@@ -367,31 +367,145 @@ semanales*). Ninguno de los dos se desestacionaliza.
 
 ## ¿El ETL está vivo? (`etl_control_salud`)
 
+Esta sección alcanza sola para montar las alertas de una app: qué mirar, qué significa cada
+estado y las queries listas para correr.
+
 Las tablas de arriba dicen **hasta dónde llega el dato**. No dicen si el ETL sigue corriendo:
 son append-only y una corrida sin cambios no escribe nada, así que `max(ingested_at)` significa
 "último día que un valor cambió", no "último día que el ETL corrió".
 
-Para eso está **`etl_control_ejecucion`**, con una fila por corrida (ande o no), y su vista:
+Para eso hay tres objetos de control:
 
-```sql
--- Chequeo rápido desde la app: si vuelve vacío, está todo bien.
-select * from etl_control_salud where estado <> 'ok';
-```
+| Objeto | Grano | Para qué |
+|---|---|---|
+| `etl_control_salud` | una fila por dataset (los 22, hayan corrido o no) | **LA vista para alertar**: veredicto de proceso y de dato |
+| `etl_datos_gob_salud` | una fila por serie de `datos_gob` (15) | cuál serie de `datos_gob` está vieja y por cuánto |
+| `etl_control_ejecucion` | una fila por corrida, ande o no | historial: fallas intermitentes, contadores completos |
+
+(`etl_control_ultima` es la última corrida de cada dataset; `etl_control_salud` la cruza con los
+umbrales.)
+
+### Dos preguntas, dos columnas: `estado` y `estado_dato`
+
+`etl_control_salud` separa a propósito dos cosas que no se parecen en nada:
+
+- **`estado` mide el PROCESO.** Se cae si el cron dejó de disparar o si la corrida falló. Es
+  accionable por nosotros: hay algo que arreglar en la máquina o en el código.
+- **`estado_dato` mide el DATO.** Se cae si la fuente no publicó nada nuevo en el plazo esperado.
+  No es accionable por nosotros: el ETL puede estar corriendo perfecto todos los días y devolver
+  `sin_cambios` porque el organismo todavía no publicó.
+
+| `estado` | Significa |
+|---|---|
+| `ok` | la última corrida anduvo y fue dentro del hueco esperado |
+| `FALLA` | la última corrida corrió y registró al menos una falla (ver `fallas`) |
+| `SIN_CORRER` | pasaron más de `horas_max` horas desde la última corrida: el cron dejó de disparar |
+| `NUNCA_CORRIO` | no hay ninguna corrida registrada para ese dataset |
+
+| `estado_dato` | Significa |
+|---|---|
+| `ok` | el último dato tiene una edad normal para el calendario de la fuente |
+| `DATO_VIEJO` | el último dato es más viejo que `dias_max_dato`. En `datos_gob`: **alguna serie** lo es |
+| `SIN_DATO` | el dataset no tiene ningún dato cargado |
+
+Columnas de `etl_control_salud`:
 
 | Columna | Significado |
 |---|---|
-| `dataset` | los 20, hayan corrido o no |
-| `estado` | **proceso**: `ok` · `FALLA` · `SIN_CORRER` · `NUNCA_CORRIO` |
+| `dataset` | los 22, hayan corrido o no |
 | `estado_ultima_corrida` | `ok` / `falla` de la última ejecución |
-| `ultima_corrida` · `horas_desde` | cuándo terminó y hace cuánto |
-| `horas_max` | hueco legítimo máximo según la ventana del cron |
+| `ultima_corrida` · `horas_desde` | cuándo terminó y hace cuántas horas |
+| `horas_max` | hueco legítimo máximo entre corridas, según la ventana del cron |
 | `ultimo_dato` | `max(date)` del dataset tras esa corrida |
-| `fallas` | array con el detalle; `NULL` si anduvo |
-| `dias_dato` · `dias_max_dato` | edad de `ultimo_dato` y su máximo tolerado |
-| `estado_dato` | **dato**: `ok` · `DATO_VIEJO` · `SIN_DATO` |
+| `fallas` | array con el detalle de cada falla; `NULL` si anduvo |
+| `estado` | **proceso** (ver arriba) |
+| `dias_dato` · `dias_max_dato` | edad de `ultimo_dato` y su máximo tolerado. En `datos_gob`, `dias_max_dato` es `NULL`: el umbral es por serie |
+| `estado_dato` | **dato** (ver arriba) |
+| `series_no_ok` | sólo en datasets con control por serie (`datos_gob`): las series fuera de `ok`, como `{serie:ESTADO,...}`. `NULL` si están todas bien o si el dataset se controla entero |
 
 `SIN_CORRER` significa que el cron dejó de disparar. `FALLA` significa que corrió y no pudo
-traer el dato.
+traer el dato (o parte de él).
+
+### Por dataset, salvo `datos_gob`, que va por serie
+
+En 21 de los 22 datasets, `estado_dato` compara `ultimo_dato` —el `max(date)` del dataset— contra
+un único `dias_max_dato`. Alcanza porque sus series comparten fuente y calendario.
+
+**`datos_gob` no**: son 15 series de organismos distintos, cada una con su calendario, y el
+`max(date)` del dataset es ciego por construcción. `smvm` trae meses **futuros** (el salario
+mínimo se fija por decreto con meses de anticipación; hoy llega a 2027-04), así que ese máximo no
+envejece nunca; y aunque no estuviera, avanza en cuanto publica la serie más rápida, así que una
+serie congelada pasa inadvertida.
+
+Por eso `datos_gob` se controla **serie por serie** en `etl_datos_gob_salud`, cada una con su
+propio umbral, y `etl_control_salud` lo resume: la fila de `datos_gob` marca
+`estado_dato = 'DATO_VIEJO'` si **cualquier** serie no está en `ok`, y `series_no_ok` dice cuáles.
+Una alerta montada sobre `etl_control_salud` ve entonces una serie congelada sin tener que saber
+nada de `datos_gob`; para el detalle se baja a la vista por serie.
+
+En la fila de `datos_gob`, `ultimo_dato` y `dias_dato` siguen siendo el máximo del dataset y son
+sólo informativos (`dias_dato` sale negativo por los meses futuros de `smvm`). No alertar sobre
+ellos.
+
+Columnas de `etl_datos_gob_salud`:
+
+| Columna | Significado |
+|---|---|
+| `serie` · `nombre` · `organismo` | la serie, como en `etl_datos_gob_actual` |
+| `ultimo_dato` | `max(date)` observado de la serie. Los meses futuros de `smvm` son dato legítimo |
+| `dias` | `current_date - ultimo_dato`; negativo si el último dato es futuro |
+| `dias_max_dato` | umbral de esa serie |
+| `estado_dato` | `ok` · `DATO_VIEJO` (`dias > dias_max_dato`) · `SIN_DATO` (la serie no tiene ningún dato) · `SIN_UMBRAL` (la serie no tiene umbral cargado: error de configuración, no del dato) |
+
+Los umbrales por serie van de 90 días (`ipc_nacional`, `smvm`) a 150 (los cinco
+`indice_salarios_*`); expo/impo/saldo están en 100. Están medidos sobre la edad real con la que
+cada serie aparece en la base desde su fuente primaria —no sobre el calendario teórico del
+organismo, porque la API puede ir semanas atrás del INDEC— y la medición de cada uno está
+comentada en `DIAS_MAX_DATO`, en `etl/datasets/datos_gob/config.py`. La tabla completa está en
+`help_etl.md`.
+
+### Queries listas para la app
+
+```sql
+-- (a) Salud general. Si las dos vuelven vacías, está todo bien.
+
+-- Alerta accionable: hay algo que arreglar de nuestro lado.
+select dataset, estado, ultima_corrida, horas_desde, horas_max, fallas
+from etl_control_salud
+where estado <> 'ok';
+
+-- Informativo: la fuente se atrasó (o un parser dejó de ver datos, ver abajo).
+select dataset, estado_dato, ultimo_dato, dias_dato, dias_max_dato, series_no_ok
+from etl_control_salud
+where estado_dato <> 'ok';
+```
+
+```sql
+-- (b) Qué serie de datos_gob está vieja, y por cuántos días se pasó de su umbral.
+select serie, nombre, organismo, ultimo_dato, dias, dias_max_dato,
+       dias - dias_max_dato as dias_de_exceso,
+       estado_dato
+from etl_datos_gob_salud
+where estado_dato <> 'ok'
+order by dias_de_exceso desc nulls first;
+
+-- Panel completo de datos_gob, las 15 series con su margen hasta la alarma.
+select serie, ultimo_dato, dias, dias_max_dato,
+       dias_max_dato - dias as dias_hasta_alarma,
+       estado_dato
+from etl_datos_gob_salud;
+```
+
+```sql
+-- (c) Leer las fallas: una fila por error de la ÚLTIMA corrida de cada dataset.
+select dataset, estado, ultima_corrida, falla
+from etl_control_salud, unnest(fallas) as falla
+where fallas is not null
+order by ultima_corrida desc;
+```
+
+El formato de cada falla y por qué conviene mirar también el historial está en la subsección
+siguiente.
 
 ### Leer los errores que reportó el ETL
 
@@ -399,13 +513,7 @@ traer el dato.
 (`text[]`) de `etl_control_ejecucion`, y la propaga `etl_control_ultima` y `etl_control_salud`.
 El log (`/home/jmt/data/etls/<dataset>.log`) sólo agrega el ruido de alrededor.
 
-```sql
--- Una fila por error, listo para mostrar o alertar.
-select dataset, estado, ultima_corrida, falla
-from etl_control_salud, unnest(fallas) as falla
-where fallas is not null
-order by ultima_corrida desc;
-```
+La query **(c)** de arriba devuelve una fila por error, lista para mostrar o alertar.
 
 Cada string tiene el formato **`<dataset> / <comando>[ <ítem>]: <mensaje>`**, donde `<ítem>` es la
 serie o el mes que falló, cuando la falla es de uno solo:
@@ -473,30 +581,29 @@ lo que hace que el cron mande el mail.
 
 ### Para la app: cuál de las dos columnas alertar
 
-Son dos preguntas distintas y conviene tratarlas distinto:
+- **`estado <> 'ok'`** → alerta de guardia. Es nuestro: cron caído, código roto o fuente caída.
+- **`estado_dato <> 'ok'`** → aviso informativo, no de guardia. Lo normal es que el organismo
+  publique tarde.
 
-```sql
--- Alerta accionable: hay algo que arreglar de nuestro lado.
-select * from etl_control_salud where estado <> 'ok';
-
--- Informativo: la fuente se atrasó. Sirve para explicarle al usuario por qué un
--- gráfico "no avanza", sin que parezca que el sistema está roto.
-select dataset, ultimo_dato, dias_dato, dias_max_dato
-from etl_control_salud where estado_dato <> 'ok';
-```
-
-`DATO_VIEJO` **no** debería disparar un alerta de guardia: lo normal es que el organismo publique
-tarde. Sirve para dos cosas: mostrar en la UI que el dato está desactualizado por la fuente y no
-por el pipeline, y detectar el caso silencioso en que la fuente cambió de formato y el parser la
-ignora sin lanzar excepción (`estado = ok` + `estado_dato = DATO_VIEJO` sostenido varias semanas).
+`DATO_VIEJO` sirve para dos cosas: mostrar en la UI que el dato está desactualizado por la fuente
+y no por el pipeline, y detectar el caso silencioso en que la fuente cambió de formato y el parser
+la ignora sin lanzar excepción (`estado = ok` + `estado_dato = DATO_VIEJO` sostenido varias
+semanas). Si el dataset es `datos_gob`, bajar a `etl_datos_gob_salud` (query **(b)**) para saber
+qué serie es: el INDEC atrasado en una serie no dice nada de las otras 13.
 
 Los umbrales de `dias_max_dato` salen de `edad del label al publicarse + un período + margen`,
-dataset por dataset. Cuidado con el primer término: **no** es el rezago de la fuente. Como `date`
-es el primer día del período, el label ya viene con el período entero encima (ADEFA publica junio
-el 04/07 —rezago real de 4 días— pero `ultimo_dato` vale `2026-06-01`, o sea 33 días de edad).
-La derivación completa está en `help_etl.md`.
+dataset por dataset (y serie por serie en `datos_gob`). Cuidado con el primer término: **no** es
+el rezago de la fuente. Como `date` es el primer día del período, el label ya viene con el período
+entero encima (ADEFA publica junio el 04/07 —rezago real de 4 días— pero `ultimo_dato` vale
+`2026-06-01`, o sea 33 días de edad). La derivación completa está en `help_etl.md`.
 
 ## ICC e ICG (UTDT) — cómo consumirlos
+
+> **Cambio incompatible (2026-09-28): `etl_icg_actual` ya no trae una sola serie.** Desde esa
+> fecha la tabla guarda 17 series (`icg` más 16 aperturas). Una consulta que leía
+> `etl_icg_actual` (o `series_actual where dataset = 'icg'`) sin filtrar por `serie` ahora
+> devuelve 17 filas por mes mezcladas. Para seguir leyendo el índice general, agregar
+> `where serie = 'icg'`.
 
 Los dos índices de confianza de UTDT se consumen como cualquier otro dataset mensual, pero
 tienen tres particularidades que conviene tener a mano.
@@ -505,8 +612,13 @@ tienen tres particularidades que conviene tener a mano.
 -- ICC: las 7 series
 select serie, date, valor from etl_icc_actual order by serie, date;
 
--- ICG: la única serie
-select date, valor from etl_icg_actual order by date;
+-- ICG: la serie principal (filtrar por serie: la tabla trae también las aperturas)
+select date, valor from etl_icg_actual where serie = 'icg' order by date;
+
+-- ICG: los 5 componentes, último mes
+select serie, valor from etl_icg_actual
+where serie in ('icg_eval_gob', 'icg_benef_gob', 'icg_adm_gp', 'icg_cor_gob', 'icg_resol_prob')
+  and date = (select max(date) from etl_icg_actual);
 
 -- Transversal, junto al resto de los datasets
 select serie, date, valor from series_actual where dataset = 'icc';
@@ -515,9 +627,15 @@ select serie, date, valor from series_actual where dataset = 'icc';
 | Dataset | Series | Escala | Desde |
 |---|---|---|---|
 | `icc` | `nacional`, `capital`, `gba`, `interior`, `situacion_personal`, `situacion_macro`, `bienes_durables` | **0-100** | `capital` 1998-07; las otras 6, 2001-03 |
-| `icg` | `icg` | **0-5** | 2001-11 |
+| `icg` | `icg` (planilla) + 16 aperturas (microdatos): componentes y cortes por zona, sexo, edad y educación | **0-5** | 2001-11 |
 
 **1. Las escalas son distintas.** El ICC va de 0 a 100 y el ICG de 0 a 5. No van en el mismo eje.
+
+**Aperturas del ICG.** Salen de los microdatos de la encuesta, no de la planilla: media
+ponderada por mes (`ponderacion_UTDT`). El promedio simple de los 5 componentes da el ICG del
+mes. Los cortes tienen menos casos (`icg_edu_primario` e `icg_edad_18_29` rondan 75-95 por mes
+en el último año), así que son bastante más ruidosos que el total; una celda con menos de 30 casos no se carga (hoy no hay
+ninguna). `fuente` es la URL del .dta.
 
 **2. La variación mensual no está guardada**, y es a propósito: se deriva del nivel, y
 guardarla sería duplicar un estado que se puede desincronizar.
@@ -544,14 +662,18 @@ nunca las tablas `etl_icc` / `etl_icg`: son append-only y guardan un snapshot po
 
 ## `datos_gob` (API oficial del Estado) — cómo consumirlo
 
-14 series de organismos públicos (INDEC y Secretaría de Trabajo). Es el único dataset mensual con
+15 series de organismos públicos (INDEC y Secretaría de Trabajo). Es el único dataset mensual con
 **star-schema**, porque sus series **no comparten unidad**: conviven índices, dólares y pesos. La
 vista trae el nombre y la unidad ya unidos.
 
-> **Dos fuentes, con prioridad explícita.** Nueve series salen de `apis.datos.gob.ar/series`. Las
-> **cinco `indice_salarios_*` salen de un CSV de cuadros del INDEC**
-> (`indec.gob.ar/ftp/cuadros/sociedad/indice_salarios.csv`), y para ellas la API quedó como
-> **respaldo**: sólo entra si el cuadro no estuvo disponible.
+> **Tres fuentes, con prioridad explícita.** Siete series salen de `apis.datos.gob.ar/series`.
+> Las otras ocho salen de **cuadros del INDEC**, y para ellas la API quedó como **respaldo**: sólo
+> entra si el cuadro no estuvo disponible, y aun así no pisa los meses que el cuadro ya escribió.
+>
+> | cuadro | series |
+> |---|---|
+> | CSV `indec.gob.ar/ftp/cuadros/sociedad/indice_salarios.csv` | las cinco `indice_salarios_*` |
+> | XLS `indec.gob.ar/ftp/cuadros/economia/balanmensual.xls` | `expo_total`, `impo_total`, `saldo_total` |
 >
 > El motivo, medido el 2026-09-10: sobre **611 meses solapados hay 0 discrepancias**, y el CSV va
 > **dos meses adelante** (traía 2026-05 y 2026-06 cuando la API todavía cortaba en 2026-04). Es el
@@ -580,26 +702,49 @@ vista trae el nombre y la unidad ya unidos.
 > para corregirles la etiqueta. Reescribirlos habría sido peor —611 snapshots nuevos que no
 > cambian ningún número— y el valor es idéntico de todos modos. De acá en adelante los meses
 > nuevos entran por el CSV.
-
-> **Ojo con este dataset en particular al monitorear.** Son 14 series de organismos distintos,
-> cada una con su calendario, y el control es por DATASET, no por serie: `ultimo_dato` es el
-> `max(date)` sobre las 14, así que avanza en cuanto publica la más rápida. Una serie individual
-> congelada no dispara `DATO_VIEJO`. Si te importa una serie puntual, vigilá su propio `max(date)`
-> además de `etl_control_salud`:
+>
+> **Comercio exterior (planilla XLS), medido el 2026-09-18.** Acá la diferencia con la API no es
+> sólo de velocidad. El INDEC publicó el ICA de agosto ese día a las 16:00 y la API seguía en
+> julio. Y además la API arrastra una **versión vieja** de varios años: sobre 415 meses
+> solapados, 271 son idénticos, pero 2016, 2017, 2022 y 2023 difieren en serio (expo 2022 +258 M y
+> 2023 +167 M en la planilla; máximo mensual 149 USD M) y julio-2026 de impo ya venía revisado
+> (6.738,68 en la API, 6.755,73 en la planilla). La planilla es la publicación **vigente** del
+> INDEC. También alarga la historia: arranca en **1990-01**, la API en 1992-01.
+>
+> **`estado` en comercio exterior.** La planilla marca los meses provisorios (`*` en el año:
+> hoy 2024, 2025 y 2026 completos) y estimados (`e` en el mes: hoy agosto-2026). Esos meses
+> entran con `estado = 'provisorio'`; el resto, `'definitivo'`. Cuando el INDEC saque la marca, el
+> mes pasa a `'definitivo'` aunque el número no cambie. `etl_datos_gob_actual` muestra siempre el
+> último snapshot (no prefiere `definitivo` sobre `provisorio`): el `definitivo` de la API es la
+> versión vieja del número, y preferirlo haría ganar el dato viejo sobre la revisión.
 >
 > ```sql
-> select serie, max(date) as ultimo, current_date - max(date) as dias
-> from etl_datos_gob_completo group by serie order by dias desc;
+> select serie, estado, count(*), min(date), max(date)
+> from etl_datos_gob_actual where serie in ('expo_total','impo_total','saldo_total')
+> group by 1, 2 order by 1, 2;
+> ```
+
+> **Ojo con este dataset en particular al monitorear.** Son 15 series de organismos distintos,
+> cada una con su calendario, así que el control del dato es **por serie**, no por dataset: la
+> vista `etl_datos_gob_salud` trae una fila por serie con su `ultimo_dato`, su edad (`dias`), su
+> umbral (`dias_max_dato`) y su `estado_dato`. La fila de `datos_gob` en `etl_control_salud` pasa
+> a `DATO_VIEJO` si **cualquiera** de las 15 se pasa, y la columna `series_no_ok` las nombra.
+>
+> ```sql
+> select serie, ultimo_dato, dias, dias_max_dato, estado_dato
+> from etl_datos_gob_salud where estado_dato <> 'ok';
 > ```
 >
-> Al 2026-09-10 esa query devuelve un rango de **40 a 101 días** según la serie (`smvm` en
-> 2026-08, los cinco `indice_salarios_*` en 2026-06). `etl_control_salud` ve sólo los 40 —el
-> `max`— y marca `estado_dato = ok` contra un umbral de 75, sin enterarse de las que están arriba.
-> El dataset está sano; el promedio de calendarios distintos no dice nada de ninguno.
+> El `max(date)` del dataset no sirve para esto por dos motivos. `smvm` trae meses **futuros**
+> —el salario mínimo se fija por decreto con meses de anticipación, hoy hasta 2027-04—, así que
+> ese máximo no envejece nunca y el umbral del dataset no podía dispararse. Y aun sin `smvm`,
+> avanza en cuanto publica la serie más rápida: antes de este control, las 5 series de salarios
+> llegaron a estar en **2026-04, a 162 días**, con el control marcando `ok` todo el tiempo. Con el
+> umbral por serie (150 días para salarios) eso habría saltado.
 >
-> Ese hueco fue real, no hipotético: antes de que el CSV pasara a ser la fuente primaria, las 5
-> series de salarios estaban en **2026-04, a 162 días**, con el control marcando `ok` todo el
-> tiempo. Nadie se enteró hasta que alguien miró serie por serie.
+> Los umbrales, y la medición detrás de cada uno, están en `DIAS_MAX_DATO` de
+> `etl/datasets/datos_gob/config.py`. El detalle para montar alertas: ver [¿El ETL está vivo?
+> (`etl_control_salud`)](#el-etl-está-vivo-etl_control_salud).
 >
 > Y si una serie falla al bajar, el string en `fallas` la nombra
 > (`datos_gob / run isac: ERROR bajando ...`): ver [Leer los errores que reportó el
@@ -629,15 +774,16 @@ where serie = 'ventas_supermercados' order by date;
 Cada una tiene además su vista suelta: `etl_datos_gob_actual` (nominal),
 `etl_datos_gob_real`, `etl_datos_gob_desest`.
 
-### Las 14 series
+### Las 15 series
 
 | `serie` | Unidad | Desde | ¿real? | ¿desest? |
 |---|---|---|---|---|
 | `isac` | índice 2004=100 | 2012-01 | — | **sí** *(oficial INDEC)* |
 | `ipi_manufacturero` | índice 2004=100 | 2016-01 | — | **sí** *(oficial INDEC)* |
 | `ipc_nacional` | índice dic-2016=100 | 2016-12 | — | — |
-| `expo_total` | USD millones | 1992-01 | sí *(CPI EEUU)* | **sí** |
-| `impo_total` | USD millones | 1992-01 | sí *(CPI EEUU)* | **sí** |
+| `expo_total` | USD millones | 1990-01 | sí *(CPI EEUU)* | **sí** |
+| `impo_total` | USD millones | 1990-01 | sí *(CPI EEUU)* | **sí** |
+| `saldo_total` | USD millones | 1990-01 | sí *(CPI EEUU)* | — *(derivable: ver abajo)* |
 | `ventas_supermercados` | **miles** de pesos | 2017-01 | sí | **sí** |
 | `ventas_centros_compras` | pesos | 2017-01 | sí | **sí** |
 | `ripte` | pesos corrientes | 1994-07 | sí | — |
@@ -659,7 +805,7 @@ Cada una tiene además su vista suelta: `etl_datos_gob_actual` (nominal),
 > from etl_datos_gob_completo
 > where valor_desest is not null and date = '2026-05-01';
 > --  isac        153.39  https://apis.datos.gob.ar/...ISAC_SIN_EDAD...   indec
-> --  expo_total 8772.32  census x13                                      (NULL, trae los params X-13)
+> --  expo_total 8762.65  census x13                                      (NULL, trae los params X-13)
 > ```
 >
 > No compares `valor_desest` entre series sin mirar `desest_fuente`: parámetros distintos, criterio
@@ -688,19 +834,19 @@ cada serie lo dice la columna `deflactor`; los dos salen de `public.deflactores`
 | `deflactor` | Qué es | Desde | Series |
 |---|---|---|---|
 | `ipc_largo` | IPC de INDEC desde 2016-12 y, hacia atrás, `inflaempalmada` reescalada | 1990-01 | las 9 de pesos |
-| `uscpi_mensual` | CPI-U del BLS (`CUUR0000SA0`, all items, **NSA**) | 1913-01 | `expo_total`, `impo_total` |
+| `uscpi_mensual` | CPI-U del BLS (`CUUR0000SA0`, all items, **NSA**) | 1913-01 | `expo_total`, `impo_total`, `saldo_total` |
 
 **Estar en dólares no exime de deflactar.** Un dólar de 1992 compra bastante más que uno de
 2026: leer expo/impo nominales de punta a punta sobrestima el crecimiento por toda la inflación
-de EEUU del medio. Sobre 34 años de serie el factor es 2,4x — enero-1992 pasa de USD 726 M
-nominales a USD 1.755 M de junio-2026. No es cosmético.
+de EEUU del medio. Sobre 34 años el factor es 2,4x — enero-1992 pasa de USD 726 M nominales a
+USD 1.761 M de agosto-2026. No es cosmético.
 
 Que el CPI sea **NSA** (sin desestacionalizar) es a propósito: deflactar con la versión
 desestacionalizada le metería al valor real la estacionalidad del deflactor dada vuelta, y el
 X-13 posterior terminaría ajustando ese artefacto además de la estacionalidad del comercio.
 
-Con esto `ripte` tiene real desde 1994-07 (383 meses), `smvm` desde 1992-01 (416) y expo/impo
-desde 1992-01 (414). Cuatro advertencias:
+Con esto `ripte` tiene real desde 1994-07, `smvm` desde 1992-01 y expo/impo/saldo desde 1990-01
+(440 meses al 2026-08). Cuatro advertencias:
 
 - `deflactor_origen = 'proyectado'` marca los meses cuyo índice todavía no salió y se estimó. Hoy
   es sólo `smvm`, que publica antes que el IPC. **Esos valores se revisan** cuando INDEC
@@ -724,19 +870,19 @@ desde 1992-01 (414). Cuatro advertencias:
 expresa en la moneda de su propio último mes observado, y toda su historia se reexpresa hacia
 atrás en esa moneda. En el mes base, `valor_real = valor_nominal` exactamente.
 
-**Las 11 no comparten base**, porque no terminan el mismo mes:
+**Las 12 no comparten base**, porque no terminan el mismo mes. Al 2026-09-18:
 
 | `mes_base` | `deflactor` | series |
 |---|---|---|
-| 2026-08 | `ipc_largo` | `smvm` (publica antes que el IPC) |
-| 2026-06 | `uscpi_mensual` | `expo_total`, `impo_total` |
-| 2026-05 | `ipc_largo` | `ripte`, `ventas_supermercados`, `ventas_centros_compras` |
-| 2026-04 | `ipc_largo` | los 5 `indice_salarios_*` |
+| 2026-12 | `ipc_largo` | `smvm` (publica antes que el IPC; base proyectada) |
+| 2026-08 | `uscpi_mensual` | `expo_total`, `impo_total`, `saldo_total` |
+| 2026-07 | `ipc_largo` | `ripte` |
+| 2026-06 | `ipc_largo` | `ventas_supermercados`, `ventas_centros_compras`, los 5 `indice_salarios_*` |
 
-**Mismo `mes_base` Y mismo `deflactor` → comparables directo**, sin hacer nada: las tres de
-2026-05 entre sí, los 5 índices de salarios entre sí, expo contra impo. Si difiere el `mes_base`
-hay que reescalar por `indice(base_a)/indice(base_b)` — hoy el par que importa es `ripte`
-(2026-05) contra `smvm` (2026-08). Si difiere el **`deflactor`**, no se comparan niveles sin
+**Mismo `mes_base` Y mismo `deflactor` → comparables directo**, sin hacer nada: las siete de
+2026-06 entre sí, expo contra impo contra saldo. Si difiere el `mes_base` hay que reescalar por
+`indice(base_a)/indice(base_b)` — hoy el par que importa es `ripte` (2026-07) contra `smvm`
+(2026-12). Si difiere el **`deflactor`**, no se comparan niveles sin
 pasar por un tipo de cambio: pesos constantes y dólares constantes son unidades distintas, no
 dos escalas de la misma.
 
@@ -778,7 +924,7 @@ precios. El factor estacional que sale para supermercados es el esperable:
 > real. En supermercados los peores meses son diciembres (2022-12, 2023-12, 2025-12), el pico
 > estacional.
 >
-> **Por qué se eligió así:** las 11 series deflactadas de esta tabla comparten método y base
+> **Por qué se eligió así:** las 12 series deflactadas de esta tabla comparten método y base
 > móvil, y por eso se comparan entre sí sin asteriscos. Alinear dos de ellas con INDEC las
 > desalinearía de sus propias compañeras de tabla, que es el uso real de esta tabla. Se prioriza
 > la homogeneidad interna sobre la coincidencia con la fuente.
@@ -786,6 +932,49 @@ precios. El factor estacional que sale para supermercados es el esperable:
 > Consecuencia práctica: `valor_real` y `valor_desest` de estas series son **nuestro** número, no
 > el de INDEC. Sirven para ver la evolución y comparar contra las otras series del dataset. **No
 > los cites como oficiales**, y si necesitás el número oficial, bajá los ids de arriba.
+
+### Saldo comercial (`saldo_total`)
+
+Es la columna **Saldo** de la planilla del INDEC, no una resta nuestra. Igual cuadra: contra
+`expo_total - impo_total` la diferencia máxima en los 440 meses es 1e-11, error de punto flotante.
+Si la planilla se cae, el respaldo es el id `74.3_ISC_0_M_19` de la API (misma familia que expo
+e impo, y ahí también igual a su resta).
+
+**Saldo real.** Viene hecho en `valor_real`, deflactado con el mismo CPI que expo e impo. Como las
+tres terminan el mismo mes, comparten `mes_base` y la identidad se sostiene también en real:
+
+```sql
+select date, valor_nominal, valor_real, mes_base, deflactor_origen
+from etl_datos_gob_completo
+where serie = 'saldo_total' order by date;
+
+-- Comprobación: saldo real = expo real - impo real (diferencia ~1e-11).
+select s.date, s.valor as saldo_real, e.valor - i.valor as expo_menos_impo_real
+from etl_datos_gob_real s
+join etl_datos_gob_real e on e.date = s.date and e.serie = 'expo_total'
+join etl_datos_gob_real i on i.date = s.date and i.serie = 'impo_total'
+where s.serie = 'saldo_total' and s.mes_base = e.mes_base and e.mes_base = i.mes_base
+order by s.date;
+```
+
+El filtro de `mes_base` importa sólo en el rato en que una de las tres tuviera un mes más que
+las otras: con bases distintas la resta mezclaría dólares de dos meses.
+
+**Saldo desestacionalizado: NO hay `valor_desest`, y se deriva.** El saldo no pasa por X-13
+porque puede ser negativo (142 de 440 meses: casi todo 1992-2000, 2015, 2017-2018 y 2023), y el
+multiplicativo es imposible con negativos. Además no hace falta: la estacionalidad del saldo es la
+de expo menos la de impo. Se arma por ajuste indirecto, que además preserva la identidad:
+
+```sql
+select e.date, e.valor - i.valor as saldo_real_desest
+from etl_datos_gob_desest e
+join etl_datos_gob_desest i on i.date = e.date and i.serie = 'impo_total'
+where e.serie = 'expo_total'
+order by e.date;
+```
+
+Queda en **dólares constantes** del `mes_base` de expo/impo, porque el X-13 corre sobre la serie
+real.
 
 ### Salario real (`ripte`, `smvm`, `indice_salarios_*`)
 
