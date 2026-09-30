@@ -12,7 +12,7 @@ Relevado contra el código el 2026-09-18. Si una línea no coincide, manda el c�
   - Si falla, manda por stderr la cola de 25 líneas; eso dispara el MAILTO.
 - Env: `POSTGRES_*` (orden de prioridad: `DATABASE_URL` → `PG*` → `POSTGRES_*`), `X13PATH` y `CEMENTO_PROXY`.
   - No hay `.env`: en el crontab hay un bloque propio de variables.
-- `load_history.py` existe solo en 14 datasets. datos_gob, transferencias, comex, icc, icg y refinacion hacen el backfill con el mismo `run`.
+- `load_history.py` existe solo en 14 datasets. datos_gob, transferencias, comex, icc, icg, refinacion, estimaciones_agricolas, estimaciones_semanal, estimaciones_mensual y bcba_pas hacen el backfill con el mismo `run`.
 
 ## 2. Contrato de un dataset (`etl/datasets/<ds>/`)
 
@@ -56,6 +56,20 @@ Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`, `
     respaldo API no reescribe meses cuya fila vigente vino de un cuadro (`del_cuadro`).
 - `_desest`: último snapshot con `estado='desestacionalizado'`.
 - `bulk_insert` no deduplica. Lo usan comex y reservas_pasivos.
+- `estimaciones_agricolas` (sin `date`, base entera por release): lee una vez el último snapshot de
+  todas las claves, compara en memoria con `db._changed`, claves nuevas por `bulk_insert` y cambiadas
+  por `insert_if_changed`. Su `ultimo_dato` sale de `config.ULTIMO_DATO_SQL` (control.py lo respeta).
+- `estimaciones_semanal` / `estimaciones_mensual` (PDFs de MAGyP): mismo esquema de carga, en
+  `etl/core/magyp_informes.py` (índice mensual, pausa 5 s, `--max-requests`, `--cache`, registro
+  `<tabla>_informes` por URL). `date_informe` es columna de contexto, no clave; `_actual` ordena por
+  `date_informe desc, ingested_at desc`.
+- `bcba_pas` (BCBA, Power BI publish-to-web vía `etl/core/powerbi.py`; `http.fetch(json_body=)`
+  para el POST): mismo esquema de carga, long `(cultivo, campania, zona_id, variable)`,
+  `fecha_datos` de contexto, registro `etl_bcba_pas_releases` por LastRefreshTime. Validación
+  estricta (dimensiones por id contra config) -> `rep.error` sin cargar nada.
+- `estimaciones_actual` (`etl/schema_estimaciones.sql`): vista unificada long de las 4 fuentes de
+  estimaciones. `init-db` la dropea ANTES de aplicar schemas y la recrea al final con un bloque
+  `do` que une sólo las `_actual` que existen. Mapeo de cultivos/variables/unidades en ese SQL.
 
 ## 4. Deflación (serie real)
 

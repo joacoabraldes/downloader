@@ -225,6 +225,115 @@ de generar los miércoles: la fuente saltea semanas y algún link apunta a una p
 > potenciales/efectivas. Por eso la tabla es **long por métrica**: cada formato emite su
 > subconjunto sin columnas fantasma ni `ALTER TABLE` en el próximo cambio de la fuente.
 
+### Series anuales por departamento (MAGyP)
+
+Cuarto carril: **anual (campaña agrícola)**. Sin `date`, sin vista unificada, sin desest ni
+deflación (son cantidades físicas).
+
+| Comando | Tabla | Vista | Fuente |
+|---|---|---|---|
+| `estimaciones_agricolas` | `etl_estimaciones_agricolas` (+ `_releases`) | `etl_estimaciones_agricolas_actual` | **CSV del portal datosestimaciones.magyp.gob.ar** (POST de formulario) |
+
+Superficie sembrada y cosechada (ha), producción (t) y rendimiento (kg/ha, **el publicado**, no
+recalculado) por **cultivo × campaña × departamento**, 41 cultivos, **1969/70 → hoy** (~162 mil
+filas). Formato **wide**; clave `(cultivo, campania, departamento_id)`, con `cultivo` = slug
+mapeado por el id de MAGyP (`config.CULTIVOS`) y `departamento_id` = código INDEC de 5 dígitos
+(los "SIN DEFINIR" quedan como `PP000`).
+
+- **Un release = la base entera** (~11 MB, un POST). La corrida hace primero un GET de la página
+  y lee "Fecha de Actualización"; si ese release ya está en `etl_estimaciones_agricolas_releases`
+  termina ahí. Máximo 2 requests por corrida, sin reintentos (host compartido).
+- MAGyP **revisa celdas viejas** entre releases: cada release se compara entero contra el último
+  snapshot (en memoria; las claves nuevas van por `bulk_insert`, las cambiadas por
+  `insert_if_changed`). `fecha_actualizacion` en cada fila = release en que apareció ese valor.
+- El encabezado del CSV se valida **exacto**: cambió en cada release histórico. Un id de cultivo
+  sin mapear también aborta.
+- Trampas para consumir: un **0 puede ser "sin dato"** (los "SD" viejos pasaron a 0);
+  `soja_total = soja_1ra + soja_2da` y `trigo_candeal` es parte de `trigo_total` (no sumar);
+  cebada cervecera/forrajera hasta 2015/16 y `cebada_total` desde 2016/17.
+- Backfill: el mismo `run` (con la tabla vacía todo va por bulk, ~15 s). `--archivo PATH` carga un
+  CSV ya bajado sin hacer el POST.
+
+### Campaña en curso: Informes Semanal y Mensual de Estimaciones (MAGyP, PDF)
+
+`estimaciones_agricolas` va ~1 campaña atrasada en los cultivos de verano. La campaña EN CURSO
+sale de los informes en PDF de la misma Dirección, que se leen en dos datasets:
+
+| Comando | Tabla | Vista | Qué trae |
+|---|---|---|---|
+| `estimaciones_semanal` | `etl_estimaciones_semanal` (+ `_informes`) | `etl_estimaciones_semanal_actual` | avance de siembra/cosecha por delegación, provincia y país: área sembrada / a sembrar, % de avance de las últimas 6 semanas, área cosechada / no cosechada |
+| `estimaciones_mensual` | `etl_estimaciones_mensual` (+ `_informes`) | `etl_estimaciones_mensual_actual` | superficie implantada y producción estimada NACIONAL de trigo, cebada, girasol, maíz (grano / silaje), soja, sorgo, arroz, maní y algodón |
+
+- **Fuente**: índice mensual `.../estimaciones/informes/?mes=AAAA-MM` con los links a los PDFs
+  (nombres no predecibles: se scrapea). Semanal = jueves (miércoles si es feriado); mensual = un
+  jueves a mitad de mes. Lo común (índice, pausa, tope de requests, cache, registro de PDFs
+  procesados, carga) vive en `etl/core/magyp_informes.py`.
+- **Parseo por coordenadas** (pdfplumber `extract_words`): `extract_tables` mezcla columnas. Las
+  columnas se identifican por el TEXTO del encabezado (el layout 2023 no tiene área cosechada /
+  no cosechada; las tablas de siembra traen "área a sembrar").
+- **Long, clave sin `date_informe`**: semanal `(cultivo, campania, zona_tipo, zona, fase,
+  variable, fecha_corte)`, mensual `(cultivo, campania, variable)`. `date_informe` es contexto:
+  el informe en que apareció ese valor. Append-only con dedup, así que las revisiones de MAGyP
+  quedan como snapshots nuevos (maíz 25/26 país: 11.158.197 ha al 30/04/2026 -> 11.675.537 al
+  24/09/2026) y `_actual` es el más reciente.
+- **Celda de % vacía = no hay fila** (no 0): la fuente no distingue "no empezó" de "no informó".
+- **Mensual con validación estricta**: encabezado (mes del informe, campaña anterior), etiquetas
+  conocidas, la variación % contra la campaña anterior tiene que cerrar con sus números
+  (tolerando el redondeo de los valores publicados), rangos y rinde
+  implícito plausibles, y los 9 cultivos presentes. Cualquier discrepancia = el informe NO se
+  carga (falla ruidosa). El semanal aborta el informe ante números fuera de columna, % fuera de
+  0-100, claves duplicadas o una tabla sin TOTAL PAÍS. Rarezas reales de la fuente que se
+  absorben (todas vistas en 2025-26): números recortados por la celda ("6.500.00", se aceptan
+  sólo si la variación % los valida), rótulos de campaña viejos, encabezados pegados ("Oct25",
+  "26vs"), tablas partidas entre páginas, dígitos sueltos ("9 6" = 96), "-" como celda vacía.
+- **Host compartido**: pausa de 5 s antes de cada request, 1 reintento, tope `--max-requests`.
+  Corrida normal: 1 GET del índice (2 los primeros 7 días del mes) + los PDFs nuevos.
+- **Backfill en tandas** (desde 2025-05 = campañas 2025/26 y 2026/27):
+
+  ```bash
+  python -m etl estimaciones_semanal --desde 2025-05 --max-requests 30 \
+      --cache /home/jmt/data/etls/cache/estimaciones_informes   # repetir hasta "sin informes nuevos"
+  python -m etl estimaciones_mensual --desde 2025-05 --max-requests 30 \
+      --cache /home/jmt/data/etls/cache/estimaciones_informes
+  ```
+
+  El cache guarda PDFs e índices de meses cerrados: el segundo dataset no vuelve a pedir los
+  índices, y un arreglo del parser se re-corre sin bajar nada (`--force`). `--archivo PDF --fecha
+  AAAA-MM-DD` sólo parsea un PDF local (con `--url` además lo carga).
+
+### Panorama Agrícola Semanal (Bolsa de Cereales de Buenos Aires, Power BI)
+
+| Comando | Tabla | Vista | Qué trae |
+|---|---|---|---|
+| `bcba_pas` | `etl_bcba_pas` (+ `_releases`) | `etl_bcba_pas_actual` | PAS de la **BCBA**: soja, maíz, trigo, girasol, cebada y sorgo desde 2009/10, por zona PAS (I a XV), nacional (suma de zonas) y la estimación nacional oficial: área sembrada, avance de siembra/cosecha, área perdida / cosechable / cosechada, rinde (qq/ha) y producción (t) |
+
+- **Fuente**: tablero público de Power BI de la Bolsa de Cereales de Buenos Aires
+  ("Publicar en la web", `app.powerbi.com/view?r=...`). El sitio de la BCBA está detrás de
+  Cloudflare; el tablero es la vía anónima. Cliente genérico en `etl/core/powerbi.py`: cluster
+  desde el HTML del visor (`resolvedClusterUri`, `-redirect` -> `-api`) y modelId /
+  LastRefreshTime desde `modelsAndExploration`, **en cada corrida** (no se hardcodean); las
+  consultas van por `querydata` y la respuesta DSR se decodifica a mano.
+- **Una foto por campaña**: el tablero pisa la campaña en curso cada semana (el PAS sale los
+  jueves). La historia de vintages existe SÓLO en `etl_bcba_pas` (append-only, `fecha_datos` =
+  "Datos al" como contexto, no clave). No hay backfill de semanas viejas por esta vía.
+- **Long** `(cultivo, campania, zona_id, variable)`. `zona_id` 80 = nacional = suma de zonas;
+  0 = "Actual" = la estimación nacional oficial redondeada (desde 2022/23). No son lo mismo
+  (maíz 2025/26: 64,0 Mt vs 63,57 Mt).
+- **Unidades como se publican**: `rinde_qq_ha` en qq/ha; `produccion_t` en t (el rótulo dice
+  "MTn" pero el valor ya está en toneladas). La conversión a kg/ha la hace `estimaciones_actual`.
+- **Corrida**: 2 requests si no hay release nuevo (visor + modelo); 3 si lo hay (un POST con
+  Datos_al + dimensiones + `Histórico_PAS`). Pausa 1,5 s. **Validación estricta**: columna o tabla
+  renombrada, cultivo / zona / campaña desconocida, fila duplicada, % fuera de rango o cantidad
+  de filas implausible = la corrida falla y no carga nada.
+
+### Vista unificada de estimaciones: `estimaciones_actual`
+
+Las 4 fuentes de estimaciones de cultivos (`magyp_departamental`, `magyp_semanal`,
+`magyp_mensual`, `bcba_pas`) en una vista LONG con cultivos, variables y unidades normalizados
+(definición y mapeo en `etl/schema_estimaciones.sql`). La crea `init-db` al final y tolera que
+falte alguna fuente. **Nunca sumar entre fuentes**: son metodologías distintas. Ver
+INTEGRATION.md.
+
 **Qué series se desestacionalizan y con qué parámetros lo define el cuadro central
 `etl/series_desest.toml`** (ver la sección *Desestacionalización*): granos **4** series
 (`total`, `soja`, `girasol`, `mani`), automotriz las 3 (`produccion`, `ventas`,
@@ -243,10 +352,12 @@ etl/
   series_desest.toml   CUADRO: qué series desestacionaliza cada dataset y con qué parámetros X-13
   schema_unified.sql   vistas series_actual / series_desest (unen los datasets mensuales)
   schema_daily.sql     vista series_diarias_actual (une los datasets diarios; hoy solo reservas_pasivos)
+  schema_estimaciones.sql  vista estimaciones_actual (une las 4 fuentes de estimaciones de cultivos)
   core/        db.py (conexión + insert/dedup genérico)  ·  seasonal.py (X-13)
                desest_params.py (lee el cuadro y arma los jobs de desest)
                window.py (ventana de meses del incremental)  ·  report.py (salida uniforme)
                meses.py (nombres y abreviaturas de mes en español, con sus variantes)
+               powerbi.py (cliente anónimo de Power BI "Publicar en la web": bcba_pas)
   datasets/<dataset>/
        source.py       scraping/parsing de la fuente (HTML / PDF / xlsx / .xls, según el dataset)
        load_history.py carga histórica (one-off, desde el Excel de referencia)
@@ -447,6 +558,19 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 # capta las revisiones), asi que correr de mas no cuesta nada. Cuando se confirme el dia, acotar
 # la ventana y bajar `horas_max` en etl/schema_control_salud.sql en el mismo cambio.
 0  10 *         * 1-5 /home/jmt/dev/downloader/scripts/run_etl.sh compras_granos
+# Estimaciones agricolas por departamento (MAGyP). Sin calendario de releases: corre los lunes y
+# la corrida normal es UN GET (compara la "Fecha de Actualizacion" con los releases ya
+# procesados). Solo con release nuevo hace el POST de ~11 MB. horas_max=200 acompana esta ventana.
+30 10 *         * 1   /home/jmt/dev/downloader/scripts/run_etl.sh estimaciones_agricolas
+# Informes de Estimaciones Agricolas (MAGyP, PDF). Publican los jueves: se corre el viernes a las
+# 11:30, entre bovinos (11:00) y granos (12:00), los otros ETLs de www.magyp.gob.ar. Corrida
+# normal: 1 GET del indice + los PDFs nuevos (semanal: 1 por semana; mensual: 1 por mes).
+30 11 *         * 5   /home/jmt/dev/downloader/scripts/run_etl.sh estimaciones_semanal
+40 11 *         * 5   /home/jmt/dev/downloader/scripts/run_etl.sh estimaciones_mensual
+# Panorama Agricola Semanal (BCBA, Power BI de Microsoft: NO es el host de MAGyP). El PAS sale los
+# jueves; el viernes 12:30, fuera de las ventanas de MAGyP (9:00, 10:00, 11:00-11:40, 12:00).
+# Corrida normal: 2 requests (3 con release nuevo).
+30 12 *         * 5   /home/jmt/dev/downloader/scripts/run_etl.sh bcba_pas
 # Diario (precios FOB oficiales de granos, MAGyP). Son ~8 requests con pausa de 1 s; la corrida
 # re-lee 7 dias hacia atras ademas de lo que falta, por las circulares con efecto retroactivo.
 # OJO con el horario: MAGyP publica el FOB del dia DESPUES de las 14 -- medido el 11-sep-2026, a
@@ -471,6 +595,13 @@ jueves (día 17 al 24) y el ICG un lunes (día 22 al 28).
 > y es exactamente el bug que el wrapper viene a resolver (ver *Fallas y código de salida*).
 > Conexión, `X13PATH` y `CEMENTO_PROXY` salen del bloque de env del **crontab** (cron no
 > sourcea `.bashrc`; ver *Requisitos*).
+>
+> **Lock del host MAGyP.** Los ETLs que le pegan a `www.magyp.gob.ar` (granos, aves, bovinos,
+> leche, compras_granos, fob_granos, estimaciones_agricolas, estimaciones_semanal,
+> estimaciones_mensual) toman en `run_etl.sh` un `flock` compartido sobre `/tmp/etl_magyp.lock`:
+> si dos jobs se pisan, el segundo espera hasta 30 min en vez de duplicar el ritmo de requests
+> contra un sitio que corta por volumen. Sin lock tras la espera -> exit 3 (llega al mail). Para
+> sumar un dataset, agregarlo a `MAGYP` en el script; `ETL_SIN_LOCK=1` lo saltea a mano.
 
 ### Fallas y código de salida
 

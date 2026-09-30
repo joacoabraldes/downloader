@@ -93,6 +93,9 @@ Cada ETL corre en la ventana del mes en que su fuente publica, no todos los día
 | `reservas_pasivos` | lunes a viernes | 80 h (cubre el fin de semana) |
 | `compras_granos` | lunes a viernes | 80 h (cubre el fin de semana) |
 | `fob_granos` | lunes a viernes | 80 h (cubre el fin de semana) |
+| `estimaciones_agricolas` | lunes | 200 h (una semana + margen) |
+| `estimaciones_semanal`, `estimaciones_mensual` | viernes | 200 h (una semana + margen) |
+| `bcba_pas` | viernes | 200 h (una semana + margen) |
 | `cot` | todos los días | 80 h (cubre el fin de semana) |
 | `acero` | días 15 al 10 del mes siguiente | 130 h (~5 días) |
 | `leche`, `hidrocarburos` | días 20 al 10 del mes siguiente | 260 h (~11 días) |
@@ -161,6 +164,10 @@ daría falsa alarma **todos los meses**.
 | `cot` | 3-5 días (corte martes, publica viernes) **(estimado, no medido)** | 1 semana | 14 |
 | `reservas_pasivos` | 2-6 días, +3 desde el cambio de horario del cron (ver nota) | 1 día hábil | 11 |
 | `compras_granos` | 7-11 días | 7 días | 25 |
+| `estimaciones_agricolas` | `ultimo_dato` = fecha del release; sin calendario (vistos 2023-10, 2026-03, 2026-08) **(estimado, no medido)** | irregular | 210 |
+| `estimaciones_semanal` | `ultimo_dato` = fecha del último informe semanal (jueves) **(estimado, no medido)** | 1 semana | 21 |
+| `estimaciones_mensual` | `ultimo_dato` = fecha del último informe mensual (mitad de mes) **(estimado, no medido)** | 1 mes | 45 |
+| `bcba_pas` | `ultimo_dato` = "Datos al" del último release (miércoles; el PAS sale el jueves) **(estimado, no medido)** | 1 semana | 17 |
 | `datos_gob` | por serie, 42-101 días (ver abajo) | 1 mes | por serie, 90-150 |
 | `patentamientos`, `cemento` | 31-37 días | 1 mes | 80 |
 | `automotriz` | 33 días, pero la ventana 1-10 puede atrasar la captura un mes entero | 1 mes | 105 |

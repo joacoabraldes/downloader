@@ -38,6 +38,10 @@ filas por `(serie, mes)`. Para consumir hay **dos vistas por dataset** que ya re
 | `compras_granos` | `etl_compras_granos` | `etl_compras_granos_actual` | — (semanal, no se desestacionaliza) |
 | `fob_granos` | `etl_fob_granos` | `etl_fob_granos_diario` / `etl_fob_granos_mensual` | — (diario, no se desestacionaliza) |
 | `cot` | `etl_cot` | `etl_cot_actual` / `etl_cot_neto` | — (semanal, no se desestacionaliza) |
+| `estimaciones_agricolas` | `etl_estimaciones_agricolas` + `etl_estimaciones_agricolas_releases` | `etl_estimaciones_agricolas_actual` | — (anual por campaña, no se desestacionaliza) |
+| `estimaciones_semanal` | `etl_estimaciones_semanal` + `etl_estimaciones_semanal_informes` | `etl_estimaciones_semanal_actual` | — (avance semanal de labores, no se desestacionaliza) |
+| `estimaciones_mensual` | `etl_estimaciones_mensual` + `etl_estimaciones_mensual_informes` | `etl_estimaciones_mensual_actual` | — (estimación por campaña, no se desestacionaliza) |
+| `bcba_pas` | `etl_bcba_pas` + `etl_bcba_pas_releases` | `etl_bcba_pas_actual` | — (estimación por campaña con vintages semanales, no se desestacionaliza) |
 
 > Todas las tablas llevan prefijo **`etl_`**. El nombre de la tabla no siempre deriva directo
 > del dataset (comando): `granos` → `etl_molienda_granos`, `cemento` → `etl_cemento_despacho`;
@@ -51,6 +55,7 @@ Unen todos los datasets en una sola forma, agregando una columna `dataset`:
 | Vista | Contenido |
 |---|---|
 | `series_actual` | serie **observada** de los 17 datasets mensuales (`dataset, serie, date, valor, estado, fuente, ingested_at`) |
+| `estimaciones_actual` | estimaciones de cultivos de las 4 fuentes (MAGyP departamental / semanal / mensual y BCBA), long y normalizada. Ver *Estimaciones de cosecha (MAGyP y BCBA)* |
 | `series_desest` | serie **desestacionalizada** (`dataset, serie, date, valor, fuente, ingested_at, parametros`). `icc` e `icg` no aportan filas: se publican sin ajuste estacional. De `datos_gob` se ajustan las 2 de ventas y las 2 de comercio exterior (sobre su serie real); de `comex`, sólo las seis de cantidad |
 
 ```sql
@@ -279,6 +284,266 @@ ETL corrió `ok` y `ultimo_dato` no se movió, es que MAGyP todavía no publicó
 
 > Misma regla que en el resto: consumí `etl_compras_granos_actual`, nunca `etl_compras_granos`
 > cruda (es append-only y tiene varias filas por clave).
+
+## Estimaciones de cosecha (MAGyP y BCBA)
+
+Cuatro fuentes de estimaciones de cultivos, una tabla cruda por fuente y **una vista para
+consumirlas juntas: `estimaciones_actual`**. Tienen granos y metodologías distintas: se comparan
+lado a lado, **nunca se suman ni se promedian entre sí**.
+
+### Qué fuente usar según la pregunta
+
+| Pregunta | `fuente` | `nivel` |
+|---|---|---|
+| Producción / área de la **campaña en curso**, país | `magyp_mensual` · `bcba_pas` | `pais` |
+| Campaña en curso **por zona** | `bcba_pas` (zonas PAS I a XV) | `zona_bcba` |
+| Apertura geográfica fina (**departamento**, provincia) | `magyp_departamental` (campañas cerradas; ~1 campaña de atraso en gruesa) | `departamento` |
+| **Avance semanal** de siembra / cosecha | `magyp_semanal` (delegación, provincia, país) · `bcba_pas` (zona, país) | todos |
+| **Historia larga** | `magyp_departamental` desde 1969/70 · `bcba_pas` desde 2009/10 | `pais` |
+
+### Fuentes
+
+**MAGyP no tiene API**: el departamental es un CSV que se baja con el POST del formulario del
+portal y los informes son PDFs que se parsean. La BCBA se lee del **tablero público de Power BI**
+del Panorama Agrícola Semanal (PAS). Al usar estos datos, citar la fuente: *MAGyP, Estimaciones
+Agrícolas* / *Bolsa de Cereales de Buenos Aires, Panorama Agrícola Semanal*.
+
+| `fuente` | Origen | Tabla cruda (vista `_actual`) | Apertura | Frecuencia | Desde | Cómo se detecta un release |
+|---|---|---|---|---|---|---|
+| `magyp_departamental` | CSV del portal datosestimaciones.magyp.gob.ar (POST de formulario) | `etl_estimaciones_agricolas` | departamento (id INDEC) | sin calendario fijo | 1969/70 | "Fecha de Actualización" de la página; registrado en `etl_estimaciones_agricolas_releases` |
+| `magyp_semanal` | Informe Semanal de Estimaciones (PDF) | `etl_estimaciones_semanal` | delegación, provincia, país | semanal (jueves) | informe del 08/05/2025 (campaña 2024/25) | PDF nuevo en el índice mensual de informes; registrado por URL en `etl_estimaciones_semanal_informes` |
+| `magyp_mensual` | Informe Mensual de Estimaciones (PDF) | `etl_estimaciones_mensual` | país | mensual (un jueves a mitad de mes) | informe del 15/05/2025 (trae 2023/24 como "campaña anterior") | ídem, en `etl_estimaciones_mensual_informes` |
+| `bcba_pas` | Tablero público de Power BI de la BCBA ("Publicar en la web") | `etl_bcba_pas` | zona PAS (I a XV), país | semanal (jueves) | 2009/10 | `LastRefreshTime` del modelo; registrado en `etl_bcba_pas_releases` |
+
+Cultivos: el departamental trae 41 (granos, industriales, frutales, hortalizas); los informes
+mensual y semanal, los 9 grandes (trigo, cebada, girasol, maíz, soja, sorgo, arroz, maní,
+algodón); la BCBA, 6 (soja, maíz, trigo, girasol, cebada, sorgo).
+
+### La vista `estimaciones_actual`
+
+Una fila por `(fuente, cultivo, campania, nivel, zona, variable)` con la estimación **vigente**
+de cada fuente (sale de las vistas `_actual`; definición y mapeo en
+`etl/schema_estimaciones.sql`).
+
+| Columna | Significado |
+|---|---|
+| `fuente` | `magyp_departamental`, `magyp_semanal`, `magyp_mensual`, `bcba_pas` |
+| `informe` | publicación en la que **apareció** ese valor (release, informe o "Datos al"). Si informes posteriores lo repitieron sin cambios, sigue mostrando el primero |
+| `fecha_dato` | a qué fecha se refiere: semana de corte del avance (semanal), "Datos al" (BCBA); en las otras dos, igual a `informe` |
+| `cultivo` | slug normalizado (ver abajo) |
+| `campania` | `'AAAA/AA'`, p.ej. `'2025/26'` (ordena bien como texto) |
+| `nivel` / `zona` | ver tabla siguiente |
+| `variable` · `unidad` · `valor` | ver catálogo; `unidad` es `ha`, `t`, `kg/ha` o `%` |
+
+| `nivel` | `zona` | Fuentes |
+|---|---|---|
+| `pais` | `total_pais` | todas. En `magyp_departamental` es la **suma de departamentos** del mismo cultivo (su rendimiento es derivado: producción / cosechada). En `bcba_pas` es la **suma de las 15 zonas** (zona 80 de la fuente) |
+| `pais` | `oficial_bcba` | sólo `bcba_pas`: la cifra nacional **oficial redondeada** que comunica la BCBA (zona 0), desde 2022/23, sólo `sup_sembrada_ha` y `produccion_t`. Es otro número que `total_pais` (maíz 2025/26: 64,0 Mt vs 63,57 Mt) |
+| `provincia` | slug (`buenos_aires`) | `magyp_semanal`: subtotal provincial **o** provincia publicada sin delegaciones |
+| `delegacion` | slug (`pigue`) | `magyp_semanal` |
+| `departamento` | id INDEC de 5 dígitos (`06014`); los 2 primeros = provincia | `magyp_departamental` |
+| `zona_bcba` | `I` .. `XV` | `bcba_pas` |
+
+**Catálogo de variables** (entre paréntesis, el nombre en la tabla cruda cuando difiere):
+
+| Variable (unidad) | Significado | departamental | semanal | mensual | BCBA |
+|---|---|---|---|---|---|
+| `sup_sembrada_ha` (ha) | área sembrada / implantada estimada de la campaña | ✓ (`sup_sembrada`) | ✓ (`area_sembrada_ha`) | ✓ (`superficie_implantada_ha`) | ✓ |
+| `sup_a_sembrar_ha` (ha) | intención de siembra | | ✓ (`area_a_sembrar_ha`) | ✓ (`superficie_a_implantar_ha`) | |
+| `sup_cosechada_ha` (ha) | área cosechada **final** de la campaña | ✓ (`sup_cosechada`) | | | |
+| `sup_cosechada_al_dia_ha` (ha) | cosechado **a la fecha** | | ✓ (`area_cosechada_ha`) | | ✓ |
+| `sup_sembrada_al_dia_ha` (ha) | sembrado a la fecha | | | | ✓ |
+| `sup_no_cosechada_ha` (ha) | falta cosechar; en maíz incluye silaje / pastoreo (**no** es pérdida) | | ✓ (`area_no_cosechada_ha`) | | |
+| `sup_perdida_ha` (ha) | área perdida | | | | ✓ |
+| `sup_cosechable_ha` (ha) | sembrada − perdida | | | | ✓ |
+| `sup_grano_ha` · `sup_silaje_otros_ha` (ha) | maíz: área destinada a grano / a silaje, diferidos y pérdida | | | ✓ (`superficie_grano_ha` · `superficie_silaje_otros_ha`) | |
+| `avance_siembra_pct` · `avance_cosecha_pct` (%) | avance de la labor | | ✓ (`avance_pct` + `fase`) | | ✓ |
+| `produccion_t` (t) | producción (maíz: grano) | ✓ (`produccion`) | | ✓ | ✓ (la fuente rotula "MTn" pero ya son t) |
+| `rendimiento_kg_ha` (kg/ha) | rinde | ✓ (`rendimiento`, el publicado) | | | ✓ (`rinde_qq_ha` × 100) |
+
+**Cultivos**: el total va sin sufijo; las **partes** conservan su nombre y **no se suman con el
+total**.
+
+| Total | Partes | Dónde |
+|---|---|---|
+| `soja` | `soja_1ra`, `soja_2da` | departamental (desde 2000/01), semanal (sólo delegación o provincia sin delegaciones) |
+| `trigo` | `trigo_candeal` | departamental |
+| `trigo` | `trigo_pan`, `trigo_fideo` (= candeal) | semanal |
+| `arroz` | `arroz_la`, `arroz_lf` | semanal |
+| `poroto` | `poroto_alubia`, `poroto_negro`, `poroto_otros` | departamental, 2021/22 a 2024/25 |
+| `cebada` (desde 2016/17) | `cebada_cervecera`, `cebada_forrajera` (hasta 2015/16) | departamental: **cambia de apertura**, no hay total antes de 2016/17 |
+
+El departamental publica los totales con sufijo (`soja_total`, `trigo_total`, `cebada_total`,
+`poroto_total`, `papa_total`, `cebolla_total`); la vista se lo saca. Mensual y BCBA ya vienen como
+`maiz`, `soja`, `trigo`, etc.
+
+### Vintages y revisiones
+
+`estimaciones_actual` y las `_actual` dan **el último valor**. Las tablas crudas son append-only:
+cada revisión es una fila nueva, con `date_informe` (MAGyP informes), `fecha_actualizacion`
+(departamental) o `fecha_datos` (BCBA) como contexto, no como clave.
+
+- Una fila nueva aparece **sólo cuando el valor cambia**. Un informe que repite el número no deja
+  fila: para "qué decía cada informe" hay que cruzar con la tabla de informes (ver consultas).
+- **BCBA**: el tablero guarda **una sola foto por campaña** y la pisa cada semana. La historia
+  semanal de las estimaciones BCBA existe sólo en `etl_bcba_pas`, desde la primera carga
+  ("Datos al" 23/09/2026); las semanas anteriores no se pueden recuperar.
+- **Semanal**: el área sembrada se revisa de un informe al otro y cada informe deja su estimación
+  con `fecha_corte = date_informe`, así que `area_sembrada_ha` en `etl_estimaciones_semanal_actual`
+  ya es una serie semanal. `estimaciones_actual` sólo guarda el **último corte** de cada variable:
+  para curvas de avance, usar `etl_estimaciones_semanal_actual`.
+
+```sql
+-- Lo que decía un informe semanal puntual (último snapshot con date_informe <= X)
+select distinct on (cultivo, campania, zona_tipo, zona, fase, variable, fecha_corte) *
+from etl_estimaciones_semanal
+where date_informe <= '2025-08-31'
+order by cultivo, campania, zona_tipo, zona, fase, variable, fecha_corte,
+         date_informe desc, ingested_at desc;
+
+-- Lo mismo para la BCBA ("Datos al" <= X)
+select distinct on (cultivo, campania, zona_id, variable) *
+from etl_bcba_pas
+where fecha_datos <= '2026-10-01'
+order by cultivo, campania, zona_id, variable, fecha_datos desc, ingested_at desc;
+```
+
+### Trampas
+
+- **Nunca sumar un total con sus partes** (`soja` + `soja_1ra`), ni `total_pais` con
+  `oficial_bcba`, ni un subtotal `provincia` con sus delegaciones. Para el país del semanal usar
+  `nivel = 'pais'`, no la suma de provincias.
+- **Nunca sumar ni promediar entre fuentes**: filtrar siempre `fuente`.
+- **Cero ambiguo en el departamental**: un 0 puede ser cero real o "sin dato" (los "SD" de
+  releases viejos pasaron a 0; ~13 mil filas con producción 0). No se distingue.
+- **% vacío en el semanal = no hay fila**, no 0: la fuente no separa "no empezó" de "no informó".
+  Un 0 publicado sí está. Para "sin avance = 0", `coalesce`.
+- **La última campaña está incompleta según el cultivo**: en el departamental del release
+  25/08/2026, 2025/26 trae trigo y girasol pero soja y maíz llegan a 2024/25. Una campaña que
+  recién arranca tiene área y todavía no producción.
+- **`sup_a_sembrar_ha` queda congelada en su último informe**: cuando MAGyP pasa de intención a
+  área implantada, la intención deja de publicarse pero sigue en la vista (maíz 2025/26 mensual:
+  a sembrar 10,4 M ha del 19/02/2026, implantada 11,68 M ha del 17/09/2026). Para el área vigente,
+  la variable con `informe` más reciente.
+- **Departamentos "SIN DEFINIR"**: `departamento_id = PP000` (PP = provincia).
+- **El semanal incluye filas de 2024/25**: los primeros informes cargados (mayo 2025) cubren la
+  cosecha gruesa de esa campaña.
+- **`soja` del departamental no cierra exacto con `soja_1ra + soja_2da`**: a nivel país difieren
+  de unas pocas t a ~3.200 t (2021/22), porque algunas celdas de departamento no suman. Usar el
+  total publicado.
+- **`maiz_25` en la tabla cruda del semanal**: el informe del 30/10/2025 tituló "MAÍZ 25/26" y
+  dejó 238 filas con ese cultivo en `etl_estimaciones_semanal`. `estimaciones_actual` lo normaliza
+  a `maiz`; si se consulta la cruda o su `_actual`, filtrar `cultivo ~ '^maiz'`.
+- **Mensual**: `origen = 'campania_anterior'` marca valores tomados de la columna "campaña
+  anterior" del informe (así entra 2023/24). Maní en caja, algodón en bruto.
+
+### Maíz: MAGyP vs BCBA
+
+Ambas publican producción de **grano** (sin silaje). MAGyP detalla superficie implantada,
+silaje / diferidos / pérdida y superficie destinada a grano:
+
+| Concepto | Tabla cruda (`etl_estimaciones_mensual`) | `estimaciones_actual` |
+|---|---|---|
+| implantada | `superficie_implantada_ha` | `sup_sembrada_ha` |
+| silaje, diferidos y pérdida | `superficie_silaje_otros_ha` | `sup_silaje_otros_ha` |
+| destinada a grano | `superficie_grano_ha` | `sup_grano_ha` |
+
+La brecha entre fuentes en 2025/26 (**72,5 Mt MAGyP vs 63,6 Mt BCBA**) viene sobre todo de la
+estimación de **superficie a grano cosechada**, no de incluir o excluir silaje. La comparación
+homogénea es cosechada contra cosechable:
+
+| 2025/26, país | Superficie a grano cosechada | Rinde | Producción |
+|---|---|---|---|
+| MAGyP (mensual 17/09/2026, `sup_grano_ha`) | 9,95 M ha | ~7,29 t/ha (implícito) | 72,5 Mt |
+| BCBA (PAS 23/09/2026, `sup_cosechable_ha`) | 8,26 M ha | 7,76 t/ha | 63,57 Mt |
+
+Son ~1,7 M ha de diferencia de superficie, compensada en parte por un rinde BCBA más alto. No
+comparar `sup_grano_ha` de MAGyP (cosechada) con `sup_sembrada_ha` de BCBA (8,40 M ha,
+sembrada), ni con la implantada de MAGyP (11,68 M ha, incluye silaje). Nunca sumar ni promediar
+entre fuentes.
+
+### Consultas de ejemplo
+
+```sql
+-- 1. Producción de soja país por campaña, una fuente
+select campania, valor / 1e6 as millones_t
+from estimaciones_actual
+where fuente = 'magyp_departamental' and cultivo = 'soja'
+  and nivel = 'pais' and variable = 'produccion_t'
+order by campania;               -- ... 2023/24 48,2 · 2024/25 51,1
+
+-- 2. Maíz 2025/26 país: fuentes lado a lado
+select fuente, zona, variable, valor / 1e6 as millones, informe
+from estimaciones_actual
+where cultivo = 'maiz' and campania = '2025/26' and nivel = 'pais'
+  and variable in ('produccion_t', 'sup_sembrada_ha', 'sup_grano_ha', 'sup_cosechable_ha')
+order by variable, fuente, zona;  -- produccion_t: bcba 63,57 / oficial 64,0 / magyp 72,5
+
+-- 3. Producción de soja por provincia (departamental; la vista no trae nombres de provincia)
+select provincia, sum(produccion) / 1e6 as millones_t
+from etl_estimaciones_agricolas_actual
+where cultivo = 'soja_total' and campania = '2024/25'
+group by provincia
+order by 2 desc;                  -- Buenos Aires 15,5 · Córdoba 14,6 · Santa Fe 11,5
+
+-- 4. Curva de avance de cosecha de maíz, país (semanal)
+select fecha_corte, valor as pct_cosechado
+from etl_estimaciones_semanal_actual
+where cultivo = 'maiz' and campania = '2024/25'
+  and zona_tipo = 'pais' and fase = 'cosecha' and variable = 'avance_pct'
+order by fecha_corte;             -- 17% al 03/04/2025 ... 100% al 09/10/2025
+
+-- 5. Evolución de la estimación mensual de soja 2025/26, informe por informe
+--    (el valor vigente en cada informe, aunque lo haya repetido sin cambios)
+select i.date_informe, v.variable, v.valor, v.date_informe as publicado_en
+from etl_estimaciones_mensual_informes i
+cross join lateral (
+    select distinct on (variable) variable, valor, date_informe
+    from etl_estimaciones_mensual m
+    where m.cultivo = 'soja' and m.campania = '2025/26' and m.date_informe <= i.date_informe
+    order by variable, date_informe desc, ingested_at desc) v
+where i.date_informe >= '2025-09-01'
+order by i.date_informe, v.variable;  -- producción: 49,0 Mt (abr-26) -> 49,9 -> 49,7 -> 49,5 -> 49,3 (sep-26)
+```
+
+### Salud
+
+Los cuatro datasets están en `etl_control_salud` (ver *¿El ETL está vivo?* más abajo). `estado` mide si el ETL
+corrió; `estado_dato` si la fuente publicó algo nuevo. Como no tienen columna `date`,
+`ultimo_dato` es la fecha de la última **publicación procesada**, no una fecha de la serie:
+
+| Dataset | `ultimo_dato` = | `dias_max_dato` (estimado) |
+|---|---|---|
+| `estimaciones_agricolas` | fecha del último release (`etl_estimaciones_agricolas_releases`) | 210 |
+| `estimaciones_semanal` | fecha del último informe (`etl_estimaciones_semanal_informes`) | 21 |
+| `estimaciones_mensual` | fecha del último informe (`etl_estimaciones_mensual_informes`) | 45 |
+| `bcba_pas` | "Datos al" del último release (`etl_bcba_pas_releases`) | 17 |
+
+Los umbrales son estimaciones sobre el calendario de cada fuente, no mediciones. Un informe cuyo
+PDF no tiene la forma esperada **no se carga ni se registra**: la corrida queda en `falla` (motivo
+en `etl_control_ejecucion.fallas`) y la próxima lo reintenta. Mejor ningún número que uno mal
+leído. Lo mismo vale para un cambio de estructura del tablero de la BCBA.
+
+```sql
+-- ¿Corrió y hay publicación reciente?
+select dataset, estado, estado_dato, ultimo_dato, dias_dato, dias_max_dato
+from etl_control_salud
+where dataset in ('estimaciones_agricolas', 'estimaciones_semanal',
+                  'estimaciones_mensual', 'bcba_pas');
+
+-- Última campaña con producción, por fuente y cultivo
+select cultivo, fuente, max(campania) as ultima_campania
+from estimaciones_actual
+where nivel = 'pais' and variable = 'produccion_t'
+  and cultivo in ('soja', 'maiz', 'trigo', 'girasol')
+group by cultivo, fuente
+order by cultivo, fuente;
+
+-- Publicaciones procesadas (y cuántas filas nuevas / revisadas dejó cada una)
+select date_informe, filas, nuevos, actualizados, url
+from etl_estimaciones_semanal_informes
+order by date_informe desc limit 5;
+```
 
 ## Columnas de las vistas
 
