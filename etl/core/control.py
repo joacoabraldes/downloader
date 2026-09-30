@@ -27,13 +27,27 @@ def _ultimo_dato(conn, dataset: str):
         config = importlib.import_module(f"etl.datasets.{dataset}.config")
     except ModuleNotFoundError:
         return None  # 'redesest' y demás comandos sin tabla propia
-    tabla = getattr(config, "TABLE", None)
-    if not tabla:
+    # Datasets sin columna `date` (p.ej. estimaciones_agricolas, grano campaña) declaran su
+    # propia consulta de "fecha del último dato" en config.
+    sql = getattr(config, "ULTIMO_DATO_SQL", None)
+    if not sql:
+        tabla = getattr(config, "TABLE", None)
+        if not tabla:
+            return None
+        sql = (f"select max(date) from {tabla} "
+               f"where estado is distinct from 'desestacionalizado'")
+    # Una consulta rota (tabla sin crear, columna renombrada en ULTIMO_DATO_SQL) no puede
+    # tirar la fila de control: se registra con ultimo_dato NULL. psycopg2 deja la transacción
+    # abortada tras el error; como esta consulta es lo primero que corre en la conexión, el
+    # rollback no descarta nada y deja la conexión usable para el insert.
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            r = cur.fetchone()
+    except Exception as e:  # noqa: BLE001
+        conn.rollback()
+        print(f"[control] ultimo_dato de {dataset}: {e}", file=sys.stderr)
         return None
-    with conn.cursor() as cur:
-        cur.execute(f"select max(date) from {tabla} "
-                    f"where estado is distinct from 'desestacionalizado'")
-        r = cur.fetchone()
     return r[0] if r else None
 
 

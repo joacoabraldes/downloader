@@ -26,9 +26,11 @@ _STATUS_KEY = {
     "saltado": "saltados",
     "no_publicado": "no_publicado",
 }
-# Claves que siempre se muestran; saltados/no_publicado solo si > 0.
+# Claves que siempre se muestran; las opcionales solo si > 0. `desaparecidas` no es un status
+# de fila (no suma a leidos): claves del snapshot previo ausentes en un release de base
+# completa; se suma con `Report.sumar`.
 _ALWAYS = ["leidos", "nuevos", "actualizados", "sin_cambios"]
-_OPTIONAL = ["saltados", "no_publicado"]
+_OPTIONAL = ["saltados", "no_publicado", "desaparecidas"]
 
 # Estado acumulado de la corrida (proceso-global: un `python -m etl <ds>` corre un solo ETL).
 # Además del exit code, lo consume `etl.core.control` para dejar la fila de
@@ -107,6 +109,10 @@ class Report:
             self.counts["leidos"] += 1
         self.counts[_STATUS_KEY[status]] += 1
         return status
+
+    def sumar(self, clave: str, n: int) -> None:
+        """Suma `n` a un contador que no es status de fila (p.ej. `desaparecidas`)."""
+        self.counts[clave] += n
 
     def item(self, period, status: str, **fields) -> str:
         """Cuenta + imprime una línea por ítem: `  2026-05  valor=37762  -> nuevo`."""

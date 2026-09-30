@@ -62,19 +62,38 @@ def fetch(
     reintentos: int = REINTENTOS,
     espera_base: float = ESPERA_BASE,
     reintentables: frozenset = REINTENTABLES,
+    data: dict | None = None,
+    json_body: dict | None = None,
 ) -> requests.Response:
     """Baja `url` reintentando ante corte transitorio. Devuelve la Response ya validada.
 
     El encoding queda a cargo del caller: las páginas HTML de gov.ar declaran ISO-8859-1 y
     mandan Windows-1252 (`resp.encoding = resp.apparent_encoding`), pero por acá también pasan
     PDFs y planillas donde eso no aplica.
+
+    Con `data` hace un POST de formulario en vez de un GET: `estimaciones_agricolas` baja su
+    base completa respondiendo el form PHP de MAGyP (no hay URL de descarga directa). Un POST
+    pesado se llama con `reintentos=1`: repetirlo en loop contra un host compartido es justo el
+    patrón que termina en bloqueo.
+
+    Con `json_body` hace un POST con cuerpo JSON (`bcba_pas`: consultas `querydata` del visor
+    público de Power BI). `data` y `json_body` son excluyentes.
     """
+    if data is not None and json_body is not None:
+        raise ValueError("fetch: data y json_body son excluyentes")
     espera = espera_base
     for intento in range(reintentos):
         ultimo = intento == reintentos - 1
         try:
-            resp = requests.get(url, timeout=timeout, verify=verify,
-                                headers=headers if headers is not None else HEADERS)
+            hdrs = headers if headers is not None else HEADERS
+            if json_body is not None:
+                resp = requests.post(url, json=json_body, timeout=timeout, verify=verify,
+                                     headers=hdrs)
+            elif data is None:
+                resp = requests.get(url, timeout=timeout, verify=verify, headers=hdrs)
+            else:
+                resp = requests.post(url, data=data, timeout=timeout, verify=verify,
+                                     headers=hdrs)
         except ERRORES_DE_RED:
             if ultimo:
                 raise
