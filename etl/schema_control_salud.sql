@@ -6,7 +6,7 @@
 -- schemas de los datasets, y sólo si esa vista ya existe (en una base nueva inicializada sin
 -- datos_gob se saltea con aviso, hasta el próximo `init-db` que lo incluya).
 --
--- LA vista para la app: los 20 datasets SIEMPRE, hayan corrido o no.
+-- LA vista para la app: los 26 datasets SIEMPRE, hayan corrido o no.
 --
 --   select * from etl_control_salud where estado <> 'ok';        -- el PROCESO esta roto
 --   select * from etl_control_salud where estado_dato <> 'ok';   -- la FUENTE dejo de publicar
@@ -160,7 +160,32 @@ with esperado(dataset, horas_max, dias_max_dato) as (values
                                      --   por semanas (paso en 2018-2019: el COT estuvo cinco semanas
                                      --   sin publicarse y despues salio todo junto).
                                      --   UMBRAL ESTIMADO, no medido.
-    ('fob_granos',       80,   6)    -- cron L-V -> fin de semana ~71 h
+    ('estimaciones_agricolas', 200, 210),  -- cron semanal (lunes) -> hueco max 7 dias + margen
+                                     --   por si el lunes la VM no corre: 168 h + ~32 h.
+                                     --   dato: `ultimo_dato` = fecha del ultimo RELEASE procesado
+                                     --   (etl_estimaciones_agricolas_releases), no una fecha de la
+                                     --   serie (grano campaña). MAGyP no tiene calendario: releases
+                                     --   vistos 2023-10, 2026-03 (CKAN) y 25/08/2026 (portal).
+                                     --   UMBRAL ESTIMADO (~7 meses), no medido: reajustar cuando
+                                     --   haya varios releases observados.
+    ('estimaciones_semanal', 200, 21), -- cron semanal (viernes) -> 168 h + margen, como
+                                     --   estimaciones_agricolas. dato: `ultimo_dato` = fecha del
+                                     --   ultimo INFORME procesado (..._semanal_informes). MAGyP
+                                     --   publica todos los jueves (miercoles si es feriado); 21 dias
+                                     --   = dos semanas sin informe + la semana del cron.
+                                     --   UMBRAL ESTIMADO, no medido (receso de fin de año sin ver).
+    ('estimaciones_mensual', 200, 45), -- corre con el mismo cron de los viernes. dato: fecha del
+                                     --   ultimo informe MENSUAL (uno por mes, un jueves de mitad de
+                                     --   mes: 17/09/2026, 23/04/2026) -> hueco normal ~35 dias.
+                                     --   UMBRAL ESTIMADO, no medido.
+    ('bcba_pas',         200, 17),   -- cron semanal (viernes) -> 168 h + margen, como los de MAGyP.
+                                     --   dato: `ultimo_dato` = "Datos al" del ultimo release
+                                     --   procesado (etl_bcba_pas_releases). La BCBA publica el PAS
+                                     --   los jueves con datos al miercoles (23/09/26 visto el
+                                     --   24/09): edad normal del dato el viernes ~2 d, hasta ~9 d
+                                     --   antes del proximo. 17 = una semana sin PAS + margen.
+                                     --   UMBRAL ESTIMADO, no medido (receso de verano sin ver).
+    ('fob_granos',      80,   6)    -- cron L-V -> fin de semana ~71 h
                                      --   dato: la fuente publica el precio FOB del dia habil ese mismo dia y el
                                      --   ETL corre a la mañana siguiente -> lag normal 1 dia, 3 si el ultimo dia
                                      --   con datos fue viernes. 3 + margen = 6. UMBRAL ESTIMADO, no medido:

@@ -1,6 +1,6 @@
 """CLI del monorepo de ETLs.
 
-  python -m etl <dataset> [run|load-history] [flags]   # dataset: granos|cemento|automotriz|patentamientos|transferencias|acero|aves|leche|bovinos|demanda_energia|hidrocarburos|ventas_combustibles|refinacion|escrituras_caba|icc|icg|datos_gob|comex|reservas_pasivos|fob_granos|compras_granos|cot
+  python -m etl <dataset> [run|load-history] [flags]   # dataset: granos|cemento|automotriz|patentamientos|transferencias|acero|aves|leche|bovinos|demanda_energia|hidrocarburos|ventas_combustibles|refinacion|escrituras_caba|icc|icg|datos_gob|comex|reservas_pasivos|fob_granos|compras_granos|cot|estimaciones_agricolas|estimaciones_semanal|estimaciones_mensual|bcba_pas
   python -m etl init-db  [datasets...]                  # aplica los schema.sql
   python -m etl redesest [datasets...] [--clean]        # recalcula la desest desde la base
 
@@ -24,7 +24,9 @@ from etl.core import control, report
 DATASETS = ["granos", "cemento", "automotriz", "patentamientos", "transferencias", "acero",
             "aves", "leche", "bovinos", "demanda_energia", "hidrocarburos",
             "ventas_combustibles", "refinacion", "escrituras_caba", "icc", "icg", "datos_gob",
-            "comex", "reservas_pasivos", "fob_granos", "compras_granos", "cot"]
+            "comex", "reservas_pasivos", "fob_granos", "compras_granos", "cot",
+            "estimaciones_agricolas", "estimaciones_semanal", "estimaciones_mensual",
+            "bcba_pas"]
 SUBCOMMANDS = {"run", "load-history"}
 USAGE = (
     "uso: python -m etl <dataset> [run|load-history] [flags]\n"
