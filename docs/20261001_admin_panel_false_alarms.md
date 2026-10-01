@@ -21,7 +21,8 @@ from 00:00 to 20:00 the last run is ~20 days old → FALLA with "sin corrida hac
 
 Fix: compute the most recent *scheduled* slot (20:00 on a day in 1-10 or 16-22, at or before
 now, Argentina time) and mark red only if there is no heartbeat at/after that slot plus a
-grace period (e.g. 2 h). Outside both windows the heartbeat check must not fire. Keep the
+grace period of 60 min. The heartbeat row is written at the END of the run
+(reca/db.go:250, `started_at = NOW()`), so the grace must cover run duration, not just cron start. Outside both windows the heartbeat check must not fire. Keep the
 schedule as a single constant next to a comment pointing at the crontab, and update the
 comment at ~:226-227.
 
@@ -64,7 +65,8 @@ unit-test these cases:
 
 - reca heartbeat:
   - 2026-10-01 06:00, last run 2026-09-10 20:00 → OK
-  - 2026-10-01 21:00, same last run → FALLA
+  - 2026-10-01 20:30, same last run → OK (inside grace)
+  - 2026-10-01 21:30, same last run → FALLA
   - 2026-10-02 21:30, last run 2026-10-01 20:00 → FALLA
   - 2026-10-14 any time → no heartbeat check
   - 2026-10-16 10:00, last run 2026-10-10 20:00 → OK
