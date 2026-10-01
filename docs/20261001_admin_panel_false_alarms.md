@@ -13,13 +13,13 @@ The cron is now (changed 2026-10-01):
 
 ```
 0 20 1-10  * * /home/jmt/dev/reca/reca-cron.sh   # recaudación (published days 1-6 of M+1)
-0 20 16-18 * * /home/jmt/dev/reca/reca-cron.sh   # base caja IMIG/AIF (published ~16-18 of M+1)
+0 20 16-22 * * /home/jmt/dev/reca/reca-cron.sh   # base caja IMIG/AIF (published ~16-18 of M+1)
 ```
 
 Bug: on day 1 (and now on day 16) the window is "open" but the run only fires at 20:00, so
 from 00:00 to 20:00 the last run is ~20 days old → FALLA with "sin corrida hace 491h".
 
-Fix: compute the most recent *scheduled* slot (20:00 on a day in 1-10 or 16-18, at or before
+Fix: compute the most recent *scheduled* slot (20:00 on a day in 1-10 or 16-22, at or before
 now, Argentina time) and mark red only if there is no heartbeat at/after that slot plus a
 grace period (e.g. 2 h). Outside both windows the heartbeat check must not fire. Keep the
 schedule as a single constant next to a comment pointing at the crontab, and update the
@@ -27,7 +27,7 @@ comment at ~:226-227.
 
 ## 2. reca_fiscal staleness (IMIG/AIF "atrasado 3m") (~admin.js:256-261, :278)
 
-No code change needed once #1 is fixed: with the new 16-18 run, base caja for month M is
+No code change needed once #1 is fixed: with the new 16-22 run, base caja for month M is
 loaded around day 18 of M+1, so `monthsBehind` for imig/aif is normally 1-2 and the `>= 3`
 threshold is right. Just make sure the comment describing the expected lag says
 "M is loaded ~day 18 of M+1" (it used to say M+2).
@@ -69,6 +69,8 @@ unit-test these cases:
   - 2026-10-14 any time → no heartbeat check
   - 2026-10-16 10:00, last run 2026-10-10 20:00 → OK
   - 2026-10-16 22:30, same last run → FALLA
+  - 2026-10-22 21:00, last run 2026-10-22 20:00 → OK
+  - 2026-10-23 10:00, last run 2026-10-22 20:00 → no heartbeat check
 - rem:
   - 2026-10-01, max 2026-08-31 → OK
   - 2026-10-11, max 2026-08-31 → ATRASADO
