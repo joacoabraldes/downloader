@@ -42,6 +42,7 @@ import datetime as dt
 import io
 import json
 import re
+import statistics
 import time
 import unicodedata
 
@@ -95,6 +96,19 @@ def query_context() -> dict:
     }
 
 
+def _incompletos(meses: dict[dt.date, dict[str, float]]) -> list[dt.date]:
+    """Meses con menos de la mitad de los conceptos con dato que un mes típico.
+
+    Mismo criterio que `ventas_combustibles.source._incompletos`: un filtro por "total == 0" deja
+    pasar el mes en curso cuando trae UN concepto con carga parcial (pasó en ventas, 2026-09).
+    """
+    con_dato = {f: sum(1 for v in d.values() if v != 0) for f, d in meses.items()}
+    if not con_dato:
+        return []
+    tipico = statistics.median(con_dato.values())
+    return [f for f, n in con_dato.items() if n == 0 or n < tipico / 2]
+
+
 def parse(texto: str) -> tuple[dict[dt.date, dict[str, float]], set[str]]:
     """CSV del POST -> ({mes: {serie: valor}}, {conceptos fuera del catálogo})."""
     reader = csv.DictReader(io.StringIO(texto))
@@ -119,8 +133,9 @@ def parse(texto: str) -> tuple[dict[dt.date, dict[str, float]], set[str]]:
             continue
         meses.setdefault(dt.date(int(m.group(1)), int(m.group(2)), 1), {})[serie] = float(crudo)
 
-    # El mes en curso llega con todos los conceptos en cero: es un placeholder, no un dato.
-    for f in [f for f, d in meses.items() if sum(d.values()) == 0]:
+    # El mes en curso llega en cero o casi (a veces con un concepto cargado a medias): es un
+    # placeholder, no un dato. Ver `_incompletos`.
+    for f in _incompletos(meses):
         del meses[f]
     if not meses:
         raise FormatoInesperado("la respuesta no trae ningún mes con datos")

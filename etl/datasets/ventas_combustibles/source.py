@@ -18,8 +18,9 @@ incremental filtra en memoria.
 ## Las tres trampas de este dataset
 
 1. **El mes en curso viene con `0.0`, no ausente.** La fila del mes corriente existe con cero en
-   todos los productos. Un ETL ingenuo carga un cero como si fuera dato. Por eso `parse` descarta
-   los meses cuyo total es 0: acá un mes entero en cero no es información, es el placeholder.
+   (casi) todos los productos; a veces uno trae una carga parcial. Un ETL ingenuo carga eso como
+   dato. Por eso `parse` descarta los meses con menos de la mitad de los productos con dato que
+   un mes típico: no es información, es el placeholder.
 
 2. **Hay CRUDO adentro del dataset de ventas.** 15 de los 51 productos son petróleo por cuenca.
    Se ingestan igual (son un dato) pero el catálogo los marca `tipo='crudo'` y quedan fuera de
@@ -46,6 +47,7 @@ import csv
 import io
 import json
 import re
+import statistics
 import time
 import unicodedata
 
@@ -110,11 +112,27 @@ def query_context() -> dict:
     }
 
 
+def _incompletos(meses: dict[dt.date, dict[str, float]]) -> list[dt.date]:
+    """Meses que son placeholder: menos de la mitad de los productos con dato que un mes típico.
+
+    El mes en curso no siempre llega TODO en cero: en 2026-09 vino con 32 productos en 0 y
+    `gasoil_g2_comun` con 1.290 m3 (una carga parcial). Un filtro por "total == 0" lo dejaba
+    pasar y la serie mostraba caídas de casi 100% en gasoil, nafta y asfaltos. Se compara
+    contra la mediana de productos con dato del resto de la historia, no contra un número fijo,
+    porque el catálogo cambia (el crudo desaparece en 2025).
+    """
+    con_dato = {f: sum(1 for v in d.values() if v != 0) for f, d in meses.items()}
+    if not con_dato:
+        return []
+    tipico = statistics.median(con_dato.values())
+    return [f for f, n in con_dato.items() if n == 0 or n < tipico / 2]
+
+
 def parse(texto: str) -> tuple[dict[dt.date, dict[str, float]], set[str]]:
     """CSV del POST -> ({mes: {serie: valor}}, {productos que no están en el catálogo}).
 
-    Descarta los meses cuyo total es 0: la fuente publica el mes en curso como una fila entera
-    de ceros, y guardar eso sería inventar un derrumbe del consumo.
+    Descarta los meses placeholder (ver `_incompletos`): la fuente publica el mes en curso en
+    cero o casi, y guardar eso sería inventar un derrumbe del consumo.
     """
     reader = csv.DictReader(io.StringIO(texto))
     faltan = {"indice_tiempo", "producto", "unidad", "v"} - set(reader.fieldnames or [])
@@ -140,9 +158,7 @@ def parse(texto: str) -> tuple[dict[dt.date, dict[str, float]], set[str]]:
             continue
         meses.setdefault(fecha, {})[serie] = float(crudo)
 
-    # El mes en curso llega con todos los productos en cero: es un placeholder, no un dato.
-    vacios = [f for f, d in meses.items() if sum(d.values()) == 0]
-    for f in vacios:
+    for f in _incompletos(meses):
         del meses[f]
     if not meses:
         raise FormatoInesperado("la respuesta no trae ningún mes con datos")
