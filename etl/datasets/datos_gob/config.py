@@ -328,8 +328,9 @@ CSV_POR_SERIE = {serie: nombre
 SERIES_XLS = {
     "balanza_comercial": {
         "url": "https://www.indec.gob.ar/ftp/cuadros/economia/balanmensual.xls",
-        "columnas": {2: "expo_total", 7: "impo_total", 11: "saldo_total"},
-        "encabezados": {2: "Exportaciones", 7: "Importaciones", 11: "Saldo"},
+        # oct-2026: el INDEC insertó una columna vacía antes de 'Saldo' (de col11 pasó a col12).
+        "columnas": {2: "expo_total", 7: "impo_total", 12: "saldo_total"},
+        "encabezados": {2: "Exportaciones", 7: "Importaciones", 12: "Saldo"},
         # Se valida contra el subencabezado de cada columna: si el INDEC cambiara de escala sin
         # tocar los títulos, todos los valores se correrían 1000x sin que nada lo note.
         "unidad": "Millones de dólares",

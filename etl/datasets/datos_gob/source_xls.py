@@ -6,7 +6,7 @@ Tercera fuente del dataset, y la PRIMARIA para las series que lista `config.SERI
 
 El formato es un cuadro para leer, no una tabla:
 
-  fila  col0        col1         col2           ...  col7           ...  col11
+  fila  col0        col1         col2           ...  col7           ...  col12
   2     Período                  Exportaciones       Importaciones       Saldo
   3                              Total mensual       Total mensual
   4                              Millones de dólares ...
