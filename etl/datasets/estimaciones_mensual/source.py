@@ -118,7 +118,17 @@ def _lineas(words):
             out[-1].append(w)
         else:
             out.append([w])
-    return [sorted(l, key=lambda w: w["x0"]) for l in out]
+    out = [sorted(l, key=lambda w: w["x0"]) for l in out]
+    # "%" separado del número ("0 %", "5,3 %", oct-2026): se pega al token anterior. Suelto
+    # contaba como prosa y cortaba la tabla después de la primera fila.
+    for l in out:
+        for k in range(len(l) - 1, 0, -1):
+            a, b = l[k - 1], l[k]
+            if (b["text"] == "%" and re.match(r"^-?\d+(?:[.,]\d+)?$", a["text"])
+                    and b["x0"] - a["x1"] <= 6):
+                l[k - 1] = {**a, "text": a["text"] + "%", "x1": b["x1"]}
+                del l[k]
+    return out
 
 
 def _c(w):
